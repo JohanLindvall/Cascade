@@ -96,6 +96,7 @@ left unset keeps rtorrent's own default.
 | --- | --- | --- |
 | `RT_DOWNLOAD_DIR` | `/downloads` | Default download directory |
 | `RT_SESSION_DIR` | `/config/session` | rtorrent session state |
+| `RT_SESSION_LOCK_KEEP` | `0` | `1` keeps a leftover `rtorrent.lock` instead of clearing it |
 | `RT_WATCH_DIR` | `/watch` | `.torrent` files dropped here are loaded and started |
 | `RT_WATCH_INTERVAL` | `10` | Watch-directory poll interval, seconds |
 | `RT_WATCH_ENABLE` | `1` | Set `0` to disable the watch directory |
@@ -319,6 +320,11 @@ private network, or prefer `/RPC2`, which sits behind Basic auth.
   and drops it from the UI list.
 - rtorrent runs inside a detached `screen` session, so `docker exec -it cascade screen -r rtorrent`
   gives you the real curses UI. If rtorrent dies, the entrypoint restarts it.
+- rtorrent locks its session directory and only releases the lock on a clean shutdown, so a killed
+  container (`docker rm -f`, OOM, host reboot) leaves one behind and every later start fails. The
+  entrypoint clears a lock that no live process in the container holds; set
+  `RT_SESSION_LOCK_KEEP=1` if you deliberately share a session directory and want the check to
+  refuse instead. Stop the container with `docker stop` (as `make stop` does) to avoid it entirely.
 
 ## Development
 
@@ -327,13 +333,19 @@ work — `make` on its own lists every target.
 
 ```bash
 make build                  # build the image (typechecks both TypeScript halves)
-make run PORT=8080          # run it, mounting ./data
+make run PORT=8080          # run it, mounting ./data, then open it in a browser
+make run OPEN=0             # ...without launching a browser
+make open                   # wait for it to answer, then open it
 make smoke                  # build, boot, exercise the API, tear down
 make matrix                 # build against 0.9.8, 0.10.0 and 0.15.2
 make build-source RTORRENT_VERSION=0.9.8
 make attach                 # attach to rtorrent's curses UI
 make logs / shell / stop
 ```
+
+`make run` waits for `/healthz` before launching the browser, so it opens on a working page rather
+than a connection error. The launcher is `xdg-open` (`BROWSER=` overrides it, `open` is used as a
+fallback on macOS); with no display detected it just prints the URL.
 
 Working on the frontend with live reload, against a running container:
 

@@ -9,6 +9,12 @@ PORT             ?= 8080
 PEER_PORT        ?= 50000
 DATA             ?= $(CURDIR)/data
 
+# `make run` opens the UI once it answers. OPEN=0 skips it; BROWSER picks the
+# launcher (xdg-open on Linux, open on macOS).
+OPEN             ?= 1
+BROWSER          ?= xdg-open
+URL               = http://localhost:$(PORT)
+
 # rtorrent is always compiled from an upstream tag.
 ALPINE_VERSION   ?= 3.22
 RTORRENT_VERSION ?= 0.16.20
@@ -21,15 +27,15 @@ BUILD_ARGS = --build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
 REF = $(IMAGE):$(TAG)
 
 .DEFAULT_GOAL := help
-.PHONY: help build matrix run stop logs shell attach rtorrent-log \
+.PHONY: help build matrix run open stop logs shell attach rtorrent-log \
         smoke up down clean distclean dev version
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nCascade\n\nUsage: make \033[36m<target>\033[0m [VAR=value]\n\nTargets:\n"} \
 	  /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 } \
 	  /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
-	@printf "\nVariables: IMAGE=%s TAG=%s PORT=%s RTORRENT_VERSION=%s ALPINE_VERSION=%s\n\n" \
-	  "$(IMAGE)" "$(TAG)" "$(PORT)" "$(RTORRENT_VERSION)" "$(ALPINE_VERSION)"
+	@printf "\nVariables: IMAGE=%s TAG=%s PORT=%s RTORRENT_VERSION=%s ALPINE_VERSION=%s OPEN=%s\n\n" \
+	  "$(IMAGE)" "$(TAG)" "$(PORT)" "$(RTORRENT_VERSION)" "$(ALPINE_VERSION)" "$(OPEN)"
 
 ##@ Build
 
@@ -45,9 +51,8 @@ matrix: ## Build the rtorrent versions the UI is tested against
 
 ##@ Run
 
-run: ## Run the container in the background (PORT=8080)
+run: stop ## Run the container in the background and open it (PORT=8080, OPEN=0 to skip)
 	@mkdir -p $(DATA)/downloads $(DATA)/config $(DATA)/watch
-	docker rm -f $(CONTAINER) >/dev/null 2>&1 || true
 	docker run -d --name $(CONTAINER) \
 	  -p $(PORT):8080 -p $(PEER_PORT):50000 -p $(PEER_PORT):50000/udp \
 	  -v $(DATA)/downloads:/downloads \
@@ -55,10 +60,38 @@ run: ## Run the container in the background (PORT=8080)
 	  -v $(DATA)/watch:/watch \
 	  -e PUID=$(shell id -u) -e PGID=$(shell id -g) \
 	  $(REF)
-	@echo "Cascade is starting on http://localhost:$(PORT)"
+	@if [ "$(OPEN)" = "1" ]; then $(MAKE) --no-print-directory open; \
+	 else echo "Cascade is starting on $(URL)"; fi
+
+open: ## Wait for Cascade to answer, then open it in a browser
+	@printf 'waiting for Cascade on $(URL)'
+	@ready=0; \
+	for i in $$(seq 1 60); do \
+	  if curl -fsS $(URL)/healthz >/dev/null 2>&1; then ready=1; break; fi; \
+	  if [ -n "$$(docker ps -aq --filter name=^$(CONTAINER)$$ --filter status=exited)" ]; then \
+	    printf '\n'; echo "container exited — last lines:"; docker logs --tail 15 $(CONTAINER); exit 1; \
+	  fi; \
+	  printf '.'; sleep 1; \
+	done; \
+	printf '\n'; \
+	if [ "$$ready" != "1" ]; then \
+	  echo "Cascade did not answer in 60s; last lines:"; docker logs --tail 15 $(CONTAINER); exit 1; \
+	fi; \
+	if [ -z "$$DISPLAY$$WAYLAND_DISPLAY" ] && [ "$$(uname)" != "Darwin" ]; then \
+	  echo "no display detected — browse to $(URL)"; \
+	elif command -v $(BROWSER) >/dev/null 2>&1; then \
+	  echo "opening $(URL)"; $(BROWSER) $(URL) >/dev/null 2>&1 & \
+	elif command -v open >/dev/null 2>&1; then \
+	  echo "opening $(URL)"; open $(URL) >/dev/null 2>&1 & \
+	else \
+	  echo "no $(BROWSER) on PATH — browse to $(URL)"; \
+	fi
 
 stop: ## Stop and remove the container
-	docker rm -f $(CONTAINER) >/dev/null 2>&1 || true
+	@# SIGTERM rather than SIGKILL: the entrypoint shuts rtorrent down cleanly,
+	@# which releases the session lock. A killed rtorrent leaves it behind.
+	@docker stop -t 20 $(CONTAINER) >/dev/null 2>&1 || true
+	@docker rm -f $(CONTAINER) >/dev/null 2>&1 || true
 
 logs: ## Follow the container log
 	docker logs -f $(CONTAINER)
@@ -108,8 +141,8 @@ smoke: ## Build, boot, exercise the API, then tear down
 
 ##@ Clean
 
-clean: ## Remove containers built from this image
-	docker rm -f $(CONTAINER) cascade-smoke >/dev/null 2>&1 || true
+clean: stop ## Remove containers built from this image
+	@docker rm -f cascade-smoke >/dev/null 2>&1 || true
 
 distclean: clean ## Also remove the images
 	docker rmi -f $(REF) $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.20 >/dev/null 2>&1 || true

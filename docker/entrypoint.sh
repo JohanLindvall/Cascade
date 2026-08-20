@@ -86,6 +86,34 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 # --------------------------------------------------------------------------
+# stale session lock
+#
+# rtorrent locks its session directory and only releases the lock on a clean
+# shutdown. A killed container (docker rm -f, OOM, host reboot) leaves the file
+# behind and every later start fails with "Could not lock session directory",
+# which surfaces as an unexplained connection error in the UI.
+#
+# The lock records "<hostname>:+<pid>". If that is this container and the
+# process is alive the lock is real and we must not touch it; anything else is
+# a leftover and is cleared.
+# --------------------------------------------------------------------------
+
+SESSION_LOCK="$RT_SESSION_DIR/rtorrent.lock"
+if [ -f "$SESSION_LOCK" ]; then
+  lock_holder="$(cat "$SESSION_LOCK" 2>/dev/null || true)"
+  lock_host="${lock_holder%%:*}"
+  lock_pid="${lock_holder##*+}"
+  if [ "${RT_SESSION_LOCK_KEEP:-0}" = "1" ]; then
+    log "keeping session lock held by ${lock_holder:-unknown} (RT_SESSION_LOCK_KEEP=1)"
+  elif [ "$lock_host" = "$(hostname)" ] && [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+    die "session $RT_SESSION_DIR is locked by a running rtorrent (pid $lock_pid)"
+  else
+    log "clearing stale session lock left by ${lock_holder:-unknown}"
+    rm -f "$SESSION_LOCK"
+  fi
+fi
+
+# --------------------------------------------------------------------------
 # rtorrent.rc
 #
 # Only commands that exist in every rtorrent from 0.9.x through 0.15.x go in

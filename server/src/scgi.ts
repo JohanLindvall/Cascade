@@ -93,9 +93,25 @@ export function scgiRequest(
     socket.on('end', () => finish(null, stripHttpHeaders(Buffer.concat(chunks))));
     socket.on('close', () => finish(null, stripHttpHeaders(Buffer.concat(chunks))));
     socket.on('error', (error) => {
-      const reason = (error as NodeJS.ErrnoException).code === 'ENOENT'
-        ? `rtorrent SCGI socket ${describeTarget(target)} not found — is rtorrent running?`
-        : `SCGI error talking to ${describeTarget(target)}: ${error.message}`;
+      const code = (error as NodeJS.ErrnoException).code;
+      let reason: string;
+      switch (code) {
+        case 'ENOENT':
+          reason = `rtorrent is not running — no SCGI socket at ${describeTarget(target)}`;
+          break;
+        case 'ECONNREFUSED':
+          // The socket file outlives the process, so this is the usual symptom
+          // of rtorrent having died or failed to start.
+          reason =
+            `rtorrent is not accepting connections on ${describeTarget(target)} — ` +
+            'it has stopped or failed to start; check the container log';
+          break;
+        case 'EACCES':
+          reason = `permission denied opening ${describeTarget(target)} — check PUID/PGID`;
+          break;
+        default:
+          reason = `SCGI error talking to ${describeTarget(target)}: ${error.message}`;
+      }
       finish(new Error(reason));
     });
   });

@@ -97,13 +97,19 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    to the legacy command and the UI greys the field out there. When adding a setting, set it and
    read it back before believing it.
 
-8. **rtorrent needs a pty**, so it runs inside a detached `screen` session. `SCREENDIR` must be
+8. **rtorrent locks its session directory** and only releases the lock on a clean shutdown. A
+   SIGKILLed container leaves `rtorrent.lock` behind and every later start dies with "Could not
+   lock session directory", which reaches the user as a bare connection error. The entrypoint
+   clears a lock unless this container's hostname *and* a live pid still hold it. Do not remove
+   that check without replacing it — and prefer `docker stop` over `docker rm -f` in tooling.
+
+9. **rtorrent needs a pty**, so it runs inside a detached `screen` session. `SCREENDIR` must be
    mode 0700 or screen refuses to start.
 
-9. **Some settings are write-only** — `dht.mode` and `protocol.encryption` have `.set` but no
+10. **Some settings are write-only** — `dht.mode` and `protocol.encryption` have `.set` but no
    getter, so the UI cannot show their current value.
 
-10. **Labels live in `d.custom1`**, URL-encoded (the ruTorrent convention), which is why
+11. **Labels live in `d.custom1`**, URL-encoded (the ruTorrent convention), which is why
    `mapTorrent` decodes and `setLabel` encodes.
 
 ## Adding support for a new backend command
