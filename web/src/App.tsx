@@ -11,6 +11,7 @@ import { api } from './api';
 import { AchievementsDialog } from './components/Achievements';
 import { AddDialog } from './components/AddDialog';
 import { Celebrate } from './components/Celebrate';
+import { DropBurst, type Burst } from './components/DropBurst';
 import { DetailPanel } from './components/DetailPanel';
 import { Header } from './components/Header';
 import { LogDialog } from './components/LogDialog';
@@ -86,6 +87,8 @@ export function App() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [celebration, setCelebration] = useState(0);
+  const [burst, setBurst] = useState<Burst | null>(null);
+  const burstId = useRef(0);
   // Seeded from the cache so the first paint is already themed, then replaced
   // by whatever the server's preferences file says.
   const [prefs, setPrefs] = useState<Preferences>(() => readCache());
@@ -98,6 +101,9 @@ export function App() {
   const dragDepth = useRef(0);
   const completedRef = useRef<Set<string> | null>(null);
   const seenBadgesRef = useRef<string[] | null>(null);
+
+  const clearBurst = useCallback(() => setBurst(null), []);
+  const clearCelebration = useCallback(() => setCelebration(0), []);
 
   const updatePrefs = useCallback((patch: Partial<Preferences>) => {
     setPrefs((current) => {
@@ -248,7 +254,10 @@ export function App() {
     }
     if (files.length === 0) return;
     setPendingFiles(files);
-    setDialog('add');
+    // Play the pickup where the files landed, then bring up the dialog so the
+    // animation is not immediately covered by it.
+    setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count: files.length });
+    window.setTimeout(() => setDialog('add'), 430);
   };
 
   /* ------------------------------ filtering ---------------------------- */
@@ -723,7 +732,8 @@ export function App() {
         </div>
       )}
 
-      <Celebrate trigger={celebration} onDone={() => setCelebration(0)} />
+      <Celebrate trigger={celebration} onDone={clearCelebration} />
+      <DropBurst burst={burst} onDone={clearBurst} />
 
       {dialog === 'add' && (
         <AddDialog

@@ -2282,10 +2282,34 @@ td.ratio.poor {
   background: var(--accent-soft);
   color: var(--text);
   text-align: center;
+  animation: drop-breathe 1.5s ease-in-out infinite;
 }
 
 .drop-card svg {
   color: var(--accent);
+  animation: drop-bob 1.5s ease-in-out infinite;
+}
+
+@keyframes drop-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 34%, transparent);
+    border-color: var(--accent);
+  }
+  50% {
+    box-shadow: 0 0 44px 8px color-mix(in srgb, var(--accent) 22%, transparent);
+    border-color: var(--accent-2);
+  }
+}
+
+@keyframes drop-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
 }
 
 .drop-card strong {
@@ -2658,4 +2682,229 @@ td.ratio.poor {
   color: var(--text-faint);
   letter-spacing: 0;
   text-transform: none;
+}
+
+/* ============================ drop pickup ============================== */
+
+/*
+ * Plays above everything, including the add dialog that follows it, so the
+ * payload is still visible on its way to the Add button.
+ */
+.drop-burst {
+  position: fixed;
+  z-index: 350;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.drop-burst > span {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/* Shockwave */
+.burst-ring {
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border-radius: 50%;
+  border: 2.5px solid var(--accent);
+  animation: burst-ring 0.72s cubic-bezier(0.15, 0.7, 0.3, 1) forwards;
+}
+
+.burst-ring.two {
+  border-color: var(--accent-2);
+  animation-delay: 0.09s;
+  animation-duration: 0.85s;
+}
+
+@keyframes burst-ring {
+  from {
+    transform: scale(0.2);
+    opacity: 0.95;
+  }
+  to {
+    transform: scale(8.5);
+    opacity: 0;
+  }
+}
+
+/* Impact flash */
+.burst-flash {
+  width: 130px;
+  height: 130px;
+  margin: -65px 0 0 -65px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 55%, transparent) 0%,
+    transparent 68%
+  );
+  animation: burst-flash 0.45s ease-out forwards;
+}
+
+@keyframes burst-flash {
+  from {
+    transform: scale(0.4);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+
+/* Sparks thrown outward */
+.burst-spark {
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 65%, transparent);
+  animation: burst-spark 0.66s cubic-bezier(0.2, 0.7, 0.35, 1) forwards;
+}
+
+.burst-spark:nth-child(3n) {
+  background: var(--accent-2);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent-2) 65%, transparent);
+}
+
+.burst-spark:nth-child(4n) {
+  background: var(--ok);
+  box-shadow: none;
+}
+
+@keyframes burst-spark {
+  from {
+    transform: translate(-50%, -50%) scale(1) rotate(0deg);
+    opacity: 1;
+  }
+  to {
+    transform: translate(calc(-50% + var(--sx)), calc(-50% + var(--sy))) scale(0.2)
+      rotate(var(--spin));
+    opacity: 0;
+  }
+}
+
+/* The payload itself, collected into the Add button */
+.burst-payload {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  margin: -17px 0 0 -42px;
+  border-radius: 999px;
+  background: var(--accent-line);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 8px 26px color-mix(in srgb, var(--accent) 45%, transparent);
+  animation: burst-fly 0.92s cubic-bezier(0.5, -0.35, 0.3, 1) forwards;
+}
+
+@keyframes burst-fly {
+  0% {
+    transform: translate(0, 0) scale(0.4);
+    opacity: 0;
+  }
+  18% {
+    transform: translate(0, -14px) scale(1.12);
+    opacity: 1;
+  }
+  30% {
+    transform: translate(0, -8px) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(var(--dx), var(--dy)) scale(0.28);
+    opacity: 0;
+  }
+}
+
+/* Arcade score pop */
+.burst-score {
+  margin: -46px 0 0 -60px;
+  width: 120px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  text-shadow: 0 2px 12px color-mix(in srgb, var(--accent) 55%, transparent);
+  animation: burst-score 1.05s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+}
+
+@keyframes burst-score {
+  0% {
+    transform: translateY(6px) scale(0.7);
+    opacity: 0;
+  }
+  22% {
+    transform: translateY(-10px) scale(1.15);
+    opacity: 1;
+  }
+  60% {
+    transform: translateY(-30px) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-56px) scale(0.95);
+    opacity: 0;
+  }
+}
+
+/* The Add button reacts when the payload lands. */
+.btn.primary.hit {
+  animation: btn-hit 0.42s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+
+@keyframes btn-hit {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 4px 16px rgba(124, 155, 255, 0.3);
+  }
+  35% {
+    transform: scale(1.18);
+    box-shadow: 0 0 0 8px var(--accent-soft);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 4px 16px rgba(124, 155, 255, 0.3);
+  }
+}
+
+/* Retro keeps its hard pixel edges through the whole sequence. */
+:root[data-theme='retro'] .burst-ring,
+:root[data-theme='retro'] .burst-flash,
+:root[data-theme='retro'] .burst-payload {
+  border-radius: 0;
+}
+
+:root[data-theme='retro'] .burst-spark {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+:root[data-theme='retro'] .burst-payload {
+  background: var(--accent);
+  color: #0d0620;
+  box-shadow: var(--shadow-sm);
+  text-shadow: none;
+}
+
+:root[data-theme='retro'] .burst-ring,
+:root[data-theme='retro'] .burst-spark {
+  animation-timing-function: steps(9, end);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drop-burst,
+  .drop-card,
+  .drop-card svg {
+    animation: none;
+  }
+  .drop-burst {
+    display: none;
+  }
 }

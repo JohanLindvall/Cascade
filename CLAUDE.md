@@ -158,6 +158,20 @@ Four modes: `system`, `light`, `dark`, `retro`. `system` resolves through `prefe
 plus, for retro, a set of shape overrides (zero radius, offset shadows, stepped bars). Keep it that
 way.
 
+## Animations
+
+`Celebrate` (download finished) and `DropBurst` (files dropped) are fire-and-forget: the parent
+hands them a trigger and they clean themselves up on a timer.
+
+Both keep their `onDone` in a ref and depend only on the trigger id. That is not incidental — the
+app re-renders on every poll, so an inline `onDone={() => ...}` in the dependency array tears the
+effect down and restarts the sequence one and a half seconds in. The visible symptom is subtle
+(the tail of the animation silently never runs), so if you add another timed effect, follow the
+same pattern.
+
+Both are also skipped under `prefers-reduced-motion`, in the component *and* in CSS, and both
+render above the modal layer so a dialog opening underneath does not cut them off.
+
 ## Responsive layout
 
 Breakpoints live in `styles.css` and, where a component has to change rather than restyle, in

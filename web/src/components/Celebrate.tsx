@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 interface Piece {
   id: number;
@@ -18,11 +18,14 @@ const COLORS = ['var(--accent)', 'var(--accent-2)', 'var(--ok)', 'var(--down)', 
  */
 export function Celebrate({ trigger, onDone }: { trigger: number; onDone: () => void }) {
   const [pieces, setPieces] = useState<Piece[]>([]);
+  // Held in a ref so a parent re-render cannot restart the burst mid-flight.
+  const done = useRef(onDone);
+  done.current = onDone;
 
   useEffect(() => {
     if (!trigger) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      onDone();
+      done.current();
       return;
     }
     const batch: Piece[] = Array.from({ length: 26 }, (_, index) => ({
@@ -37,10 +40,10 @@ export function Celebrate({ trigger, onDone }: { trigger: number; onDone: () => 
     setPieces(batch);
     const timer = window.setTimeout(() => {
       setPieces([]);
-      onDone();
+      done.current();
     }, 2600);
     return () => window.clearTimeout(timer);
-  }, [trigger, onDone]);
+  }, [trigger]);
 
   if (pieces.length === 0) return null;
 

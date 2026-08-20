@@ -230,6 +230,12 @@ Drag `.torrent` files onto the window — anywhere — and drop to add them.
 
 ![Drag and drop](docs/screenshot-drop.png)
 
+Dropping plays a pickup: a shockwave and sparks at the point of impact, a `+N torrents` score, and
+the payload flying up into the Add button, which takes the hit. In the retro theme the whole thing
+goes blocky.
+
+![Drop pickup](docs/screenshot-drop-burst.png)
+
 The add dialog opens prefilled with what you dropped; magnet links and URLs can be pasted
 alongside. Destination directory and label are set at add time.
 
