@@ -9,45 +9,39 @@ PORT             ?= 8080
 PEER_PORT        ?= 50000
 DATA             ?= $(CURDIR)/data
 
-# Which rtorrent ends up in the image.
-#   ALPINE_VERSION 3.19/3.20 -> 0.9.8 | 3.21 -> 0.10.0 | 3.22 -> 0.15.2
-ALPINE_VERSION   ?= 3.21
-RTORRENT_FLAVOR  ?= package
-RTORRENT_VERSION ?= 0.9.8
+# rtorrent is always compiled from an upstream tag.
+ALPINE_VERSION   ?= 3.22
+RTORRENT_VERSION ?= 0.16.20
 LIBTORRENT_VERSION ?=
 
 BUILD_ARGS = --build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
-             --build-arg RTORRENT_FLAVOR=$(RTORRENT_FLAVOR) \
              --build-arg RTORRENT_VERSION=$(RTORRENT_VERSION) \
              $(if $(LIBTORRENT_VERSION),--build-arg LIBTORRENT_VERSION=$(LIBTORRENT_VERSION),)
 
 REF = $(IMAGE):$(TAG)
 
 .DEFAULT_GOAL := help
-.PHONY: help build build-source matrix run stop logs shell attach rtorrent-log \
+.PHONY: help build matrix run stop logs shell attach rtorrent-log \
         smoke up down clean distclean dev version
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nCascade\n\nUsage: make \033[36m<target>\033[0m [VAR=value]\n\nTargets:\n"} \
 	  /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 } \
 	  /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
-	@printf "\nVariables: IMAGE=%s TAG=%s PORT=%s ALPINE_VERSION=%s RTORRENT_FLAVOR=%s\n\n" \
-	  "$(IMAGE)" "$(TAG)" "$(PORT)" "$(ALPINE_VERSION)" "$(RTORRENT_FLAVOR)"
+	@printf "\nVariables: IMAGE=%s TAG=%s PORT=%s RTORRENT_VERSION=%s ALPINE_VERSION=%s\n\n" \
+	  "$(IMAGE)" "$(TAG)" "$(PORT)" "$(RTORRENT_VERSION)" "$(ALPINE_VERSION)"
 
 ##@ Build
 
 build: ## Build the image (also typechecks both TypeScript halves)
 	docker build $(BUILD_ARGS) -t $(REF) .
 
-build-source: ## Compile rtorrent from an upstream tag (RTORRENT_VERSION=0.9.8)
-	$(MAKE) build RTORRENT_FLAVOR=source TAG=$(RTORRENT_VERSION)-src
-
-matrix: ## Build against every packaged rtorrent version
-	@for v in 3.20 3.21 3.22; do \
-	  echo "==> alpine $$v"; \
-	  docker build --build-arg ALPINE_VERSION=$$v -t $(IMAGE):alpine$$v . || exit 1; \
+matrix: ## Build the rtorrent versions the UI is tested against
+	@for v in 0.9.8 0.15.2 0.16.20; do \
+	  echo "==> rtorrent $$v"; \
+	  docker build --build-arg RTORRENT_VERSION=$$v -t $(IMAGE):$$v . || exit 1; \
 	done
-	@echo "==> built: $(IMAGE):alpine3.20 (0.9.8), alpine3.21 (0.10.0), alpine3.22 (0.15.2)"
+	@echo "==> built: $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.20"
 
 ##@ Run
 
@@ -118,4 +112,4 @@ clean: ## Remove containers built from this image
 	docker rm -f $(CONTAINER) cascade-smoke >/dev/null 2>&1 || true
 
 distclean: clean ## Also remove the images
-	docker rmi -f $(REF) $(IMAGE):alpine3.20 $(IMAGE):alpine3.21 $(IMAGE):alpine3.22 >/dev/null 2>&1 || true
+	docker rmi -f $(REF) $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.20 >/dev/null 2>&1 || true

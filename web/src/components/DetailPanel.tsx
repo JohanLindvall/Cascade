@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
-import { bytes, duration, fileName, percent, rate, relative, timestamp } from '../format';
+import { bytes, duration, fileName, percent, rate, relative, timestamp, until } from '../format';
 import type { Peer, Torrent, TorrentFile, Tracker } from '../types';
 import { IconClose, IconFile, IconGlobe, IconInfo, IconUsers } from './icons';
 import { ProgressBar, useToast } from './ui';
@@ -8,6 +8,61 @@ import { ProgressBar, useToast } from './ui';
 type Tab = 'general' | 'files' | 'peers' | 'trackers';
 
 const PRIORITY_LABELS: Record<number, string> = { 0: 'skip', 1: 'normal', 2: 'high' };
+
+/** libtorrent's Tracker::Type / Tracker::Event enumerations. */
+const TRACKER_TYPES: Record<number, string> = { 1: 'HTTP', 2: 'UDP', 3: 'DHT' };
+const TRACKER_EVENTS: Record<number, string> = {
+  0: 'none',
+  1: 'completed',
+  2: 'started',
+  3: 'stopped',
+  4: 'scrape',
+};
+
+interface Flag {
+  label: string;
+  title: string;
+  tone?: 'good' | 'warn' | 'bad';
+}
+
+function peerFlags(peer: Peer): Flag[] {
+  const flags: Flag[] = [];
+  if (peer.encrypted) flags.push({ label: 'enc', title: 'Connection is encrypted', tone: 'good' });
+  if (peer.obfuscated) flags.push({ label: 'obf', title: 'Header obfuscation in use' });
+  if (peer.incoming) flags.push({ label: 'in', title: 'Peer connected to us' });
+  if (peer.preferred) flags.push({ label: 'pref', title: 'Preferred peer', tone: 'good' });
+  if (peer.snubbed) flags.push({ label: 'snub', title: 'Snubbed — sent us nothing recently', tone: 'warn' });
+  if (peer.unwanted) flags.push({ label: 'unwanted', title: 'Marked unwanted', tone: 'warn' });
+  if (peer.banned) flags.push({ label: 'banned', title: 'Banned', tone: 'bad' });
+  return flags;
+}
+
+function Flags({ flags }: { flags: Flag[] }) {
+  if (flags.length === 0) return <span style={{ color: 'var(--text-faint)' }}>—</span>;
+  return (
+    <span className="flags">
+      {flags.map((flag) => (
+        <span key={flag.label} className={`tag ${flag.tone ?? ''}`} title={flag.title}>
+          {flag.label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/** Key/value block shown when a peer or tracker row is expanded. */
+function MiniKv({ rows }: { rows: Array<[string, React.ReactNode]> }) {
+  return (
+    <div className="mini-kv">
+      {rows.map(([key, value]) => (
+        <div key={key}>
+          <span>{key}</span>
+          <b>{value}</b>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 interface DetailPanelProps {
   torrent: Torrent;
@@ -18,6 +73,7 @@ interface DetailPanelProps {
 
 export function DetailPanel({ torrent, onClose, onHeightChange, height }: DetailPanelProps) {
   const [tab, setTab] = useState<Tab>('general');
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [files, setFiles] = useState<TorrentFile[]>([]);
   const [peers, setPeers] = useState<Peer[]>([]);
   const [trackers, setTrackers] = useState<Tracker[]>([]);
@@ -39,6 +95,17 @@ export function DetailPanel({ torrent, onClose, onHeightChange, height }: Detail
     const timer = window.setInterval(() => void refresh(), 2500);
     return () => window.clearInterval(timer);
   }, [refresh]);
+
+  // Collapse expanded rows when switching torrent or tab.
+  useEffect(() => setExpanded(new Set()), [hash, tab]);
+
+  const toggle = (key: string) =>
+    setExpanded((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const dragState = useRef<{ startY: number; startHeight: number } | null>(null);
 
@@ -181,50 +248,85 @@ export function DetailPanel({ torrent, onClose, onHeightChange, height }: Detail
               <tr>
                 <th>Address</th>
                 <th>Client</th>
-                <th style={{ width: 150 }}>Progress</th>
+                <th style={{ width: 140 }}>Progress</th>
                 <th style={{ textAlign: 'right' }}>Down</th>
                 <th style={{ textAlign: 'right' }}>Up</th>
+                <th style={{ textAlign: 'right' }} title="What this peer is pulling from the swarm">
+                  Swarm
+                </th>
                 <th style={{ textAlign: 'right' }}>Downloaded</th>
                 <th style={{ textAlign: 'right' }}>Uploaded</th>
                 <th>Flags</th>
               </tr>
             </thead>
             <tbody>
-              {peers.map((peer) => (
-                <tr key={`${peer.address}:${peer.port}:${peer.id}`}>
-                  <td className="num">
-                    {peer.address}:{peer.port}
-                  </td>
-                  <td>{peer.client || '—'}</td>
-                  <td>
-                    <div className="progress-cell">
-                      <ProgressBar value={peer.progress} variant={peer.progress >= 1 ? 'done' : 'default'} />
-                      <span className="num">{percent(peer.progress, 0)}</span>
-                    </div>
-                  </td>
-                  <td className="num rate-num down" style={{ textAlign: 'right' }}>
-                    {rate(peer.downRate)}
-                  </td>
-                  <td className="num rate-num up" style={{ textAlign: 'right' }}>
-                    {rate(peer.upRate)}
-                  </td>
-                  <td className="num" style={{ textAlign: 'right' }}>
-                    {bytes(peer.downTotal)}
-                  </td>
-                  <td className="num" style={{ textAlign: 'right' }}>
-                    {bytes(peer.upTotal)}
-                  </td>
-                  <td style={{ display: 'flex', gap: 4 }}>
-                    {peer.encrypted && <span className="tag">enc</span>}
-                    {peer.obfuscated && <span className="tag">obf</span>}
-                    {peer.incoming && <span className="tag">in</span>}
-                    {peer.snubbed && <span className="tag">snub</span>}
-                  </td>
-                </tr>
-              ))}
+              {peers.map((peer) => {
+                const key = `p:${peer.address}:${peer.port}`;
+                const open = expanded.has(key);
+                return (
+                  <Fragment key={key}>
+                    <tr className={`expandable ${open ? 'open' : ''}`} onClick={() => toggle(key)}>
+                      <td className="num">
+                        <span className="caret">{open ? '▾' : '▸'}</span>
+                        {peer.address}:{peer.port}
+                      </td>
+                      <td>{peer.client || '—'}</td>
+                      <td>
+                        <div className="progress-cell">
+                          <ProgressBar
+                            value={peer.progress}
+                            variant={peer.progress >= 1 ? 'done' : 'default'}
+                          />
+                          <span className="num">{percent(peer.progress, 0)}</span>
+                        </div>
+                      </td>
+                      <td className="num rate-num down" style={{ textAlign: 'right' }}>
+                        {rate(peer.downRate)}
+                      </td>
+                      <td className="num rate-num up" style={{ textAlign: 'right' }}>
+                        {rate(peer.upRate)}
+                      </td>
+                      <td className="num" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>
+                        {rate(peer.peerRate)}
+                      </td>
+                      <td className="num" style={{ textAlign: 'right' }}>
+                        {bytes(peer.downTotal)}
+                      </td>
+                      <td className="num" style={{ textAlign: 'right' }}>
+                        {bytes(peer.upTotal)}
+                      </td>
+                      <td>
+                        <Flags flags={peerFlags(peer)} />
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr className="detail-row">
+                        <td colSpan={9}>
+                          <MiniKv
+                            rows={[
+                              ['Peer ID', peer.id || '—'],
+                              ['Client', peer.client || 'unknown'],
+                              ['Extensions', peer.options || '—'],
+                              ['Direction', peer.incoming ? 'incoming' : 'outgoing'],
+                              ['Encryption', peer.encrypted ? 'encrypted' : 'plaintext'],
+                              ['Obfuscated header', peer.obfuscated ? 'yes' : 'no'],
+                              ['Preferred', peer.preferred ? 'yes' : 'no'],
+                              ['Snubbed', peer.snubbed ? 'yes' : 'no'],
+                              ['Unwanted', peer.unwanted ? 'yes' : 'no'],
+                              ['Banned', peer.banned ? 'yes' : 'no'],
+                              ['Swarm rate', rate(peer.peerRate)],
+                              ['Swarm total', bytes(peer.peerTotal)],
+                            ]}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
               {peers.length === 0 && (
                 <tr>
-                  <td colSpan={8} style={{ color: 'var(--text-faint)' }}>
+                  <td colSpan={9} style={{ color: 'var(--text-faint)' }}>
                     No peers connected.
                   </td>
                 </tr>
@@ -238,48 +340,108 @@ export function DetailPanel({ torrent, onClose, onHeightChange, height }: Detail
             <thead>
               <tr>
                 <th>URL</th>
-                <th>Group</th>
+                <th>Type</th>
+                <th>State</th>
                 <th style={{ textAlign: 'right' }}>Seeders</th>
                 <th style={{ textAlign: 'right' }}>Leechers</th>
                 <th style={{ textAlign: 'right' }}>Downloaded</th>
-                <th>Last scrape</th>
+                <th style={{ textAlign: 'right' }} title="Peers returned by the last announce">
+                  Peers
+                </th>
+                <th>Next announce</th>
                 <th style={{ textAlign: 'right' }}>OK / fail</th>
                 <th>Enabled</th>
               </tr>
             </thead>
             <tbody>
-              {trackers.map((tracker) => (
-                <tr key={tracker.index}>
-                  <td className="wrap" title={tracker.url}>
-                    {tracker.url}
-                  </td>
-                  <td className="num">{tracker.group}</td>
-                  <td className="num" style={{ textAlign: 'right' }}>
-                    {tracker.seeders || '—'}
-                  </td>
-                  <td className="num" style={{ textAlign: 'right' }}>
-                    {tracker.leechers || '—'}
-                  </td>
-                  <td className="num" style={{ textAlign: 'right' }}>
-                    {tracker.downloaded || '—'}
-                  </td>
-                  <td className="num">{relative(tracker.lastScrape)}</td>
-                  <td className="num" style={{ textAlign: 'right' }}>
-                    {tracker.successes} / {tracker.failures}
-                  </td>
-                  <td>
-                    <input
-                      className="check"
-                      type="checkbox"
-                      checked={tracker.enabled}
-                      onChange={(event) => void toggleTracker(tracker.index, event.target.checked)}
-                    />
-                  </td>
-                </tr>
-              ))}
+              {trackers.map((tracker) => {
+                const key = `t:${tracker.index}`;
+                const open = expanded.has(key);
+                const state: Flag[] = [];
+                if (tracker.busy) state.push({ label: 'announcing', title: 'Request in flight' });
+                if (tracker.open) state.push({ label: 'open', title: 'Connection open' });
+                if (!tracker.usable) state.push({ label: 'unusable', title: 'Not currently usable', tone: 'warn' });
+                if (tracker.extra) state.push({ label: 'extra', title: 'Added at runtime, not from the torrent' });
+                if (tracker.failures > 0 && tracker.successes === 0) {
+                  state.push({ label: 'failing', title: 'No successful announce yet', tone: 'bad' });
+                }
+                if (state.length === 0 && tracker.successes > 0) {
+                  state.push({ label: 'ok', title: 'Announced successfully', tone: 'good' });
+                }
+                return (
+                  <Fragment key={key}>
+                    <tr className={`expandable ${open ? 'open' : ''}`} onClick={() => toggle(key)}>
+                      <td className="wrap" title={tracker.url}>
+                        <span className="caret">{open ? '▾' : '▸'}</span>
+                        {tracker.url}
+                      </td>
+                      <td>{TRACKER_TYPES[tracker.type] ?? `type ${tracker.type}`}</td>
+                      <td>
+                        <Flags flags={state} />
+                      </td>
+                      <td className="num" style={{ textAlign: 'right' }}>
+                        {tracker.seeders || '—'}
+                      </td>
+                      <td className="num" style={{ textAlign: 'right' }}>
+                        {tracker.leechers || '—'}
+                      </td>
+                      <td className="num" style={{ textAlign: 'right' }}>
+                        {tracker.downloaded || '—'}
+                      </td>
+                      <td className="num" style={{ textAlign: 'right' }}>
+                        {tracker.sumPeers || '—'}
+                        {tracker.newPeers > 0 && (
+                          <span style={{ color: 'var(--ok)' }}> +{tracker.newPeers}</span>
+                        )}
+                      </td>
+                      <td className="num">{until(tracker.nextActivity)}</td>
+                      <td className="num" style={{ textAlign: 'right' }}>
+                        {tracker.successes} /{' '}
+                        <span style={{ color: tracker.failures ? 'var(--danger)' : undefined }}>
+                          {tracker.failures}
+                        </span>
+                      </td>
+                      <td onClick={(event) => event.stopPropagation()}>
+                        <input
+                          className="check"
+                          type="checkbox"
+                          checked={tracker.enabled}
+                          onChange={(event) => void toggleTracker(tracker.index, event.target.checked)}
+                        />
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr className="detail-row">
+                        <td colSpan={10}>
+                          <MiniKv
+                            rows={[
+                              ['Group', String(tracker.group)],
+                              ['Tracker ID', tracker.trackerId || '—'],
+                              ['Latest event', TRACKER_EVENTS[tracker.latestEvent] ?? String(tracker.latestEvent)],
+                              ['Last announce', relative(tracker.lastActivity)],
+                              ['Next announce', until(tracker.nextActivity)],
+                              ['Last success', relative(tracker.lastSuccess)],
+                              ['Next success', until(tracker.nextSuccess)],
+                              ['Last failure', tracker.lastFailure ? relative(tracker.lastFailure) : '—'],
+                              ['Next retry', tracker.failures > 0 ? until(tracker.nextFailure) : '—'],
+                              ['Announce interval', duration(tracker.interval)],
+                              ['Min interval', duration(tracker.minInterval)],
+                              ['Peers last announce', `${tracker.sumPeers} (${tracker.newPeers} new)`],
+                              ['Scrapes', String(tracker.scrapes)],
+                              ['Last scrape', relative(tracker.lastScrape)],
+                              ['Scrapable', tracker.canScrape ? 'yes' : 'no'],
+                              ['Usable', tracker.usable ? 'yes' : 'no'],
+                            ]}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
               {trackers.length === 0 && (
                 <tr>
-                  <td colSpan={8} style={{ color: 'var(--text-faint)' }}>
+                  <td colSpan={10} style={{ color: 'var(--text-faint)' }}>
                     No trackers.
                   </td>
                 </tr>

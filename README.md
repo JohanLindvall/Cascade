@@ -9,8 +9,8 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
 ## Highlights
 
 - **One container, batteries included** — rtorrent, its config, and the UI. Nothing else to run.
-- **Pick your rtorrent version at build time** — 0.9.8, 0.10.0, 0.15.2 from distro packages, or
-  any upstream tag compiled from source.
+- **rtorrent 0.16.20, compiled from source** — the version in the image is exactly the upstream
+  tag you asked for, not whatever a distro packaged. Any other tag builds with one build arg.
 - **Works across backend versions** — the server probes `system.listMethods` on connect and picks
   command names from what the running rtorrent actually implements, hiding unsupported controls
   in the UI instead of failing.
@@ -21,6 +21,8 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
   ready to go.
 - **Lightly gamified** — a level and a set of badges earned from real transfer totals, with a
   confetti burst when a download lands. Off with one environment variable if it is not for you.
+- **Four themes** — system, light, dark, and a retro 8-bit CRT mode. Preferences are stored on the
+  server, so they follow the install rather than the browser.
 - **Configured entirely from `docker run`** — the rtorrent backend options are environment
   variables.
 
@@ -49,33 +51,39 @@ docker compose up -d
 
 ## Choosing the rtorrent version
 
-The image ships whichever rtorrent you ask for at build time. The quick way is the Alpine base,
-which decides the packaged version:
-
-| `--build-arg ALPINE_VERSION=` | rtorrent | libtorrent |
-| ----------------------------- | -------- | ---------- |
-| `3.19`, `3.20`                | 0.9.8    | 0.13.8     |
-| `3.21` (default)              | 0.10.0   | 0.14.0     |
-| `3.22`                        | 0.15.2   | 0.15.2     |
+rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.20**:
 
 ```bash
-docker build --build-arg ALPINE_VERSION=3.22 -t cascade:0.15 .
+docker build -t cascade .                                       # 0.16.20
+docker build --build-arg RTORRENT_VERSION=0.15.2 -t cascade:0.15.2 .
+docker build --build-arg RTORRENT_VERSION=0.9.8  -t cascade:0.9.8 .
+make matrix                                                     # 0.9.8, 0.15.2, 0.16.20
 ```
 
-To compile a specific upstream tag instead:
+libtorrent is pinned to the matching release automatically — rtorrent 0.9.x pairs with libtorrent
+0.13.x, 0.10.x with 0.14.x, and from 0.15 the two share a version. `LIBTORRENT_VERSION` overrides
+that, and `RTORRENT_REPO`/`LIBTORRENT_REPO` point at forks. `ALPINE_VERSION` (default 3.22) picks
+the base image.
 
-```bash
-docker build --build-arg RTORRENT_FLAVOR=source \
-             --build-arg RTORRENT_VERSION=0.9.8 \
-             -t cascade:0.9.8 .
-```
+The UI adapts at runtime, so one build of the frontend drives any of them — 0.9.8, 0.15.2 and
+0.16.20 are all exercised by the same API suite. Which backend you got is shown under the logo and
+in **Settings → Backend**.
 
-`LIBTORRENT_VERSION` is derived from `RTORRENT_VERSION` (0.9.x → 0.13.x, 0.10.x → 0.14.x,
-otherwise matching) and can be set explicitly. `RTORRENT_REPO` / `LIBTORRENT_REPO` point at
-forks. All four rtorrent builds above are tested by the same API suite.
+### What changed in 0.16
 
-The UI adapts at runtime, so one build of the frontend drives any of them. Which backend you got
-is shown under the logo and in **Settings → Backend**.
+0.16 renamed and removed a number of commands. Cascade probes for them rather than assuming, so
+older backends keep working:
+
+| Area | ≤ 0.15 | 0.16 |
+| --- | --- | --- |
+| Listening port | `network.port_range` | `network.listen.port.range` |
+| Scheduler | `schedule2` | `schedule` (the string form, which all versions accept) |
+| HTTP connections | `network.http.max_open` (writable) | `network.http.max_total_connections` (read-only) |
+| Proxy | `network.proxy_address` | `network.proxy.global` / `network.proxy.http` |
+
+0.16 also adds options Cascade now exposes when present: per-host HTTP connection limits, a global
+proxy, separate IPv4/IPv6 bind addresses, a DHT announce-port override, outgoing-connection
+blocking, and a random-access hint for hashing. On older backends those controls are hidden.
 
 ## Configuration
 
@@ -129,7 +137,13 @@ Rates are in **KiB/s**; `0` means unlimited.
 | `RT_PROXY` | — | HTTP proxy for tracker announces |
 | `RT_HTTP_CAPATH` / `RT_HTTP_CACERT` | — | TLS trust store for announces |
 | `RT_MAX_OPEN_FILES` | rtorrent default | Open file handle cap |
-| `RT_MAX_HTTP_OPEN` | rtorrent default | Concurrent HTTP requests |
+| `RT_MAX_HTTP_OPEN` | rtorrent default | Concurrent HTTP requests (read-only on 0.16+) |
+| `RT_HTTP_MAX_HOST` | rtorrent default | HTTP connections per host (0.16+) |
+| `RT_PROXY_GLOBAL` | — | Global proxy for all traffic (0.16+) |
+| `RT_BIND_IPV4` / `RT_BIND_IPV6` | — | Separate bind addresses per family (0.16+) |
+| `RT_DHT_OVERRIDE_PORT` | — | Announce a different DHT port (0.16+) |
+| `RT_BLOCK_OUTGOING` | — | `yes` refuses outgoing connections (0.16+) |
+| `RT_ADVISE_RANDOM_HASHING` | — | Random-access hint while hashing (0.16+) |
 | `RT_RECEIVE_BUFFER` / `RT_SEND_BUFFER` | — | Socket buffer sizes in bytes |
 
 ### Storage
@@ -182,9 +196,17 @@ Rates are in **KiB/s**; `0` means unlimited.
 
 ## The UI
 
-Click a torrent for details — general, files with per-file priority, live peers, trackers.
+Click a torrent for details — general, files with per-file priority, live peers and trackers. Peer
+and tracker rows expand for everything rtorrent knows: peer id, protocol extensions, direction,
+encryption and the preferred/snubbed/unwanted/banned flags.
 
 ![Peers](docs/screenshot-peers.png)
+
+Trackers show type, state, scrape counts and the peers returned by the last announce, with a
+countdown to the next one; expanding a row adds announce intervals, success and failure timings,
+and the latest event.
+
+![Trackers](docs/screenshot-trackers.png)
 
 Drag `.torrent` files onto the window — anywhere — and drop to add them.
 
@@ -216,12 +238,26 @@ backend exposes with its help text.
 
 ![API console](docs/screenshot-console.png)
 
-There is a light theme too.
+Themes are chosen from the header: **System** (follows the OS), **Light**, **Dark**, and a
+**Retro 8-bit** mode with CRT phosphor colours, hard pixel edges, stepped progress bars and
+scanlines.
+
+![Theme picker](docs/screenshot-theme-menu.png)
+
+![Retro 8-bit theme](docs/screenshot-retro.png)
+
+The retro treatment is driven entirely by the same design tokens, so it reaches every dialog:
+
+![Retro progress dialog](docs/screenshot-retro-progress.png)
+
+And the light theme:
 
 ![Light theme](docs/screenshot-light.png)
 
-Progress lives in `/config/cascade-state.json` alongside the add times and throttle groups, so it
-survives container restarts. Deleting that file resets it.
+UI preferences — theme, sort column, detail-pane height — are saved server-side, so a new browser
+or a different machine picks up the same setup. They live in `/config/cascade-state.json` next to
+gamification progress, add times and throttle groups; that one file is the whole of Cascade's
+persistent state, and deleting it resets everything.
 
 Keyboard: `n` add torrents · `Ctrl/⌘+A` select all · `Delete` remove · `Shift+Delete` remove with
 data · `Esc` clear selection. Rows support `Ctrl`-click and `Shift`-click ranges.
@@ -236,6 +272,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET` | `/api/torrents?view=main` | Torrent list for an rtorrent view |
 | `GET` | `/api/capabilities` | Backend version and supported feature map |
 | `GET` | `/api/game` | Level, XP and badge progress |
+| `GET`/`PATCH` | `/api/prefs` | UI preferences (theme, sort, layout) |
 | `GET` | `/api/torrents/:hash/files` \| `/peers` \| `/trackers` | Per-torrent detail |
 | `POST` | `/api/torrents/upload` | Multipart: `torrents[]`, `urls`, `start`, `directory`, `label` |
 | `POST` | `/api/torrents/url` | Add one magnet/URL as JSON |

@@ -44,9 +44,13 @@ curl -s localhost:18080/api/capabilities        # which backend am I talking to
 curl -s localhost:18080/api/state               # what the UI polls
 ```
 
-To test against a different rtorrent, rebuild with `--build-arg ALPINE_VERSION=3.19|3.21|3.22`
-(0.9.8 / 0.10.0 / 0.15.2). **Changes to the backend should be checked against at least the oldest
+rtorrent is always compiled from an upstream tag; there is no distro-package path. To test against
+a different one, rebuild with `--build-arg RTORRENT_VERSION=0.9.8` (or `make matrix`, which builds
+0.9.8, 0.15.2 and 0.16.20). **Changes to the backend should be checked against at least the oldest
 and newest**, because the command set genuinely differs.
+
+Old tags need `-include algorithm -include cstdint` to compile against a current libstdc++; the
+Dockerfile passes that to every source build.
 
 A full end-to-end transfer can be staged with two containers and a throwaway tracker: seed a real
 file from one, download it in the other, and watch progress, peers and rates in the UI.
@@ -83,13 +87,23 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    `/run/cascade/boot-settings.json`, which goes through the same capability-filtered
    `updateSettings` path. **Add new tunables there, not to the rc.**
 
-7. **rtorrent needs a pty**, so it runs inside a detached `screen` session. `SCREENDIR` must be
+   The listening port is the exception: it has to be right before rtorrent binds, and applying it
+   over XML-RPC afterwards does not rebind. 0.16 renamed those commands, so the entrypoint asks
+   rtorrent which name it knows (`rc_command_exists`, a one-line option file) and writes that one.
+   Use the same trick for anything else that genuinely must be in the rc.
+
+7. **A setter existing does not mean it works.** 0.16 registers
+   `network.http.max_total_connections.set` but the value never changes, so `maxHttpOpen` maps only
+   to the legacy command and the UI greys the field out there. When adding a setting, set it and
+   read it back before believing it.
+
+8. **rtorrent needs a pty**, so it runs inside a detached `screen` session. `SCREENDIR` must be
    mode 0700 or screen refuses to start.
 
-8. **Some settings are write-only** — `dht.mode` and `protocol.encryption` have `.set` but no
+9. **Some settings are write-only** — `dht.mode` and `protocol.encryption` have `.set` but no
    getter, so the UI cannot show their current value.
 
-9. **Labels live in `d.custom1`**, URL-encoded (the ruTorrent convention), which is why
+10. **Labels live in `d.custom1`**, URL-encoded (the ruTorrent convention), which is why
    `mapTorrent` decodes and `setLabel` encodes.
 
 ## Adding support for a new backend command
@@ -117,6 +131,26 @@ Badges are pure functions of the stats (`ACHIEVEMENTS` in `achievements.ts`), so
 single entry — but the unlock timestamp is persisted, so a badge whose condition later stops
 holding stays earned. `CASCADE_GAMIFY=0` disables the whole layer; the UI keys off
 `game.enabled`, so anything you add must be behind that flag too.
+
+## Persistence
+
+Everything Cascade remembers is in one JSON file, `/config/cascade-state.json`, owned by
+`store.ts`: UI preferences, gamification counters and unlocked badges, per-torrent add times and
+last-seen totals, and throttle groups. Writes are debounced and go through a temp file plus rename,
+so add state there rather than introducing another file.
+
+Preferences are validated in `prefs.ts` (`sanitizePreferences`) before being stored — an unknown
+theme or sort key falls back to the default instead of reaching the UI. The browser keeps a
+localStorage copy of the preferences, but only as a cache so the theme can apply on first paint;
+the file always wins once it loads.
+
+## Themes
+
+Four modes: `system`, `light`, `dark`, `retro`. `system` resolves through `prefers-color-scheme` in
+`theme.ts`, and the resolved value goes on `<html data-theme>`. Themes are pure token overrides in
+`styles.css` — components carry no per-theme markup, so a new theme is a block of custom properties
+plus, for retro, a set of shape overrides (zero radius, offset shadows, stepped bars). Keep it that
+way.
 
 ## Conventions
 

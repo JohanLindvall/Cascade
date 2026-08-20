@@ -46,6 +46,14 @@ export function timestamp(value: number): string {
   });
 }
 
+/** "in 4m 12s" for a future unix timestamp, "—" when unset or past. */
+export function until(value: number): string {
+  if (!value) return '—';
+  const delta = value - Date.now() / 1000;
+  if (delta <= 0) return 'due';
+  return `in ${duration(delta)}`;
+}
+
 export function relative(value: number): string {
   if (!value) return '—';
   const delta = Date.now() / 1000 - value;

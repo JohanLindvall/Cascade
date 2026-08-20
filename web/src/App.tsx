@@ -40,12 +40,18 @@ import {
   IconTrash,
 } from './components/icons';
 import { ContextMenu, MenuItem, useToast } from './components/ui';
+import {
+  fetchPreferences,
+  readCache,
+  savePreferences,
+  type Preferences,
+} from './prefs';
+import { applyTheme, resolveTheme, type ThemeMode } from './theme';
 import type { GameState, GlobalStatus, ThrottleGroup, Torrent } from './types';
 
 type Dialog = 'add' | 'settings' | 'throttles' | 'console' | 'log' | 'progress' | null;
 
-/** Badge unlocks are announced once per browser. */
-const SEEN_BADGES_KEY = 'cascade.seenBadges';
+
 
 interface MenuState {
   x: number;
@@ -65,28 +71,60 @@ export function App() {
 
   const [filter, setFilter] = useState<Filter>({ kind: 'status', value: 'all' });
   const [search, setSearch] = useState('');
-  const [sort, setSort] = useState<SortState>({ key: 'addedAt', dir: 'desc' });
+  const [sort, setSort] = useState<SortState>(() => {
+    const cached = readCache();
+    return { key: cached.sortKey as SortKey, dir: cached.sortDir };
+  });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [focused, setFocused] = useState<string | null>(null);
-  const [detailHeight, setDetailHeight] = useState(280);
+  const [detailHeight, setDetailHeight] = useState(() => readCache().detailHeight);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dropping, setDropping] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [celebration, setCelebration] = useState(0);
-  const [theme, setTheme] = useState<'dark' | 'light'>(
-    () => (localStorage.getItem('cascade.theme') as 'dark' | 'light') ?? 'dark',
-  );
+  // Seeded from the cache so the first paint is already themed, then replaced
+  // by whatever the server's preferences file says.
+  const [prefs, setPrefs] = useState<Preferences>(() => readCache());
+  const [resolvedTheme, setResolvedTheme] = useState<string>(() => resolveTheme(readCache().theme));
+  const themeMode = prefs.theme;
 
   const toast = useToast();
   const lastAnchor = useRef<string | null>(null);
   const dragDepth = useRef(0);
   const completedRef = useRef<Set<string> | null>(null);
+  const seenBadgesRef = useRef<string[] | null>(null);
+
+  const updatePrefs = useCallback((patch: Partial<Preferences>) => {
+    setPrefs((current) => {
+      const next = { ...current, ...patch };
+      savePreferences(patch, current);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem('cascade.theme', theme);
-  }, [theme]);
+    fetchPreferences()
+      .then((stored) => {
+        setPrefs(stored);
+        seenBadgesRef.current = stored.seenBadges;
+        setSort({ key: stored.sortKey as SortKey, dir: stored.sortDir });
+        setDetailHeight(stored.detailHeight);
+      })
+      .catch(() => {
+        seenBadgesRef.current = readCache().seenBadges;
+      });
+  }, []);
+
+  useEffect(() => {
+    setResolvedTheme(applyTheme(themeMode));
+    if (themeMode !== 'system') return;
+    // Follow the OS while "system" is selected.
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    const sync = () => setResolvedTheme(applyTheme('system'));
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, [themeMode]);
 
   /* ------------------------------ polling ------------------------------ */
 
@@ -150,27 +188,25 @@ export function App() {
   const announceBadges = useCallback(
     (state: GameState | null | undefined) => {
       if (!state?.enabled) return;
-      let seen: string[] = [];
-      try {
-        seen = JSON.parse(localStorage.getItem(SEEN_BADGES_KEY) ?? '[]') as string[];
-      } catch {
-        seen = [];
-      }
+      const seen = seenBadgesRef.current;
+      if (seen === null) return; // Preferences have not loaded yet.
       const earned = state.achievements.filter((item) => item.unlockedAt !== null);
       const fresh = earned.filter((item) => !seen.includes(item.id));
       if (fresh.length === 0) return;
+      const ids = earned.map((item) => item.id);
+      seenBadgesRef.current = ids;
       // A first run against an established session can earn several at once;
-      // only shout about them once the baseline is known.
+      // record the baseline quietly rather than firing a wall of toasts.
       if (seen.length === 0 && fresh.length > 2) {
-        localStorage.setItem(SEEN_BADGES_KEY, JSON.stringify(earned.map((item) => item.id)));
+        updatePrefs({ seenBadges: ids });
         return;
       }
       for (const item of fresh) {
         toast.push('achievement', `Badge unlocked — ${item.title}: ${item.description}`);
       }
-      localStorage.setItem(SEEN_BADGES_KEY, JSON.stringify(earned.map((item) => item.id)));
+      updatePrefs({ seenBadges: ids });
     },
-    [toast],
+    [toast, updatePrefs],
   );
 
   /* --------------------------- drag and drop ---------------------------- */
@@ -373,11 +409,19 @@ export function App() {
   /* ------------------------------- render ------------------------------ */
 
   const onSort = (key: SortKey) =>
-    setSort((current) =>
-      current.key === key
-        ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
-        : { key, dir: key === 'name' || key === 'label' ? 'asc' : 'desc' },
-    );
+    setSort((current) => {
+      const next: SortState =
+        current.key === key
+          ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
+          : { key, dir: key === 'name' || key === 'label' ? 'asc' : 'desc' };
+      updatePrefs({ sortKey: next.key, sortDir: next.dir });
+      return next;
+    });
+
+  const onDetailHeight = (height: number) => {
+    setDetailHeight(height);
+    updatePrefs({ detailHeight: height });
+  };
 
   const onContextMenu = (hash: string, event: MouseEvent) => {
     event.preventDefault();
@@ -407,8 +451,9 @@ export function App() {
       <Header
         status={status}
         game={game}
-        theme={theme}
-        onToggleTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        themeMode={themeMode}
+        resolvedTheme={resolvedTheme}
+        onThemeChange={(mode: ThemeMode) => updatePrefs({ theme: mode })}
         onAdd={() => setDialog('add')}
         onSettings={() => setDialog('settings')}
         onThrottles={() => setDialog('throttles')}
@@ -520,7 +565,7 @@ export function App() {
           <DetailPanel
             torrent={focusedTorrent}
             height={detailHeight}
-            onHeightChange={setDetailHeight}
+            onHeightChange={onDetailHeight}
             onClose={() => setFocused(null)}
           />
         )}

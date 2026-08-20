@@ -96,6 +96,30 @@ fi
 
 quote() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
+# Ask this rtorrent whether it knows a command, by feeding it a one-line option
+# file. Used for the few settings that must be in rtorrent.rc — the listening
+# port has to be right before rtorrent binds, and 0.16 renamed the commands
+# from network.port_range to network.listen.port.range.
+rc_command_exists() {
+  probe_rc="$(mktemp)"
+  printf '%s\n' "$1" > "$probe_rc"
+  probe_out="$(TERM=unknown timeout 20 rtorrent -n -o import="$probe_rc" 2>&1 || true)"
+  rm -f "$probe_rc"
+  case "$probe_out" in
+    *"does not exist"*|*"Error in option file"*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+if rc_command_exists "network.listen.port.range.set = $RT_PORT_RANGE"; then
+  PORT_RANGE_CMD="network.listen.port.range.set"
+  PORT_RANDOM_CMD="network.listen.port.random.set"
+else
+  PORT_RANGE_CMD="network.port_range.set"
+  PORT_RANDOM_CMD="network.port_random.set"
+fi
+log "listen port commands: $PORT_RANGE_CMD / $PORT_RANDOM_CMD"
+
 if [ -n "${RT_CONFIG_FILE:-}" ] && [ -f "$RT_CONFIG_FILE" ] && [ "${RT_CONFIG_KEEP:-1}" = "1" ]; then
   log "using the supplied rtorrent config at $RT_CONFIG_FILE verbatim"
 else
@@ -108,8 +132,8 @@ else
     echo "directory.default.set = $(quote "$RT_DOWNLOAD_DIR")"
     echo "session.path.set = $(quote "$RT_SESSION_DIR")"
     echo
-    echo "network.port_range.set = $RT_PORT_RANGE"
-    echo "network.port_random.set = $RT_PORT_RANDOM"
+    echo "$PORT_RANGE_CMD = $RT_PORT_RANGE"
+    echo "$PORT_RANDOM_CMD = $RT_PORT_RANDOM"
     echo
     echo "# XML-RPC over SCGI — this is what the web UI and any external client talk to."
     echo "network.scgi.open_local = $(quote "$RT_SCGI_SOCKET")"
@@ -124,7 +148,9 @@ else
     echo
     if [ -d "$RT_WATCH_DIR" ] && [ "${RT_WATCH_ENABLE:-1}" = "1" ]; then
       echo "# Auto-load anything dropped into the watch directory."
-      echo "schedule2 = watch_directory, $RT_WATCH_INTERVAL, $RT_WATCH_INTERVAL, ((load.start, (cat, $(quote "$RT_WATCH_DIR"), \"/*.torrent\")))"
+      # The string form of 'schedule' works on every release; 'schedule2' was
+      # dropped in 0.16.
+      echo "schedule = watch_directory, $RT_WATCH_INTERVAL, $RT_WATCH_INTERVAL, \"load.start=${RT_WATCH_DIR}/*.torrent\""
       echo
     fi
     if [ -n "${RT_COMPLETED_DIR:-}" ]; then
@@ -195,6 +221,14 @@ emit localAddress "${RT_IP:-}" string
 emit proxyAddress "${RT_PROXY:-}" string
 emit httpCapath "${RT_HTTP_CAPATH:-}" string
 emit httpCacert "${RT_HTTP_CACERT:-}" string
+# rtorrent 0.16 additions — skipped automatically on older backends.
+emit httpMaxHostConnections "${RT_HTTP_MAX_HOST:-}"
+emit dhtOverridePort "${RT_DHT_OVERRIDE_PORT:-}"
+emit blockOutgoing "$(yesno "${RT_BLOCK_OUTGOING:-}")"
+emit adviseRandomHashing "$(yesno "${RT_ADVISE_RANDOM_HASHING:-}")"
+emit proxyGlobal "${RT_PROXY_GLOBAL:-}" string
+emit bindAddressV4 "${RT_BIND_IPV4:-}" string
+emit bindAddressV6 "${RT_BIND_IPV6:-}" string
 
 printf '{%s}\n' "$SETTINGS_BUF" > "$BOOT_SETTINGS"
 [ "$(id -u)" = "0" ] && chown "$PUID:$PGID" "$BOOT_SETTINGS" || true

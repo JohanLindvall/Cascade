@@ -224,10 +224,15 @@ export const PEER_FIELDS = [
   'p.up_total',
   'p.down_total',
   'p.peer_rate',
+  'p.peer_total',
   'p.is_encrypted',
   'p.is_obfuscated',
   'p.is_incoming',
   'p.is_snubbed',
+  'p.is_preferred',
+  'p.is_unwanted',
+  'p.banned',
+  'p.options_str',
 ] as const;
 
 export interface Peer {
@@ -240,10 +245,18 @@ export interface Peer {
   downRate: number;
   upTotal: number;
   downTotal: number;
+  /** What the peer is pulling from the swarm as a whole, not from us. */
+  peerRate: number;
+  peerTotal: number;
   encrypted: boolean;
   obfuscated: boolean;
   incoming: boolean;
   snubbed: boolean;
+  preferred: boolean;
+  unwanted: boolean;
+  banned: boolean;
+  /** Reserved-bytes/extension string as rtorrent formats it. */
+  options: string;
 }
 
 export function mapPeer(row: Row): Peer {
@@ -257,10 +270,16 @@ export function mapPeer(row: Row): Peer {
     downRate: int(row, 'p.down_rate'),
     upTotal: int(row, 'p.up_total'),
     downTotal: int(row, 'p.down_total'),
+    peerRate: int(row, 'p.peer_rate'),
+    peerTotal: int(row, 'p.peer_total'),
     encrypted: int(row, 'p.is_encrypted') !== 0,
     obfuscated: int(row, 'p.is_obfuscated') !== 0,
     incoming: int(row, 'p.is_incoming') !== 0,
     snubbed: int(row, 'p.is_snubbed') !== 0,
+    preferred: int(row, 'p.is_preferred') !== 0,
+    unwanted: int(row, 'p.is_unwanted') !== 0,
+    banned: int(row, 'p.banned') !== 0,
+    options: text(row, 'p.options_str'),
   };
 }
 
@@ -268,18 +287,31 @@ export const TRACKER_FIELDS = [
   't.url',
   't.type',
   't.group',
+  't.id',
   't.is_enabled',
   't.is_usable',
   't.is_open',
+  't.is_busy',
+  't.is_extra_tracker',
+  't.can_scrape',
   't.scrape_complete',
   't.scrape_incomplete',
   't.scrape_downloaded',
   't.scrape_time_last',
+  't.scrape_counter',
   't.success_counter',
+  't.success_time_last',
+  't.success_time_next',
   't.failed_counter',
+  't.failed_time_last',
+  't.failed_time_next',
   't.latest_event',
+  't.latest_new_peers',
+  't.latest_sum_peers',
   't.normal_interval',
+  't.min_interval',
   't.activity_time_last',
+  't.activity_time_next',
 ] as const;
 
 export interface Tracker {
@@ -287,17 +319,31 @@ export interface Tracker {
   url: string;
   type: number;
   group: number;
+  trackerId: string;
   enabled: boolean;
   usable: boolean;
   open: boolean;
+  busy: boolean;
+  extra: boolean;
+  canScrape: boolean;
   seeders: number;
   leechers: number;
   downloaded: number;
   lastScrape: number;
+  scrapes: number;
   successes: number;
+  lastSuccess: number;
+  nextSuccess: number;
   failures: number;
+  lastFailure: number;
+  nextFailure: number;
+  latestEvent: number;
+  newPeers: number;
+  sumPeers: number;
   interval: number;
+  minInterval: number;
   lastActivity: number;
+  nextActivity: number;
 }
 
 export function mapTracker(row: Row, index: number): Tracker {
@@ -306,17 +352,31 @@ export function mapTracker(row: Row, index: number): Tracker {
     url: text(row, 't.url'),
     type: int(row, 't.type'),
     group: int(row, 't.group'),
+    trackerId: text(row, 't.id'),
     enabled: int(row, 't.is_enabled') !== 0,
     usable: int(row, 't.is_usable') !== 0,
     open: int(row, 't.is_open') !== 0,
+    busy: int(row, 't.is_busy') !== 0,
+    extra: int(row, 't.is_extra_tracker') !== 0,
+    canScrape: int(row, 't.can_scrape') !== 0,
     seeders: int(row, 't.scrape_complete'),
     leechers: int(row, 't.scrape_incomplete'),
     downloaded: int(row, 't.scrape_downloaded'),
     lastScrape: int(row, 't.scrape_time_last'),
+    scrapes: int(row, 't.scrape_counter'),
     successes: int(row, 't.success_counter'),
+    lastSuccess: int(row, 't.success_time_last'),
+    nextSuccess: int(row, 't.success_time_next'),
     failures: int(row, 't.failed_counter'),
+    lastFailure: int(row, 't.failed_time_last'),
+    nextFailure: int(row, 't.failed_time_next'),
+    latestEvent: int(row, 't.latest_event'),
+    newPeers: int(row, 't.latest_new_peers'),
+    sumPeers: int(row, 't.latest_sum_peers'),
     interval: int(row, 't.normal_interval'),
+    minInterval: int(row, 't.min_interval'),
     lastActivity: int(row, 't.activity_time_last'),
+    nextActivity: int(row, 't.activity_time_next'),
   };
 }
 

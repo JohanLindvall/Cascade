@@ -28,7 +28,7 @@ router.post(
 );
 
 router.use(express.json({ limit: '4mb' }));
-router.use('/api', createApi(service, config));
+router.use('/api', createApi(service, config, store));
 
 router.get('/healthz', (_req, res) => {
   res.json({

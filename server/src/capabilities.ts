@@ -34,10 +34,13 @@ export interface BackendInfo {
   apiVersion: string;
   methodCount: number;
   flavor: string;
+  /** RPC facility reported by system.capabilities (0.16+), e.g. "xmlrpc-c 1.51.8". */
+  rpcFacility: string;
   supports: Record<string, boolean>;
 }
 
-const FEATURE_METHODS: Record<string, string> = {
+/** Feature -> command that implements it; a list when the name changed between releases. */
+const FEATURE_METHODS: Record<string, string | string[]> = {
   labels: 'd.custom1.set',
   throttleGroups: 'throttle.up',
   perTorrentThrottle: 'd.throttle_name.set',
@@ -46,12 +49,18 @@ const FEATURE_METHODS: Record<string, string> = {
   pex: 'protocol.pex.set',
   encryption: 'protocol.encryption.set',
   udpTrackers: 'trackers.use_udp.set',
-  portRange: 'network.port_range.set',
+  portRange: ['network.listen.port.range.set', 'network.port_range.set'],
   preallocate: 'system.file.allocate.set',
   checkHashOnCompletion: 'pieces.hash.on_completion.set',
   memoryLimit: 'pieces.memory.max.set',
   maxOpenFiles: 'network.max_open_files.set',
   httpMaxOpen: 'network.http.max_open.set',
+  httpMaxHostConnections: 'network.http.max_host_connections.set',
+  blockOutgoing: 'network.block.outgoing.set',
+  dhtOverridePort: 'dht.override_port.set',
+  proxyGlobal: 'network.proxy.global.set',
+  dualStackBind: 'network.bind_address.ipv4.set',
+  adviseRandomHashing: 'system.files.advise_random.hashing.set',
   minPeers: 'throttle.min_peers.normal.set',
   maxPeers: 'throttle.max_peers.normal.set',
   seedPeers: 'throttle.max_peers.seed.set',
@@ -91,6 +100,7 @@ export class Capabilities {
     apiVersion: '0',
     methodCount: 0,
     flavor: 'unknown',
+    rpcFacility: '',
     supports: {},
   };
   ready = false;
@@ -132,11 +142,16 @@ export class Capabilities {
     );
     this.methods = methods;
 
-    const versions = await this.client.multicallSettled([
+    const probes = [
       { methodName: 'system.client_version', params: [] },
       { methodName: 'system.library_version', params: [] },
       { methodName: 'system.api_version', params: [] },
-    ]);
+    ];
+    // 0.16 describes its RPC layer through system.capabilities.
+    if (methods.has('system.capabilities')) {
+      probes.push({ methodName: 'system.capabilities', params: [] });
+    }
+    const versions = await this.client.multicallSettled(probes);
     const value = (index: number): string => {
       const item = versions[index];
       return item instanceof Error ? 'unknown' : String(item ?? 'unknown');
@@ -170,7 +185,19 @@ export class Capabilities {
 
     const supports: Record<string, boolean> = {};
     for (const [feature, method] of Object.entries(FEATURE_METHODS)) {
-      supports[feature] = methods.has(method);
+      const candidates = Array.isArray(method) ? method : [method];
+      supports[feature] = candidates.some((name) => methods.has(name));
+    }
+
+    let rpcFacility = '';
+    const capabilities = versions[3];
+    if (capabilities && !(capabilities instanceof Error) && typeof capabilities === 'object' &&
+        !Array.isArray(capabilities)) {
+      const record = capabilities as Record<string, unknown>;
+      const parts = [record.version_major, record.version_minor, record.version_point]
+        .filter((part) => part !== undefined)
+        .join('.');
+      rpcFacility = `${String(record.facility ?? 'unknown')}${parts ? ` ${parts}` : ''}`;
     }
 
     this.info = {
@@ -179,6 +206,7 @@ export class Capabilities {
       apiVersion: value(2),
       methodCount: methods.size,
       flavor: detectFlavor(clientVersion, methods),
+      rpcFacility,
       supports,
     };
     this.probedAt = Date.now();

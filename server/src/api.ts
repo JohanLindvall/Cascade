@@ -2,6 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import multer from 'multer';
 import type { Config } from './config';
 import { HttpError, type RtorrentService } from './service';
+import type { Store } from './store';
 import { XmlRpcFault, serializeCall, type XValue } from './xmlrpc';
 
 function wrap(handler: (req: Request, res: Response) => Promise<unknown>) {
@@ -31,7 +32,7 @@ function requireHash(req: Request): string {
   return hash.toUpperCase();
 }
 
-export function createApi(service: RtorrentService, config: Config): Router {
+export function createApi(service: RtorrentService, config: Config, store: Store): Router {
   const router = Router();
   const upload = multer({
     storage: multer.memoryStorage(),
@@ -58,6 +59,21 @@ export function createApi(service: RtorrentService, config: Config): Router {
     wrap(async (req, res) => {
       const view = typeof req.query.view === 'string' ? req.query.view : 'main';
       res.json(await service.torrents(view));
+    }),
+  );
+
+  /* ---------------------------- preferences ---------------------------- */
+
+  router.get(
+    '/prefs',
+    wrap(async (_req, res) => res.json(store.preferences())),
+  );
+
+  router.patch(
+    '/prefs',
+    wrap(async (req, res) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      res.json(store.updatePreferences(body));
     }),
   );
 

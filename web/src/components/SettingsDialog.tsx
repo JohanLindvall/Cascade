@@ -152,7 +152,19 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
           {numberField('minPeersSeed', 'Min peers (seeding)', '-1 disables', 'seedPeers')}
           {numberField('maxPeersSeed', 'Max peers (seeding)', '-1 disables', 'seedPeers')}
           {numberField('maxOpenFiles', 'Max open files', undefined, 'maxOpenFiles')}
-          {numberField('maxHttpOpen', 'Max open HTTP requests', undefined, 'httpMaxOpen')}
+          {numberField(
+            'maxHttpOpen',
+            'Max open HTTP requests',
+            supports('httpMaxOpen') ? undefined : 'read-only on rtorrent 0.16+',
+            'httpMaxOpen',
+          )}
+          {supports('httpMaxHostConnections') &&
+            numberField(
+              'httpMaxHostConnections',
+              'HTTP connections per host',
+              'rtorrent 0.16+',
+              'httpMaxHostConnections',
+            )}
         </div>
       </div>
 
@@ -182,6 +194,41 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
             </select>
           </Field>
           {numberField('dhtPort', 'DHT port', undefined, 'dht')}
+          {supports('dhtOverridePort') &&
+            numberField(
+              'dhtOverridePort',
+              'DHT announce port override',
+              '0 uses the listening port',
+              'dhtOverridePort',
+            )}
+          {supports('proxyGlobal') && (
+            <Field label="Global proxy" hint="rtorrent 0.16+ — applies to all traffic">
+              <input
+                className="input"
+                placeholder="host:port"
+                value={String(draft.proxyGlobal ?? '')}
+                onChange={(event) => set('proxyGlobal', event.target.value)}
+              />
+            </Field>
+          )}
+          {supports('dualStackBind') && (
+            <>
+              <Field label="Bind address (IPv4)" hint="rtorrent 0.16+">
+                <input
+                  className="input"
+                  value={String(draft.bindAddressV4 ?? '')}
+                  onChange={(event) => set('bindAddressV4', event.target.value)}
+                />
+              </Field>
+              <Field label="Bind address (IPv6)" hint="rtorrent 0.16+">
+                <input
+                  className="input"
+                  value={String(draft.bindAddressV6 ?? '')}
+                  onChange={(event) => set('bindAddressV6', event.target.value)}
+                />
+              </Field>
+            </>
+          )}
           <Field label="Protocol encryption">
             <select
               className="select"
@@ -214,6 +261,13 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
             onChange={(value) => set('pex', value)}
             label="Peer exchange (PEX)"
           />
+          {supports('blockOutgoing') && (
+            <Switch
+              checked={!!draft.blockOutgoing}
+              onChange={(value) => set('blockOutgoing', value)}
+              label="Block outgoing connections"
+            />
+          )}
           <Switch
             checked={!!draft.udpTrackers}
             disabled={!supports('udpTrackers')}
@@ -256,6 +310,13 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
             onChange={(value) => set('preallocate', value)}
             label="Preallocate files"
           />
+          {supports('adviseRandomHashing') && (
+            <Switch
+              checked={!!draft.adviseRandomHashing}
+              onChange={(value) => set('adviseRandomHashing', value)}
+              label="Random-access hint while hashing"
+            />
+          )}
           <Switch
             checked={!!draft.checkHashOnCompletion}
             disabled={!supports('checkHashOnCompletion')}
@@ -285,6 +346,12 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
               <span>API version</span>
               <b>{backend.apiVersion}</b>
             </div>
+            {backend.rpcFacility && (
+              <div className="kv">
+                <span>RPC facility</span>
+                <b>{backend.rpcFacility}</b>
+              </div>
+            )}
             <div className="kv">
               <span>SCGI endpoint</span>
               <b>{backend.endpoint}</b>

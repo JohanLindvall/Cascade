@@ -6,6 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { EMPTY_STATS, type GameStats } from './achievements';
+import { DEFAULT_PREFERENCES, sanitizePreferences, type Preferences } from './prefs';
 
 export interface ThrottleGroup {
   name: string;
@@ -29,6 +30,7 @@ interface StoreData {
   achievements: Record<string, number>;
   /** Hashes already counted as completed, kept so a re-add is not counted twice. */
   everCompleted: string[];
+  prefs: Preferences;
 }
 
 export class Store {
@@ -39,6 +41,7 @@ export class Store {
     seen: {},
     achievements: {},
     everCompleted: [],
+    prefs: { ...DEFAULT_PREFERENCES },
   };
   private completedSet = new Set<string>();
   private dirty = false;
@@ -59,6 +62,7 @@ export class Store {
         seen: parsed.seen ?? {},
         achievements: parsed.achievements ?? {},
         everCompleted: parsed.everCompleted ?? [],
+        prefs: sanitizePreferences(DEFAULT_PREFERENCES, parsed.prefs ?? {}),
       };
     } catch {
       // First run, or an unreadable/corrupt file: start clean.
@@ -69,6 +73,7 @@ export class Store {
         seen: {},
         achievements: {},
         everCompleted: [],
+        prefs: { ...DEFAULT_PREFERENCES },
       };
     }
     this.completedSet = new Set(this.data.everCompleted);
@@ -129,6 +134,18 @@ export class Store {
       }
     }
     if (changed) this.scheduleFlush();
+  }
+
+  /* ----------------------------- preferences ----------------------------- */
+
+  preferences(): Preferences {
+    return { ...this.data.prefs, seenBadges: [...this.data.prefs.seenBadges] };
+  }
+
+  updatePreferences(patch: Partial<Preferences>): Preferences {
+    this.data.prefs = sanitizePreferences(this.data.prefs, patch);
+    this.scheduleFlush();
+    return this.preferences();
   }
 
   /* ------------------------------ game state ----------------------------- */

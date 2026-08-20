@@ -2,26 +2,24 @@
 #
 # Cascade — a web UI for rtorrent, with rtorrent itself baked into the image.
 #
-# Choosing the rtorrent version at build time
-# -------------------------------------------
-#   Distro packages (fast, no compiler, the default). ALPINE_VERSION picks it:
-#     3.19 / 3.20  ->  rtorrent 0.9.8  + libtorrent 0.13.8
-#     3.21         ->  rtorrent 0.10.0 + libtorrent 0.14.0
-#     3.22         ->  rtorrent 0.15.2 + libtorrent 0.15.2
+# rtorrent is always compiled from an upstream tag, so the version in the image
+# is exactly the one you asked for rather than whatever a distro happens to
+# package:
 #
-#     docker build --build-arg ALPINE_VERSION=3.22 -t cascade:0.15 .
+#     docker build -t cascade .                                  # 0.16.20
+#     docker build --build-arg RTORRENT_VERSION=0.15.2 -t cascade:0.15.2 .
+#     docker build --build-arg RTORRENT_VERSION=0.9.8  -t cascade:0.9.8 .
 #
-#   Any upstream tag, compiled from source:
-#     docker build --build-arg RTORRENT_FLAVOR=source \
-#                  --build-arg RTORRENT_VERSION=0.9.8 \
-#                  --build-arg LIBTORRENT_VERSION=0.13.8 -t cascade:0.9.8 .
+# libtorrent is pinned to the matching release automatically (rtorrent 0.9.x
+# pairs with libtorrent 0.13.x, 0.10.x with 0.14.x, and from 0.15 onwards the
+# two share a version). Override it with LIBTORRENT_VERSION when a pairing is
+# unusual, and point RTORRENT_REPO/LIBTORRENT_REPO at a fork if needed.
 #
 # The web server discovers what the backend supports at runtime (system.list-
-# Methods), so a single build of the UI drives any of these versions.
+# Methods), so one build of the UI drives any of these versions.
 
-ARG ALPINE_VERSION=3.21
+ARG ALPINE_VERSION=3.22
 ARG NODE_VERSION=22
-ARG RTORRENT_FLAVOR=package
 
 # --------------------------------------------------------------------------
 # 1. build the TypeScript frontend and backend
@@ -42,17 +40,10 @@ RUN cd web && npm run build
 RUN cd server && npm run build && npm prune --omit=dev
 
 # --------------------------------------------------------------------------
-# 2a. rtorrent from the alpine package repository (default)
+# 2. compile libtorrent and rtorrent from upstream tags
 # --------------------------------------------------------------------------
-FROM alpine:${ALPINE_VERSION} AS rtorrent-package
-ARG RTORRENT_APK_VERSION=
-RUN apk add --no-cache "rtorrent${RTORRENT_APK_VERSION:+=$RTORRENT_APK_VERSION}"
-
-# --------------------------------------------------------------------------
-# 2b. rtorrent compiled from an upstream tag
-# --------------------------------------------------------------------------
-FROM alpine:${ALPINE_VERSION} AS rtorrent-source
-ARG RTORRENT_VERSION=0.9.8
+FROM alpine:${ALPINE_VERSION} AS rtorrent
+ARG RTORRENT_VERSION=0.16.20
 ARG LIBTORRENT_VERSION=
 ARG RTORRENT_REPO=https://github.com/rakshasa/rtorrent
 ARG LIBTORRENT_REPO=https://github.com/rakshasa/libtorrent
@@ -60,16 +51,13 @@ ARG LIBTORRENT_REPO=https://github.com/rakshasa/libtorrent
 RUN apk add --no-cache \
       libstdc++ libcurl ncurses-libs zlib openssl xmlrpc-c
 
-RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
-    set -eux; \
+RUN set -eux; \
     apk add --no-cache --virtual .build \
-      build-base autoconf automake libtool pkgconf cmake git linux-headers \
+      build-base autoconf automake libtool pkgconf git linux-headers \
       curl curl-dev openssl-dev zlib-dev ncurses-dev xmlrpc-c-dev; \
     # cppunit is deliberately absent: configure would link the test framework
     # into the binaries, which then fail at runtime once the build deps go.
     \
-    # libtorrent and rtorrent version numbers track each other:
-    #   rtorrent 0.9.x -> libtorrent 0.13.x, 0.10.x -> 0.14.x, 0.15.x -> 0.15.x
     if [ -z "${LIBTORRENT_VERSION}" ]; then \
       case "${RTORRENT_VERSION}" in \
         0.9.*)  LIBTORRENT_VERSION="$(echo "${RTORRENT_VERSION}" | sed 's/^0\.9\./0.13./')" ;; \
@@ -84,16 +72,15 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
       mkdir -p /tmp/src && cd /tmp/src; \
       git clone --depth 1 --branch "v${tag}" "${repo}" "$(basename "${repo}")"; \
       cd "$(basename "${repo}")"; \
-      if [ -f autogen.sh ]; then \
-        ./autogen.sh; \
-        ./configure --prefix=/usr/local --disable-debug "$@"; \
-        make -j"$(nproc)"; \
-        make install; \
-      else \
-        cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release "$@"; \
-        cmake --build build -j"$(nproc)"; \
-        cmake --install build; \
-      fi; \
+      # 0.9.x/0.13.x ship autogen.sh; 0.15+ expects autoreconf directly.
+      if [ -f autogen.sh ]; then ./autogen.sh; else autoreconf -fiv; fi; \
+      # Releases before 0.16 relied on headers that newer libstdc++ no longer
+      # pulls in transitively; pre-including them keeps old tags buildable on a
+      # current toolchain.
+      ./configure --prefix=/usr/local --disable-debug \
+        CXXFLAGS="${CXXFLAGS:--g -O2} -include algorithm -include cstdint" "$@"; \
+      make -j"$(nproc)"; \
+      make install; \
     }; \
     build "${LIBTORRENT_REPO}" "${LIBTORRENT_VERSION}"; \
     ldconfig /usr/local/lib || true; \
@@ -108,7 +95,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib
 # --------------------------------------------------------------------------
 # 3. runtime — inherits whichever rtorrent stage was selected
 # --------------------------------------------------------------------------
-FROM rtorrent-${RTORRENT_FLAVOR} AS runtime
+FROM rtorrent AS runtime
 
 RUN apk add --no-cache \
       nodejs tini su-exec screen ca-certificates curl tzdata

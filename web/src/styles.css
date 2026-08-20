@@ -156,6 +156,10 @@ textarea {
 
 .header {
   grid-area: header;
+  /* backdrop-filter creates a stacking context, so the header needs an explicit
+     z-index for popovers inside it to paint above the content below. */
+  position: relative;
+  z-index: 20;
   display: flex;
   align-items: center;
   gap: 18px;
@@ -1158,6 +1162,93 @@ table.grid tbody tr:hover {
   background: var(--panel);
 }
 
+/* ------------------------ expandable detail rows ------------------------ */
+
+table.grid tr.expandable {
+  cursor: pointer;
+}
+
+table.grid tr.expandable:hover {
+  background: var(--panel);
+}
+
+table.grid tr.expandable.open {
+  background: var(--accent-soft);
+}
+
+table.grid tr.expandable.open td {
+  border-bottom-color: transparent;
+}
+
+.caret {
+  display: inline-block;
+  width: 12px;
+  color: var(--text-faint);
+  font-size: 9px;
+}
+
+table.grid tr.detail-row > td {
+  padding: 0 9px 12px 21px;
+  background: var(--accent-soft);
+}
+
+.mini-kv {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
+  gap: 2px 20px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.mini-kv > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 3px 0;
+  min-width: 0;
+}
+
+.mini-kv span {
+  color: var(--text-faint);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.mini-kv b {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.flags {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.tag.good {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 35%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+
+.tag.warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 35%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+}
+
+.tag.bad {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
 /* =============================== modal ================================= */
 
 .overlay {
@@ -1888,4 +1979,312 @@ td.ratio.poor {
   .level-chip {
     padding: 0 7px;
   }
+}
+
+/* ============================ retro 8-bit ============================== */
+
+/*
+ * A CRT-phosphor look: hard edges, chunky offset shadows instead of blur,
+ * a scanline wash over the page, and stepped progress bars. Everything is
+ * driven by the same tokens as the other themes, so components need no
+ * per-theme markup.
+ */
+:root[data-theme='retro'] {
+  --bg: #12082a;
+  --bg-elevated: #1c0f3d;
+  --panel: rgba(120, 255, 190, 0.06);
+  --panel-strong: rgba(120, 255, 190, 0.13);
+  --border: #4b2f8f;
+  --border-strong: #7b5bd6;
+  --text: #d8ffe9;
+  --text-dim: #8ce0b8;
+  --text-faint: #6a5bb0;
+
+  --accent: #34ff9e;
+  --accent-2: #ff4fd8;
+  --accent-soft: rgba(52, 255, 158, 0.14);
+  --accent-line: linear-gradient(90deg, var(--accent), var(--accent-2));
+
+  --down: #35f0ff;
+  --up: #ff4fd8;
+  --ok: #34ff9e;
+  --warn: #ffd23f;
+  --danger: #ff5277;
+  --gold: #ffd23f;
+  --silver: #b9c2d6;
+  --bronze: #ff9d4f;
+
+  --radius: 0px;
+  --radius-sm: 0px;
+  --shadow: 6px 6px 0 rgba(0, 0, 0, 0.6);
+  --shadow-sm: 3px 3px 0 rgba(0, 0, 0, 0.5);
+
+  --sans: var(--mono);
+  font-size: 13px;
+}
+
+:root[data-theme='retro'] body {
+  letter-spacing: 0.02em;
+  text-shadow: 0 0 6px rgba(52, 255, 158, 0.18);
+}
+
+/* Ambient glow instead of the soft gradients used by the other themes. */
+:root[data-theme='retro'] body::before {
+  background:
+    radial-gradient(760px 420px at 10% -10%, rgba(52, 255, 158, 0.16), transparent 60%),
+    radial-gradient(700px 400px at 92% 0%, rgba(255, 79, 216, 0.14), transparent 62%);
+}
+
+/* Scanlines. Pointer-events off so it never blocks the UI. */
+:root[data-theme='retro'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.16) 0px,
+    rgba(0, 0, 0, 0.16) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: multiply;
+}
+
+:root[data-theme='retro'] .brand,
+:root[data-theme='retro'] .btn,
+:root[data-theme='retro'] .tab,
+:root[data-theme='retro'] .pill,
+:root[data-theme='retro'] .side-item,
+:root[data-theme='retro'] table.torrents thead th,
+:root[data-theme='retro'] table.grid th,
+:root[data-theme='retro'] .modal-head h2,
+:root[data-theme='retro'] .badge-title,
+:root[data-theme='retro'] .level-chip-title {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+:root[data-theme='retro'] .brand {
+  font-size: 13px;
+}
+
+/* Hard pixel borders and offset shadows. */
+:root[data-theme='retro'] .btn,
+:root[data-theme='retro'] .input,
+:root[data-theme='retro'] .select,
+:root[data-theme='retro'] .textarea,
+:root[data-theme='retro'] .tag,
+:root[data-theme='retro'] .rate-cluster,
+:root[data-theme='retro'] .level-chip,
+:root[data-theme='retro'] .section,
+:root[data-theme='retro'] .badge,
+:root[data-theme='retro'] .mini-kv,
+:root[data-theme='retro'] .tabs {
+  border-width: 2px;
+  border-style: solid;
+  border-color: var(--border-strong);
+  box-shadow: none;
+}
+
+:root[data-theme='retro'] .btn {
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme='retro'] .btn:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+
+:root[data-theme='retro'] .btn.primary {
+  background: var(--accent);
+  color: #0d0620;
+  border-color: #0d0620;
+  font-weight: 700;
+  text-shadow: none;
+}
+
+:root[data-theme='retro'] .modal,
+:root[data-theme='retro'] .menu,
+:root[data-theme='retro'] .toast {
+  border: 2px solid var(--border-strong);
+  box-shadow: var(--shadow);
+  backdrop-filter: none;
+}
+
+:root[data-theme='retro'] .overlay,
+:root[data-theme='retro'] .header,
+:root[data-theme='retro'] table.torrents thead th {
+  backdrop-filter: none;
+}
+
+:root[data-theme='retro'] .header {
+  border-bottom: 2px solid var(--border-strong);
+  background: var(--bg-elevated);
+}
+
+:root[data-theme='retro'] .sidebar {
+  border-right: 2px solid var(--border-strong);
+}
+
+:root[data-theme='retro'] .brand-mark {
+  border-radius: 0;
+  background: var(--accent);
+  color: #0d0620;
+  box-shadow: var(--shadow-sm);
+}
+
+/* Stepped progress bars — the fill is drawn as discrete blocks. */
+:root[data-theme='retro'] .bar {
+  height: 8px;
+  border: 2px solid var(--border-strong);
+  background: #0d0620;
+  border-radius: 0;
+}
+
+:root[data-theme='retro'] .bar > i {
+  border-radius: 0;
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--accent) 0px,
+    var(--accent) 4px,
+    transparent 4px,
+    transparent 6px
+  );
+  background-color: transparent;
+  transition: width 0.25s steps(8, end);
+}
+
+:root[data-theme='retro'] .bar.done > i {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--ok) 0px,
+    var(--ok) 4px,
+    transparent 4px,
+    transparent 6px
+  );
+}
+
+:root[data-theme='retro'] .bar.error > i {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--danger) 0px,
+    var(--danger) 4px,
+    transparent 4px,
+    transparent 6px
+  );
+}
+
+:root[data-theme='retro'] .bar.idle > i {
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--text-faint) 0px,
+    var(--text-faint) 4px,
+    transparent 4px,
+    transparent 6px
+  );
+}
+
+:root[data-theme='retro'] .bar.live > i::after {
+  animation-timing-function: steps(12, end);
+}
+
+:root[data-theme='retro'] .pill {
+  border-radius: 0;
+  border-width: 2px;
+  font-weight: 700;
+}
+
+:root[data-theme='retro'] .pill .dot {
+  border-radius: 0;
+  width: 5px;
+  height: 5px;
+}
+
+:root[data-theme='retro'] .check {
+  border-radius: 0;
+  border-width: 2px;
+}
+
+:root[data-theme='retro'] .switch .track,
+:root[data-theme='retro'] .switch .track::after {
+  border-radius: 0;
+}
+
+:root[data-theme='retro'] .side-item,
+:root[data-theme='retro'] .tab,
+:root[data-theme='retro'] .menu button {
+  border-radius: 0;
+}
+
+:root[data-theme='retro'] .side-dot {
+  border-radius: 0;
+}
+
+:root[data-theme='retro'] .side-item.active {
+  border-left: 3px solid var(--accent);
+}
+
+:root[data-theme='retro'] table.torrents tbody tr.selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+:root[data-theme='retro'] .level-chip-num,
+:root[data-theme='retro'] .level-ring,
+:root[data-theme='retro'] .badge-medal,
+:root[data-theme='retro'] .rate-icon,
+:root[data-theme='retro'] .empty .glyph {
+  border-radius: 0;
+  box-shadow: var(--shadow-sm);
+}
+
+:root[data-theme='retro'] .level-ring {
+  background: var(--accent);
+  color: #0d0620;
+  text-shadow: none;
+}
+
+:root[data-theme='retro'] .level-chip-num {
+  background: var(--accent);
+  color: #0d0620;
+  text-shadow: none;
+}
+
+:root[data-theme='retro'] .spark {
+  border-radius: 0;
+  image-rendering: pixelated;
+}
+
+:root[data-theme='retro'] .dropzone,
+:root[data-theme='retro'] .drop-card {
+  border-radius: 0;
+  border-style: dashed;
+  border-width: 3px;
+}
+
+:root[data-theme='retro'] .confetti span {
+  border-radius: 0;
+}
+
+/* ============================ theme picker ============================= */
+
+.theme-picker {
+  position: relative;
+}
+
+.theme-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 214px;
+}
+
+.theme-hint {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  letter-spacing: 0;
+  text-transform: none;
 }

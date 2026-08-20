@@ -52,6 +52,7 @@ export interface BackendSummary {
   apiVersion: string;
   flavor: string;
   methodCount: number;
+  rpcFacility: string;
   endpoint: string;
   supports: Record<string, boolean>;
 }
@@ -154,10 +155,16 @@ export interface Peer {
   downRate: number;
   upTotal: number;
   downTotal: number;
+  peerRate: number;
+  peerTotal: number;
   encrypted: boolean;
   obfuscated: boolean;
   incoming: boolean;
   snubbed: boolean;
+  preferred: boolean;
+  unwanted: boolean;
+  banned: boolean;
+  options: string;
 }
 
 export interface Tracker {
@@ -165,20 +172,41 @@ export interface Tracker {
   url: string;
   type: number;
   group: number;
+  trackerId: string;
   enabled: boolean;
   usable: boolean;
   open: boolean;
+  busy: boolean;
+  extra: boolean;
+  canScrape: boolean;
   seeders: number;
   leechers: number;
   downloaded: number;
   lastScrape: number;
+  scrapes: number;
   successes: number;
+  lastSuccess: number;
+  nextSuccess: number;
   failures: number;
+  lastFailure: number;
+  nextFailure: number;
+  latestEvent: number;
+  newPeers: number;
+  sumPeers: number;
   interval: number;
+  minInterval: number;
   lastActivity: number;
+  nextActivity: number;
 }
 
 export interface Settings {
+  httpMaxHostConnections?: number;
+  blockOutgoing?: boolean;
+  dhtOverridePort?: number;
+  proxyGlobal?: string;
+  bindAddressV4?: string;
+  bindAddressV6?: string;
+  adviseRandomHashing?: boolean;
   downloadRate?: number;
   uploadRate?: number;
   maxUploads?: number;

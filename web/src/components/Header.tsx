@@ -1,23 +1,17 @@
 import { bytes, rate } from '../format';
 import type { GameState, GlobalStatus } from '../types';
 import { LevelChip } from './Achievements';
-import {
-  IconDown,
-  IconGauge,
-  IconMoon,
-  IconPlus,
-  IconSettings,
-  IconSun,
-  IconTerminal,
-  IconUp,
-} from './icons';
+import { ThemePicker } from './ThemePicker';
+import type { ThemeMode } from '../theme';
+import { IconDown, IconGauge, IconPlus, IconSettings, IconTerminal, IconUp } from './icons';
 import { Sparkline } from './ui';
 
 interface HeaderProps {
   status: GlobalStatus | null;
   game: GameState | null;
-  theme: 'dark' | 'light';
-  onToggleTheme: () => void;
+  themeMode: ThemeMode;
+  resolvedTheme: string;
+  onThemeChange: (mode: ThemeMode) => void;
   onAdd: () => void;
   onSettings: () => void;
   onThrottles: () => void;
@@ -28,8 +22,9 @@ interface HeaderProps {
 export function Header({
   status,
   game,
-  theme,
-  onToggleTheme,
+  themeMode,
+  resolvedTheme,
+  onThemeChange,
   onAdd,
   onSettings,
   onThrottles,
@@ -93,9 +88,7 @@ export function Header({
       <button className="btn icon" onClick={onSettings} title="rtorrent settings">
         <IconSettings size={16} />
       </button>
-      <button className="btn icon" onClick={onToggleTheme} title="Toggle theme">
-        {theme === 'dark' ? <IconSun size={16} /> : <IconMoon size={16} />}
-      </button>
+      <ThemePicker mode={themeMode} resolved={resolvedTheme} onChange={onThemeChange} />
     </header>
   );
 }

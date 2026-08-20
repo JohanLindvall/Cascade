@@ -64,6 +64,14 @@ export interface GlobalSettings {
   receiveBuffer: number;
   sendBuffer: number;
   maxFileSize: number;
+  // Added in rtorrent 0.16; absent elsewhere and hidden by the capability probe.
+  httpMaxHostConnections: number;
+  blockOutgoing: boolean;
+  dhtOverridePort: number;
+  proxyGlobal: string;
+  bindAddressV4: string;
+  bindAddressV6: string;
+  adviseRandomHashing: boolean;
 }
 
 export interface GlobalStatus {
@@ -89,6 +97,7 @@ export interface BackendSummary {
   apiVersion: string;
   flavor: string;
   methodCount: number;
+  rpcFacility: string;
   endpoint: string;
   supports: Record<string, boolean>;
 }
@@ -109,7 +118,12 @@ export interface StateResponse {
 const HISTORY_LENGTH = 180;
 
 /** Settings exposed to the UI, keyed by the rtorrent command family behind them. */
-const SETTING_GETTERS: Array<[keyof GlobalSettings, string, XValue[]?]> = [
+/**
+ * Getter command per setting. Some settings were renamed between releases —
+ * 0.16 moved the listen-port commands under network.listen.* — so a setting can
+ * list alternates, newest first, and the probe picks whichever exists.
+ */
+const SETTING_GETTERS: Array<[keyof GlobalSettings, string | string[]]> = [
   ['downloadRate', 'throttle.global_down.max_rate'],
   ['uploadRate', 'throttle.global_up.max_rate'],
   ['maxUploads', 'throttle.max_uploads'],
@@ -121,10 +135,10 @@ const SETTING_GETTERS: Array<[keyof GlobalSettings, string, XValue[]?]> = [
   ['maxPeersSeed', 'throttle.max_peers.seed'],
   ['minPeersSeed', 'throttle.min_peers.seed'],
   ['maxOpenFiles', 'network.max_open_files'],
-  ['maxHttpOpen', 'network.http.max_open'],
+  ['maxHttpOpen', ['network.http.max_open', 'network.http.max_total_connections']],
   ['memoryMax', 'pieces.memory.max'],
-  ['portRange', 'network.port_range'],
-  ['portRandom', 'network.port_random'],
+  ['portRange', ['network.listen.port.range', 'network.port_range']],
+  ['portRandom', ['network.listen.port.random', 'network.port_random']],
   ['dhtMode', 'dht.mode'],
   ['dhtPort', 'dht.port'],
   ['pex', 'protocol.pex'],
@@ -142,6 +156,13 @@ const SETTING_GETTERS: Array<[keyof GlobalSettings, string, XValue[]?]> = [
   ['receiveBuffer', 'network.receive_buffer.size'],
   ['sendBuffer', 'network.send_buffer.size'],
   ['maxFileSize', 'system.file.max_size'],
+  ['httpMaxHostConnections', 'network.http.max_host_connections'],
+  ['blockOutgoing', 'network.block.outgoing'],
+  ['dhtOverridePort', 'dht.override_port'],
+  ['proxyGlobal', 'network.proxy.global'],
+  ['bindAddressV4', 'network.bind_address.ipv4'],
+  ['bindAddressV6', 'network.bind_address.ipv6'],
+  ['adviseRandomHashing', 'system.files.advise_random.hashing'],
 ];
 
 export class RtorrentService {
@@ -238,8 +259,10 @@ export class RtorrentService {
     if (keys.length === 0) return;
     await this.capabilities.ensure();
     const unsupported = keys.filter((key) => {
-      const method = SETTING_GETTERS.find(([name]) => name === key)?.[1];
-      return method !== undefined && !this.capabilities.has(`${method}.set`);
+      const methods = SETTING_GETTERS.find(([name]) => name === key)?.[1];
+      if (methods === undefined) return false;
+      const candidates = Array.isArray(methods) ? methods : [methods];
+      return !candidates.some((name) => this.capabilities.has(`${name}.set`));
     });
     try {
       await this.updateSettings(patch);
@@ -373,6 +396,12 @@ export class RtorrentService {
     };
   }
 
+  /** First command name from the candidates that this backend implements. */
+  private resolve(methods: string | string[]): string | undefined {
+    const candidates = Array.isArray(methods) ? methods : [methods];
+    return candidates.find((name) => this.capabilities.has(name));
+  }
+
   backendSummary(): BackendSummary {
     const info = this.capabilities.info;
     return {
@@ -381,6 +410,7 @@ export class RtorrentService {
       apiVersion: info.apiVersion,
       flavor: info.flavor,
       methodCount: info.methodCount,
+      rpcFacility: info.rpcFacility,
       endpoint: this.client.endpoint,
       supports: info.supports,
     };
@@ -608,7 +638,8 @@ export class RtorrentService {
 
   async settings(): Promise<Partial<GlobalSettings>> {
     await this.capabilities.ensure();
-    const usable = SETTING_GETTERS.filter(([, method]) => this.capabilities.has(method));
+    const usable = SETTING_GETTERS.map(([key, methods]) => [key, this.resolve(methods)] as const)
+      .filter((entry): entry is readonly [keyof GlobalSettings, string] => entry[1] !== undefined);
     const results = await this.client.multicallSettled(
       usable.map(([, method]) => ({ methodName: method, params: [] })),
     );
@@ -619,7 +650,15 @@ export class RtorrentService {
       settings[key] = Buffer.isBuffer(value) ? value.toString('utf8') : value;
     });
     // Normalise the boolean-ish values rtorrent returns as 0/1.
-    for (const key of ['portRandom', 'pex', 'udpTrackers', 'preallocate', 'checkHashOnCompletion']) {
+    for (const key of [
+      'portRandom',
+      'pex',
+      'udpTrackers',
+      'preallocate',
+      'checkHashOnCompletion',
+      'blockOutgoing',
+      'adviseRandomHashing',
+    ]) {
       if (key in settings) settings[key] = Number(settings[key]) !== 0;
     }
     return settings as Partial<GlobalSettings>;
@@ -631,8 +670,9 @@ export class RtorrentService {
     // rtorrent commands are invoked against a target; the empty string selects
     // the global/"download-less" target that these settings live on. Omitting
     // it makes rtorrent read the value as a target and fault with -503.
-    const push = (method: string, ...values: XValue[]) => {
-      if (this.capabilities.has(method)) entries.push({ methodName: method, params: ['', ...values] });
+    const push = (method: string | string[], ...values: XValue[]) => {
+      const resolved = this.resolve(method);
+      if (resolved) entries.push({ methodName: resolved, params: ['', ...values] });
     };
 
     const number = (value: unknown): number => Math.max(0, Math.trunc(Number(value) || 0));
@@ -656,10 +696,17 @@ export class RtorrentService {
       push('throttle.min_peers.seed.set', number(patch.minPeersSeed));
     if (patch.maxOpenFiles !== undefined)
       push('network.max_open_files.set', number(patch.maxOpenFiles));
+    // 0.16 dropped network.http.max_open; its max_total_connections successor
+    // registers a .set that has no effect, so the value is read-only there and
+    // the UI greys the field out rather than pretending it applied.
     if (patch.maxHttpOpen !== undefined) push('network.http.max_open.set', number(patch.maxHttpOpen));
     if (patch.memoryMax !== undefined) push('pieces.memory.max.set', number(patch.memoryMax));
-    if (patch.portRange !== undefined) push('network.port_range.set', String(patch.portRange));
-    if (patch.portRandom !== undefined) push('network.port_random.set', patch.portRandom ? 1 : 0);
+    if (patch.portRange !== undefined) {
+      push(['network.listen.port.range.set', 'network.port_range.set'], String(patch.portRange));
+    }
+    if (patch.portRandom !== undefined) {
+      push(['network.listen.port.random.set', 'network.port_random.set'], patch.portRandom ? 1 : 0);
+    }
     if (patch.dhtMode !== undefined) push('dht.mode.set', String(patch.dhtMode));
     if (patch.dhtPort !== undefined) push('dht.port.set', number(patch.dhtPort));
     if (patch.pex !== undefined) push('protocol.pex.set', patch.pex ? 1 : 0);
@@ -690,6 +737,25 @@ export class RtorrentService {
       push('network.receive_buffer.size.set', number(patch.receiveBuffer));
     if (patch.sendBuffer !== undefined) push('network.send_buffer.size.set', number(patch.sendBuffer));
     if (patch.maxFileSize !== undefined) push('system.file.max_size.set', number(patch.maxFileSize));
+    if (patch.httpMaxHostConnections !== undefined) {
+      push('network.http.max_host_connections.set', number(patch.httpMaxHostConnections));
+    }
+    if (patch.blockOutgoing !== undefined) {
+      push('network.block.outgoing.set', patch.blockOutgoing ? 1 : 0);
+    }
+    if (patch.dhtOverridePort !== undefined) {
+      push('dht.override_port.set', number(patch.dhtOverridePort));
+    }
+    if (patch.proxyGlobal !== undefined) push('network.proxy.global.set', String(patch.proxyGlobal));
+    if (patch.bindAddressV4 !== undefined) {
+      push('network.bind_address.ipv4.set', String(patch.bindAddressV4));
+    }
+    if (patch.bindAddressV6 !== undefined) {
+      push('network.bind_address.ipv6.set', String(patch.bindAddressV6));
+    }
+    if (patch.adviseRandomHashing !== undefined) {
+      push('system.files.advise_random.hashing.set', patch.adviseRandomHashing ? 1 : 0);
+    }
 
     if (entries.length === 0) return;
     await this.client.multicall(entries);
