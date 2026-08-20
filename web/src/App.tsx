@@ -220,14 +220,22 @@ export function App() {
 
   /* --------------------------- drag and drop ---------------------------- */
 
-  const acceptTorrents = (list: FileList | null): File[] =>
-    [...(list ?? [])].filter(
+  const acceptTorrents = (files: File[]): File[] =>
+    files.filter(
       (file) =>
         file.name.toLowerCase().endsWith('.torrent') || file.type === 'application/x-bittorrent',
     );
 
-  const carriesFiles = (event: DragEvent): boolean =>
-    [...(event.dataTransfer?.types ?? [])].includes('Files');
+  /**
+   * Whether a drag is carrying files. Some sources populate dataTransfer.items
+   * without advertising the "Files" type, so check both.
+   */
+  const carriesFiles = (event: DragEvent): boolean => {
+    const transfer = event.dataTransfer;
+    if (!transfer) return false;
+    if (Array.from(transfer.types ?? []).includes('Files')) return true;
+    return Array.from(transfer.items ?? []).some((item) => item.kind === 'file');
+  };
 
   const onDragEnter = (event: DragEvent) => {
     if (!carriesFiles(event)) return;
@@ -241,28 +249,71 @@ export function App() {
     if (dragDepth.current === 0) setDropping(false);
   };
 
+  /**
+   * Always cancel the default action while a drag is over the app. Without
+   * this the browser handles any drop it does not recognise by navigating to
+   * the dropped file, which throws the UI away mid-drop.
+   */
+  const onDragOver = (event: DragEvent) => {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+  };
+
   const onDropFiles = (event: DragEvent) => {
-    if (!carriesFiles(event)) return;
     event.preventDefault();
     dragDepth.current = 0;
     setDropping(false);
-    const files = acceptTorrents(event.dataTransfer?.files ?? null);
-    const rejected = (event.dataTransfer?.files.length ?? 0) - files.length;
-    if (rejected > 0) {
-      toast.push('info', `${rejected} file(s) ignored — only .torrent files are accepted`);
+    // Drops inside a dialog belong to that dialog.
+    if (dialog) return;
+
+    const transfer = event.dataTransfer;
+    const dropped = Array.from(transfer?.files ?? []);
+    const torrents = acceptTorrents(dropped);
+
+    if (torrents.length > 0) {
+      const ignored = dropped.length - torrents.length;
+      if (ignored > 0) {
+        toast.push('info', `${ignored} file(s) ignored — only .torrent files are accepted`);
+      }
+      setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count: torrents.length });
+      void addDropped(torrents);
+      return;
     }
-    if (files.length === 0) return;
-    // Dropping adds straight away — the pickup is the confirmation. Use the
-    // "Add torrent" button when a destination or label is needed.
-    setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count: files.length });
-    void addDropped(files);
+
+    if (dropped.length > 0) {
+      toast.push('info', `${dropped.length} file(s) ignored — only .torrent files are accepted`);
+      return;
+    }
+
+    // No file payload: a link may still be droppable, which is how magnets
+    // arrive when dragged out of a browser.
+    const text = (
+      transfer?.getData('text/uri-list') ||
+      transfer?.getData('text/plain') ||
+      ''
+    ).trim();
+    const links = text
+      .split(/\s+/)
+      .filter((line) => /^(magnet:|https?:)/i.test(line));
+
+    if (links.length > 0) {
+      setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count: links.length });
+      void addDroppedLinks(links);
+      return;
+    }
+
+    if (/^file:/i.test(text)) {
+      toast.push(
+        'error',
+        'Your file manager handed over a link rather than the file — use the Add torrent button, or drag from a file manager that supplies file data.',
+      );
+      return;
+    }
+    if (text) toast.push('info', 'Nothing to add — drop .torrent files, magnet links or URLs.');
   };
 
-  const addDropped = useCallback(
-    async (files: File[]) => {
-      const form = new FormData();
-      for (const file of files) form.append('torrents', file);
-      form.append('start', '1');
+  const submitDrop = useCallback(
+    async (form: FormData) => {
       try {
         const result = await api.upload(form);
         for (const error of result.errors) toast.push('error', error);
@@ -271,6 +322,28 @@ export function App() {
         toast.error(error);
       }
     },
+    [refresh, toast],
+  );
+
+  const addDropped = useCallback(
+    async (files: File[]) => {
+      const form = new FormData();
+      for (const file of files) form.append('torrents', file);
+      form.append('start', '1');
+      await submitDrop(form);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [refresh, toast],
+  );
+
+  const addDroppedLinks = useCallback(
+    async (links: string[]) => {
+      const form = new FormData();
+      form.append('urls', links.join('\n'));
+      form.append('start', '1');
+      await submitDrop(form);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [refresh, toast],
   );
 
@@ -413,6 +486,22 @@ export function App() {
 
   /* ----------------------------- keyboard ------------------------------ */
 
+  // A drop that lands outside the app element would otherwise make the browser
+  // navigate to the file, discarding the UI.
+  useEffect(() => {
+    const block = (event: globalThis.DragEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest?.('input, textarea')) return;
+      event.preventDefault();
+    };
+    window.addEventListener('dragover', block);
+    window.addEventListener('drop', block);
+    return () => {
+      window.removeEventListener('dragover', block);
+      window.removeEventListener('drop', block);
+    };
+  }, []);
+
   // The drawer only exists in the compact layout.
   useEffect(() => {
     if (!compact) setDrawerOpen(false);
@@ -478,7 +567,7 @@ export function App() {
       className="app"
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
-      onDragOver={(event) => carriesFiles(event) && event.preventDefault()}
+      onDragOver={onDragOver}
       onDrop={onDropFiles}
     >
       <Header

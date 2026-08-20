@@ -226,7 +226,8 @@ Files can be prioritised individually — skip, normal or high — with per-file
 
 ![Files](docs/screenshot-files.png)
 
-Drag `.torrent` files onto the window — anywhere — and drop to add them.
+Drag `.torrent` files onto the window — anywhere — and drop to add them. Magnet links and torrent
+URLs can be dragged in the same way, straight from another browser tab.
 
 ![Drag and drop](docs/screenshot-drop.png)
 

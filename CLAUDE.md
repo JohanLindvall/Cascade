@@ -171,6 +171,18 @@ directory or label, or for magnets and URLs. Because the drop path has no dialog
 
 Failures come back per file in the upload response and are toasted by the UI.
 
+Two things about the drop handling are load-bearing:
+
+- **`dragover` is cancelled unconditionally**, and a window-level listener cancels stray drops as
+  well. A drag the handler does not recognise must still be cancelled, because the browser's
+  default action for an uncancelled drop is to navigate to the dropped file — which throws the
+  whole UI away and looks to the user like the file being rejected.
+- **The Add dialog's dropzone stops propagation.** Otherwise a drop inside the dialog both stages
+  the file there and adds it immediately via the window handler.
+
+A drop with no file payload falls back to `text/uri-list` / `text/plain`, so magnets and URLs work;
+a `file://` URI cannot be read by the browser and says so rather than failing quietly.
+
 ## Animations
 
 `Celebrate` (download finished) and `DropBurst` (files dropped) are fire-and-forget: the parent

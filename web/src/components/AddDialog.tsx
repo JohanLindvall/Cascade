@@ -34,6 +34,9 @@ export function AddDialog({ onClose, onAdded, defaultDirectory, labels }: AddDia
 
   const onDrop = (event: DragEvent) => {
     event.preventDefault();
+    // Keep the drop here: the window-level handler adds torrents immediately,
+    // which would both stage and add the same file.
+    event.stopPropagation();
     setDragging(false);
     addFiles(event.dataTransfer.files);
   };
@@ -89,6 +92,7 @@ export function AddDialog({ onClose, onAdded, defaultDirectory, labels }: AddDia
         onClick={() => inputRef.current?.click()}
         onDragOver={(event) => {
           event.preventDefault();
+          event.stopPropagation();
           setDragging(true);
         }}
         onDragLeave={() => setDragging(false)}
