@@ -28,6 +28,7 @@ import {
 } from './model';
 import { RtorrentClient, type MulticallEntry } from './rtorrent';
 import { Store, type ThrottleGroup } from './store';
+import { parseTorrentFile } from './torrentfile';
 import type { XValue } from './xmlrpc';
 
 export interface GlobalSettings {
@@ -475,10 +476,42 @@ export class RtorrentService {
     options: { start: boolean; directory?: string; label?: string },
   ): Promise<void> {
     await this.capabilities.ensure();
+
+    // rtorrent reports success for anything, so reject junk before handing it
+    // over — otherwise a mistyped file just vanishes.
+    let parsed;
+    try {
+      parsed = parseTorrentFile(data);
+    } catch (error) {
+      throw new HttpError(400, (error as Error).message);
+    }
+
     const method = options.start
       ? this.capabilities.dialect.loadRawStart
       : this.capabilities.dialect.loadRaw;
     await this.client.call(method, ['', data, ...this.loadCommands(options)]);
+
+    // load.* is queued rather than immediate, so confirm the torrent actually
+    // landed instead of assuming it did.
+    if (!(await this.waitForTorrent(parsed.infoHash))) {
+      throw new HttpError(
+        502,
+        `rtorrent did not accept "${parsed.name || parsed.infoHash}" — see the rtorrent log`,
+      );
+    }
+  }
+
+  /** Poll briefly for a hash to appear in the session. */
+  private async waitForTorrent(hash: string, timeoutMs = 3000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const [result] = await this.client.multicallSettled([
+        { methodName: 'd.hash', params: [hash] },
+      ]);
+      if (!(result instanceof Error) && String(result).toUpperCase() === hash) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
   }
 
   async addTorrentUrl(

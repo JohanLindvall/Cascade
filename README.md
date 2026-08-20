@@ -17,8 +17,8 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
 - **Everything rtorrent exposes** — upload `.torrent` files, magnet links and URLs, global and
   per-torrent throttling, file priorities, tracker management, peers, labels, live settings, plus
   a raw API console and an XML-RPC passthrough for anything the UI does not wrap.
-- **Drop torrents anywhere** — drag `.torrent` files onto the window and the add dialog opens
-  ready to go.
+- **Drop torrents anywhere** — drag `.torrent` files onto the window and they are added and
+  started on the spot, no dialog in the way.
 - **Lightly gamified** — a level and a set of badges earned from real transfer totals, with a
   confetti burst when a download lands. Off with one environment variable if it is not for you.
 - **Four themes** — system, light, dark, and a retro 8-bit CRT mode. Preferences are stored on the
@@ -230,14 +230,17 @@ Drag `.torrent` files onto the window — anywhere — and drop to add them.
 
 ![Drag and drop](docs/screenshot-drop.png)
 
-Dropping plays a pickup: a shockwave and sparks at the point of impact, a `+N torrents` score, and
-the payload flying up into the Add button, which takes the hit. In the retro theme the whole thing
-goes blocky.
+Dropped files are added and started immediately — no dialog, no questions. The confirmation is a
+pickup: a shockwave and sparks at the point of impact, a `+N torrents` score, and the payload
+flying up into the Add button, which takes the hit. In the retro theme the whole thing goes blocky.
 
 ![Drop pickup](docs/screenshot-drop-burst.png)
 
-The add dialog opens prefilled with what you dropped; magnet links and URLs can be pasted
-alongside. Destination directory and label are set at add time.
+Torrents are checked before rtorrent sees them, so a file that is not really a torrent tells you
+so instead of vanishing.
+
+Use the **Add torrent** button when you want to choose a destination directory or label first, or
+to paste magnet links and URLs.
 
 ![Add torrents](docs/screenshot-add.png)
 

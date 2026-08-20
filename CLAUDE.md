@@ -158,6 +158,19 @@ Four modes: `system`, `light`, `dark`, `retro`. `system` resolves through `prefe
 plus, for retro, a set of shape overrides (zero radius, offset shadows, stepped bars). Keep it that
 way.
 
+## Adding torrents
+
+Dropping on the window adds immediately; the **Add torrent** button is the path for choosing a
+directory or label, or for magnets and URLs. Because the drop path has no dialog to report into,
+`addTorrentFile` has to be trustworthy:
+
+- `load.raw_start` returns 0 for **any** payload — a corrupt file only shows up in rtorrent's log —
+  so `torrentfile.ts` parses the bencode first and rejects what is not a torrent, with the reason.
+- The same parse yields the info hash, and the load is confirmed by waiting for that hash to appear
+  in the session. `load.*` is queued, not immediate, so "the call returned" is not "it loaded".
+
+Failures come back per file in the upload response and are toasted by the UI.
+
 ## Animations
 
 `Celebrate` (download finished) and `DropBurst` (files dropped) are fire-and-forget: the parent

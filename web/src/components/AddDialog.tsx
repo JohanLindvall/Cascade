@@ -9,18 +9,10 @@ interface AddDialogProps {
   onAdded: () => void;
   defaultDirectory: string;
   labels: string[];
-  /** Files dropped onto the window before the dialog opened. */
-  initialFiles?: File[];
 }
 
-export function AddDialog({
-  onClose,
-  onAdded,
-  defaultDirectory,
-  labels,
-  initialFiles,
-}: AddDialogProps) {
-  const [files, setFiles] = useState<File[]>(initialFiles ?? []);
+export function AddDialog({ onClose, onAdded, defaultDirectory, labels }: AddDialogProps) {
+  const [files, setFiles] = useState<File[]>([]);
   const [urls, setUrls] = useState('');
   const [directory, setDirectory] = useState('');
   const [label, setLabel] = useState('');

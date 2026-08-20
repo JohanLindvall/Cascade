@@ -85,7 +85,6 @@ export function App() {
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dropping, setDropping] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [celebration, setCelebration] = useState(0);
   const [burst, setBurst] = useState<Burst | null>(null);
   const burstId = useRef(0);
@@ -253,12 +252,27 @@ export function App() {
       toast.push('info', `${rejected} file(s) ignored — only .torrent files are accepted`);
     }
     if (files.length === 0) return;
-    setPendingFiles(files);
-    // Play the pickup where the files landed, then bring up the dialog so the
-    // animation is not immediately covered by it.
+    // Dropping adds straight away — the pickup is the confirmation. Use the
+    // "Add torrent" button when a destination or label is needed.
     setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count: files.length });
-    window.setTimeout(() => setDialog('add'), 430);
+    void addDropped(files);
   };
+
+  const addDropped = useCallback(
+    async (files: File[]) => {
+      const form = new FormData();
+      for (const file of files) form.append('torrents', file);
+      form.append('start', '1');
+      try {
+        const result = await api.upload(form);
+        for (const error of result.errors) toast.push('error', error);
+        if (result.added > 0) await refresh();
+      } catch (error) {
+        toast.error(error);
+      }
+    },
+    [refresh, toast],
+  );
 
   /* ------------------------------ filtering ---------------------------- */
 
@@ -726,8 +740,8 @@ export function App() {
         <div className="drop-overlay">
           <div className="drop-card">
             <IconUpload size={30} />
-            <strong>Drop to add torrents</strong>
-            <span>.torrent files only</span>
+            <strong>Drop to add</strong>
+            <span>.torrent files start immediately</span>
           </div>
         </div>
       )}
@@ -737,14 +751,10 @@ export function App() {
 
       {dialog === 'add' && (
         <AddDialog
-          onClose={() => {
-            setDialog(null);
-            setPendingFiles([]);
-          }}
+          onClose={() => setDialog(null)}
           onAdded={() => void refresh()}
           defaultDirectory={''}
           labels={labels}
-          initialFiles={pendingFiles}
         />
       )}
       {dialog === 'progress' && game && (
