@@ -1,0 +1,37 @@
+services:
+  cascade:
+    build:
+      context: .
+      args:
+        # 3.19/3.20 -> rtorrent 0.9.8 | 3.21 -> 0.10.0 | 3.22 -> 0.15.2
+        ALPINE_VERSION: "3.21"
+    image: cascade
+    container_name: cascade
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+      - "50000:50000/udp"
+    volumes:
+      - ./data/downloads:/downloads
+      - ./data/config:/config
+      - ./data/watch:/watch
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: "UTC"
+
+      # Bandwidth, in KiB/s (0 = unlimited)
+      RT_DOWNLOAD_RATE: "0"
+      RT_UPLOAD_RATE: "2048"
+      RT_MAX_UPLOADS: "50"
+
+      # Network
+      RT_PORT_RANGE: "50000-50000"
+      RT_DHT: "auto"
+      RT_PEX: "yes"
+      RT_ENCRYPTION: "allow_incoming,try_outgoing,enable_retry"
+
+      # Web
+      # WEB_USER: "admin"
+      # WEB_PASS: "change-me"
