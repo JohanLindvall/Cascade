@@ -43,6 +43,13 @@ docker run -d --name cascade \
 
 Open <http://localhost:8080>.
 
+Or let the Makefile do it: `make run` starts the container against `./data`, waits for it to
+answer, and opens a browser.
+
+```bash
+make build && make run
+```
+
 Or with compose:
 
 ```bash
@@ -105,6 +112,7 @@ left unset keeps rtorrent's own default.
 | `RT_LOG_LEVEL` | `info` | Log scopes: `info`, `debug`, `dht_debug`, `tracker_debug`, … |
 | `RT_UMASK` | `0022` | rtorrent umask |
 | `PUID` / `PGID` | `1000` | User/group rtorrent and the server run as |
+| `CASCADE_CHOWN_DOWNLOADS` | `0` | `1` chowns `RT_DOWNLOAD_DIR` to PUID/PGID at startup (slow on large libraries) |
 | `TZ` | `UTC` | Container timezone |
 
 ### Bandwidth and slots
@@ -164,6 +172,7 @@ Rates are in **KiB/s**; `0` means unlimited.
 | `RT_SCGI_PORT` | — | Also listen for SCGI on this TCP port |
 | `RT_SCGI_BIND` | `127.0.0.1` | Interface for `RT_SCGI_PORT` |
 | `RT_XMLRPC_SIZE_LIMIT` | `16777216` | Max XML-RPC request size (raises the `.torrent` upload ceiling) |
+| `CASCADE_SCGI` | `RT_SCGI_SOCKET` | Endpoint the web server talks to — a path, or `host:port` for a remote rtorrent |
 
 ### Web server
 
@@ -179,6 +188,7 @@ Rates are in **KiB/s**; `0` means unlimited.
 | `CASCADE_POLL_MS` | `1000` | Backend sampling interval for the rate graph |
 | `CASCADE_GAMIFY` | `1` | `0` removes levels, badges and celebrations |
 | `CASCADE_DELETE_ROOTS` | — | Extra `:`-separated roots data may be deleted from |
+| `CASCADE_STATE_FILE` | `/config/cascade-state.json` | Where preferences and progress are stored |
 
 ### Escape hatches
 
@@ -187,6 +197,7 @@ Rates are in **KiB/s**; `0` means unlimited.
 | `RT_EXTRA_CONFIG` | Raw `rtorrent.rc` lines appended to the generated config |
 | `RT_EXTRA_CONFIG_FILE` | Path to a file of extra `rtorrent.rc` lines |
 | `RT_CONFIG_FILE` | Use this config file verbatim instead of generating one |
+| `RT_CONFIG_KEEP` | `0` regenerates `RT_CONFIG_FILE` on every start instead of keeping it |
 
 > Settings given as environment variables are applied to rtorrent over XML-RPC at startup rather
 > than written into `rtorrent.rc`. rtorrent aborts on an unknown command in its config file and
@@ -208,6 +219,10 @@ countdown to the next one; expanding a row adds announce intervals, success and 
 and the latest event.
 
 ![Trackers](docs/screenshot-trackers.png)
+
+Files can be prioritised individually — skip, normal or high — with per-file progress.
+
+![Files](docs/screenshot-files.png)
 
 Drag `.torrent` files onto the window — anywhere — and drop to add them.
 
@@ -271,6 +286,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | --- | --- | --- |
 | `GET` | `/api/state` | Torrents, global status, throttle groups (the UI's poll) |
 | `GET` | `/api/torrents?view=main` | Torrent list for an rtorrent view |
+| `GET` | `/api/status` | Global rates, limits and backend summary on their own |
 | `GET` | `/api/capabilities` | Backend version and supported feature map |
 | `GET` | `/api/game` | Level, XP and badge progress |
 | `GET`/`PATCH` | `/api/prefs` | UI preferences (theme, sort, layout) |
@@ -287,6 +303,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET`/`POST`/`DELETE` | `/api/throttles` | Manage throttle groups |
 | `GET` | `/api/log` | Tail of the rtorrent log |
 | `GET` | `/api/rpc/methods`, `POST` `/api/rpc` | Every rtorrent command, as JSON |
+| `POST` | `/api/rpc/help` | `system.methodHelp` / `methodSignature` for one command |
 | `POST` | `/RPC2` | Raw XML-RPC passthrough |
 
 `/RPC2` lets existing tooling drive rtorrent over HTTP:
