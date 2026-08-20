@@ -1,4 +1,4 @@
-import { useMemo, type MouseEvent } from 'react';
+import { useMemo, useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
 
 /** Modifier keys that drive multi-select, decoupled from the DOM event type. */
 export interface SelectMods {
@@ -40,12 +40,12 @@ const COLUMNS: Column[] = [
   { key: 'size', label: 'Size', align: 'right' },
   { key: 'progress', label: 'Progress' },
   { key: 'status', label: 'Status' },
-  { key: 'peers', label: 'Peers', align: 'right', className: 'col-hide' },
+  { key: 'peers', label: 'Peers', align: 'right', className: 'col-peers' },
   { key: 'downRate', label: 'Down', align: 'right' },
   { key: 'upRate', label: 'Up', align: 'right' },
-  { key: 'ratio', label: 'Ratio', align: 'right', className: 'col-hide' },
-  { key: 'eta', label: 'ETA', align: 'right', className: 'col-hide' },
-  { key: 'addedAt', label: 'Added', align: 'right', className: 'col-hide' },
+  { key: 'ratio', label: 'Ratio', align: 'right', className: 'col-ratio' },
+  { key: 'eta', label: 'ETA', align: 'right', className: 'col-eta' },
+  { key: 'addedAt', label: 'Added', align: 'right', className: 'col-added' },
 ];
 
 function sortValue(torrent: Torrent, key: SortKey): number | string {
@@ -94,6 +94,8 @@ function barVariant(torrent: Torrent) {
 }
 
 interface TorrentTableProps {
+  /** Render as stacked cards instead of a table (narrow viewports). */
+  compact?: boolean;
   torrents: Torrent[];
   selected: Set<string>;
   focused: string | null;
@@ -106,6 +108,7 @@ interface TorrentTableProps {
 }
 
 export function TorrentTable({
+  compact,
   torrents,
   selected,
   focused,
@@ -177,7 +180,7 @@ export function TorrentTable({
             <td>
               <StatusPill torrent={torrent} />
             </td>
-            <td className="num col-hide" style={{ textAlign: 'right' }}>
+            <td className="num col-peers" style={{ textAlign: 'right' }}>
               <span style={{ color: 'var(--text-dim)' }}>{torrent.peersConnected}</span>
               <span style={{ color: 'var(--text-faint)' }}>/{torrent.peersNotConnected}</span>
             </td>
@@ -187,13 +190,13 @@ export function TorrentTable({
             <td className={`num rate-num ${torrent.upRate ? 'up' : 'zero'}`} style={{ textAlign: 'right' }}>
               {rate(torrent.upRate)}
             </td>
-            <td className={`num col-hide ratio ${ratioTier(torrent.ratio)}`} style={{ textAlign: 'right' }}>
+            <td className={`num col-ratio ratio ${ratioTier(torrent.ratio)}`} style={{ textAlign: 'right' }}>
               {torrent.ratio.toFixed(2)}
             </td>
-            <td className="num col-hide" style={{ textAlign: 'right' }}>
+            <td className="num col-eta" style={{ textAlign: 'right' }}>
               {torrent.progress >= 1 ? '—' : duration(torrent.eta)}
             </td>
-            <td className="num col-hide" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>
+            <td className="num col-added" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>
               {relative(torrent.addedAt)}
             </td>
           </tr>
@@ -208,6 +211,25 @@ export function TorrentTable({
         <EmptyState glyph={<IconDown size={26} />} title="Nothing here yet">
           {emptyHint}
         </EmptyState>
+      </div>
+    );
+  }
+
+  if (compact) {
+    return (
+      <div className="table-wrap">
+        <div className="card-list">
+          {torrents.map((torrent) => (
+            <TorrentCard
+              key={torrent.hash}
+              torrent={torrent}
+              selected={selected.has(torrent.hash)}
+              focused={focused === torrent.hash}
+              onSelect={onSelect}
+              onContextMenu={onContextMenu}
+            />
+          ))}
+        </div>
       </div>
     );
   }
@@ -246,6 +268,102 @@ export function TorrentTable({
         <tbody>{rows}</tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * One torrent as a stacked card. Touch has no hover or right-click, so the
+ * whole card is the tap target and a long press stands in for the context menu.
+ */
+function TorrentCard({
+  torrent,
+  selected,
+  focused,
+  onSelect,
+  onContextMenu,
+}: {
+  torrent: Torrent;
+  selected: boolean;
+  focused: boolean;
+  onSelect: (hash: string, mods: SelectMods) => void;
+  onContextMenu: (hash: string, event: MouseEvent) => void;
+}) {
+  const press = useRef<number | undefined>(undefined);
+
+  const startPress = (event: ReactTouchEvent) => {
+    const touch = event.touches[0];
+    press.current = window.setTimeout(() => {
+      onContextMenu(torrent.hash, {
+        preventDefault: () => {},
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+      } as MouseEvent);
+    }, 500);
+  };
+  const cancelPress = () => window.clearTimeout(press.current);
+
+  return (
+    <article
+      className={`torrent-card ${selected ? 'selected' : ''} ${focused ? 'focused' : ''}`}
+      onClick={(event) =>
+        onSelect(torrent.hash, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey })
+      }
+      onContextMenu={(event) => onContextMenu(torrent.hash, event)}
+      onTouchStart={startPress}
+      onTouchEnd={cancelPress}
+      onTouchMove={cancelPress}
+      onTouchCancel={cancelPress}
+    >
+      <div className="card-top">
+        <input
+          className="check"
+          type="checkbox"
+          checked={selected}
+          onClick={(event) => event.stopPropagation()}
+          onChange={() => onSelect(torrent.hash, { ctrl: true, shift: false })}
+          aria-label={`Select ${torrent.name}`}
+        />
+        <span className="card-name" title={torrent.name}>
+          {torrent.name || torrent.hash}
+        </span>
+        <StatusPill torrent={torrent} />
+      </div>
+
+      <div className="progress-cell">
+        <ProgressBar
+          value={torrent.progress}
+          variant={barVariant(torrent)}
+          striped={torrent.status === 'checking'}
+          live={torrent.status === 'downloading' && torrent.progress < 1}
+        />
+        <span className="num">{percent(torrent.progress, torrent.progress >= 1 ? 0 : 1)}</span>
+      </div>
+
+      <div className="card-stats num">
+        <span>{bytes(torrent.size)}</span>
+        <span className={torrent.downRate ? 'rate-num down' : 'rate-num zero'}>
+          ↓ {rate(torrent.downRate)}
+        </span>
+        <span className={torrent.upRate ? 'rate-num up' : 'rate-num zero'}>
+          ↑ {rate(torrent.upRate)}
+        </span>
+        <span>{torrent.peersConnected} peers</span>
+        <span>ratio {torrent.ratio.toFixed(2)}</span>
+        {torrent.progress < 1 && <span>{duration(torrent.eta)}</span>}
+      </div>
+
+      {(torrent.label || torrent.throttle || torrent.message) && (
+        <div className="card-tags">
+          {torrent.label && <span className="tag accent">{torrent.label}</span>}
+          {torrent.throttle && <span className="tag">⇅ {torrent.throttle}</span>}
+          {torrent.message && (
+            <span className="card-message" title={torrent.message}>
+              {torrent.message}
+            </span>
+          )}
+        </div>
+      )}
+    </article>
   );
 }
 

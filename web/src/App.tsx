@@ -34,12 +34,14 @@ import {
   IconPause,
   IconPlay,
   IconRefresh,
+  IconList as IconFilters,
   IconSearch,
   IconStop,
   IconTag,
   IconTrash,
 } from './components/icons';
 import { ContextMenu, MenuItem, useToast } from './components/ui';
+import { COMPACT_QUERY, useMediaQuery } from './useMediaQuery';
 import {
   fetchPreferences,
   readCache,
@@ -81,6 +83,7 @@ export function App() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [dropping, setDropping] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [celebration, setCelebration] = useState(0);
   // Seeded from the cache so the first paint is already themed, then replaced
@@ -90,6 +93,7 @@ export function App() {
   const themeMode = prefs.theme;
 
   const toast = useToast();
+  const compact = useMediaQuery(COMPACT_QUERY);
   const lastAnchor = useRef<string | null>(null);
   const dragDepth = useRef(0);
   const completedRef = useRef<Set<string> | null>(null);
@@ -386,6 +390,11 @@ export function App() {
 
   /* ----------------------------- keyboard ------------------------------ */
 
+  // The drawer only exists in the compact layout.
+  useEffect(() => {
+    if (!compact) setDrawerOpen(false);
+  }, [compact]);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -398,6 +407,7 @@ export function App() {
       } else if (event.key === 'Escape') {
         setSelected(new Set());
         setMenu(null);
+        setDrawerOpen(false);
       } else if (event.key.toLowerCase() === 'n' && !event.ctrlKey && !event.metaKey) {
         setDialog('add');
       }
@@ -461,11 +471,16 @@ export function App() {
         onProgress={() => setDialog('progress')}
       />
 
+      {drawerOpen && <div className="scrim" onClick={() => setDrawerOpen(false)} />}
       <Sidebar
+        className={drawerOpen ? 'open' : ''}
         torrents={torrents}
         status={status}
         filter={filter}
-        onFilter={setFilter}
+        onFilter={(value) => {
+          setFilter(value);
+          setDrawerOpen(false);
+        }}
         trackerHosts={trackerHosts}
       />
 
@@ -482,17 +497,25 @@ export function App() {
         )}
 
         <div className="toolbar">
+          <button
+            className="btn sm compact-only"
+            onClick={() => setDrawerOpen((value) => !value)}
+            title="Filters"
+            aria-label="Filters"
+          >
+            <IconFilters size={14} />
+          </button>
           <button className="btn sm" onClick={() => void runAction('start')} disabled={targets.length === 0}>
             <IconPlay size={12} />
-            Start
+            <span>Start</span>
           </button>
           <button className="btn sm" onClick={() => void runAction('pause')} disabled={targets.length === 0}>
             <IconPause size={13} />
-            Pause
+            <span>Pause</span>
           </button>
           <button className="btn sm" onClick={() => void runAction('stop')} disabled={targets.length === 0}>
             <IconStop size={12} />
-            Stop
+            <span>Stop</span>
           </button>
           <button
             className="btn sm danger"
@@ -500,18 +523,18 @@ export function App() {
             disabled={targets.length === 0}
           >
             <IconTrash size={13} />
-            Remove
+            <span>Remove</span>
           </button>
 
           <div className="divider" />
 
           <button className="btn sm" onClick={() => void runAction('recheck')} disabled={targets.length === 0}>
             <IconRefresh size={13} />
-            Recheck
+            <span>Recheck</span>
           </button>
           <button className="btn sm" onClick={promptLabel} disabled={targets.length === 0}>
             <IconTag size={13} />
-            Label
+            <span>Label</span>
           </button>
 
           {targets.length > 0 && (
@@ -531,7 +554,7 @@ export function App() {
 
           <button className="btn sm" onClick={() => setDialog('log')} title="rtorrent log">
             <IconList size={13} />
-            Log
+            <span>Log</span>
           </button>
 
           <div className="search">
@@ -546,6 +569,7 @@ export function App() {
         </div>
 
         <TorrentTable
+          compact={compact}
           torrents={visible}
           selected={selected}
           focused={focused}

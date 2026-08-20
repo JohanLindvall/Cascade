@@ -48,9 +48,9 @@ export function Header({
         </span>
       </div>
 
-      <button className="btn primary" onClick={onAdd}>
+      <button className="btn primary" onClick={onAdd} title="Add torrent">
         <IconPlus size={15} />
-        Add torrent
+        <span>Add torrent</span>
       </button>
 
       <div className="header-spacer" />

@@ -23,6 +23,8 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
   confetti burst when a download lands. Off with one environment variable if it is not for you.
 - **Four themes** — system, light, dark, and a retro 8-bit CRT mode. Preferences are stored on the
   server, so they follow the install rather than the browser.
+- **Works on a phone** — the table becomes cards, the sidebar becomes a drawer, and detail and
+  dialogs become full-screen sheets.
 - **Configured entirely from `docker run`** — the rtorrent backend options are environment
   variables.
 
@@ -274,6 +276,18 @@ UI preferences — theme, sort column, detail-pane height — are saved server-s
 or a different machine picks up the same setup. They live in `/config/cascade-state.json` next to
 gamification progress, add times and throttle groups; that one file is the whole of Cascade's
 persistent state, and deleting it resets everything.
+
+### On small screens
+
+The layout adapts rather than shrinking. Columns drop by usefulness as the window narrows, and
+below 720px the table becomes a card list, the sidebar becomes a drawer behind the filter button,
+and the detail pane and dialogs become full-screen sheets. Touch gets larger targets, and a long
+press stands in for right-click.
+
+<p>
+  <img src="docs/screenshot-mobile.png" alt="Mobile layout" width="290">
+  <img src="docs/screenshot-mobile-drawer.png" alt="Filter drawer" width="290">
+</p>
 
 Keyboard: `n` add torrents · `Ctrl/⌘+A` select all · `Delete` remove · `Shift+Delete` remove with
 data · `Esc` clear selection. Rows support `Ctrl`-click and `Shift`-click ranges.

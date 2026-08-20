@@ -8,6 +8,8 @@ export interface Filter {
 }
 
 interface SidebarProps {
+  /** Extra classes — used to slide the drawer in on narrow viewports. */
+  className?: string;
   torrents: Torrent[];
   status: GlobalStatus | null;
   filter: Filter;
@@ -32,7 +34,14 @@ export function matchesStatus(torrent: Torrent, value: string): boolean {
   return torrent.status === (value as TorrentStatus);
 }
 
-export function Sidebar({ torrents, status, filter, onFilter, trackerHosts }: SidebarProps) {
+export function Sidebar({
+  className = '',
+  torrents,
+  status,
+  filter,
+  onFilter,
+  trackerHosts,
+}: SidebarProps) {
   const countFor = (value: string) => torrents.filter((t) => matchesStatus(t, value)).length;
 
   const labels = new Map<string, number>();
@@ -57,7 +66,7 @@ export function Sidebar({ torrents, status, filter, onFilter, trackerHosts }: Si
   const totalSize = torrents.reduce((sum, t) => sum + t.size, 0);
 
   return (
-    <nav className="sidebar">
+    <nav className={`sidebar ${className}`}>
       <div className="side-group">
         <h4>Status</h4>
         {STATUS_ORDER.map((item) => (

@@ -158,6 +158,22 @@ Four modes: `system`, `light`, `dark`, `retro`. `system` resolves through `prefe
 plus, for retro, a set of shape overrides (zero radius, offset shadows, stepped bars). Keep it that
 way.
 
+## Responsive layout
+
+Breakpoints live in `styles.css` and, where a component has to change rather than restyle, in
+`useMediaQuery.ts` — keep the two in step (`COMPACT_QUERY` is the 720px one). Columns drop by
+usefulness through 1280/1140/1024px via per-column classes (`col-added`, `col-ratio`, `col-eta`,
+`col-peers`); below 720px `TorrentTable` renders cards instead of a table, the sidebar becomes a
+fixed drawer, and detail/modals become full-screen sheets.
+
+Two things are easy to get wrong here:
+
+- **Button labels must be wrapped in a `<span>`.** The compact rules hide labels to leave icons;
+  a bare text node inside a button cannot be targeted.
+- **Do not let anything scroll the page sideways.** `html, body` are capped at `100%` with
+  `overflow-x: hidden`; wide content scrolls inside its own container instead. Check new layout
+  work at 360px before calling it done.
+
 ## Conventions
 
 - Comments explain *why*, especially where the code works around one of the quirks above. Do not

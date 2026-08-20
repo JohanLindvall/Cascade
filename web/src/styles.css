@@ -848,6 +848,10 @@ td.col-name {
   min-width: 118px;
 }
 
+.progress-cell .bar {
+  flex: 1;
+}
+
 .progress-cell .num {
   width: 46px;
   text-align: right;
@@ -1594,28 +1598,395 @@ table.grid tr.detail-row > td {
 
 /* ============================= responsive ============================= */
 
-@media (max-width: 1080px) {
-  .search .input {
-    width: 150px;
-  }
-  td.col-hide,
-  th.col-hide {
+/* Nothing should ever scroll the page sideways. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+.compact-only {
+  display: none;
+}
+
+/* Wide desktop keeps every column; below that they drop by usefulness. */
+@media (max-width: 1280px) {
+  td.col-added,
+  th.col-added {
     display: none;
   }
 }
 
-@media (max-width: 860px) {
-  .app {
-    grid-template-columns: 0 1fr;
+@media (max-width: 1140px) {
+  td.col-ratio,
+  th.col-ratio,
+  td.col-eta,
+  th.col-eta {
+    display: none;
   }
+  .search .input {
+    width: 170px;
+  }
+}
+
+@media (max-width: 1024px) {
+  :root {
+    --sidebar-w: 200px;
+  }
+  td.col-peers,
+  th.col-peers {
+    display: none;
+  }
+  .rate-cluster .spark {
+    display: none;
+  }
+  .level-chip-body {
+    display: none;
+  }
+  .level-chip {
+    padding: 0 7px;
+  }
+}
+
+@media (max-width: 880px) {
+  .brand span:not(.brand-mark) {
+    display: none;
+  }
+  .rate-value span {
+    display: none;
+  }
+  .rate {
+    min-width: 0;
+  }
+  .header {
+    gap: 10px;
+    padding: 0 10px;
+  }
+}
+
+/* ---------------------------- compact layout --------------------------- */
+
+@media (max-width: 720px) {
+  :root {
+    --header-h: 56px;
+  }
+
+  .compact-only {
+    display: inline-flex;
+  }
+
+  .app,
+  .app.no-sidebar {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'header'
+      'main';
+  }
+
+  /* The sidebar carries the filters, labels and trackers, so on a phone it
+     becomes a drawer rather than disappearing. */
   .sidebar {
-    display: none;
+    display: flex;
+    position: fixed;
+    top: var(--header-h);
+    bottom: 0;
+    left: 0;
+    width: min(84vw, 300px);
+    z-index: 120;
+    background: var(--bg-elevated);
+    border-right: 1px solid var(--border-strong);
+    box-shadow: var(--shadow);
+    transform: translateX(-101%);
+    transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1);
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
   }
+
+  .sidebar.open {
+    transform: none;
+  }
+
+  .scrim {
+    position: fixed;
+    inset: var(--header-h) 0 0 0;
+    z-index: 110;
+    background: rgba(4, 6, 12, 0.5);
+    backdrop-filter: blur(2px);
+    animation: fade 0.15s ease;
+  }
+
+  /* Header: mark, add button, rates, overflow actions. */
+  .header {
+    gap: 8px;
+    padding: 0 8px;
+    padding-right: calc(8px + env(safe-area-inset-right));
+    padding-left: calc(8px + env(safe-area-inset-left));
+  }
+
+  .header .btn.primary {
+    padding: 0 10px;
+  }
+
+  .header .btn.primary span,
   .rate-cluster {
-    padding: 4px 8px;
-  }
-  .spark {
     display: none;
+  }
+
+  .header-spacer {
+    flex: 1;
+  }
+
+  /* Actions on one row, search given a full-width row of its own. */
+  .toolbar {
+    gap: 6px;
+    padding: 8px;
+    flex-wrap: wrap;
+  }
+
+  .toolbar .btn.sm {
+    flex: none;
+    height: 30px;
+  }
+
+  .toolbar .divider,
+  .toolbar .btn.sm span {
+    display: none;
+  }
+
+  .search {
+    order: 99;
+    flex: 1 1 100%;
+  }
+
+  .search .input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .selection-pill {
+    flex: none;
+  }
+
+  /* Detail becomes a full-height sheet; a 44% pane is unusable on a phone. */
+  .detail {
+    position: fixed;
+    inset: var(--header-h) 0 0 0;
+    height: auto !important;
+    z-index: 130;
+    border-top: none;
+    background: var(--bg);
+    animation: sheet 0.2s cubic-bezier(0.2, 0.9, 0.3, 1);
+  }
+
+  .detail-resize {
+    display: none;
+  }
+
+  .detail-head {
+    flex-wrap: wrap;
+    padding: 8px 10px;
+    padding-left: calc(10px + env(safe-area-inset-left));
+  }
+
+  .detail-title {
+    order: -1;
+    flex: 1 1 100%;
+  }
+
+  .tabs {
+    flex: 1;
+    overflow-x: auto;
+  }
+
+  .detail-body {
+    padding: 10px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .kv-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Wide detail tables scroll inside their own pane. */
+  .detail-body > table.grid {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  .mini-kv {
+    grid-template-columns: 1fr;
+  }
+
+  /* Dialogs take the whole screen. */
+  .overlay {
+    padding: 0;
+  }
+
+  .modal,
+  .modal.wide {
+    width: 100%;
+    max-width: none;
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+  }
+
+  .modal-body {
+    padding: 12px;
+  }
+
+  .modal-foot {
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    flex-wrap: wrap;
+  }
+
+  .modal-foot .spacer {
+    flex: 1 1 100%;
+    height: 0;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .console-output {
+    max-height: 40vh;
+  }
+
+  /* The API console's two panes stack. */
+  .modal-body > div[style*='grid-template-columns'] {
+    display: flex !important;
+    flex-direction: column;
+  }
+
+  .level-card {
+    gap: 12px;
+  }
+
+  .badge-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .toasts {
+    left: 8px;
+    right: 8px;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    max-width: none;
+  }
+
+  .menu {
+    min-width: 220px;
+  }
+}
+
+/* ------------------------------ card list ------------------------------ */
+
+.card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+
+.torrent-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-color 0.14s ease,
+    background 0.14s ease;
+}
+
+.torrent-card.selected {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.torrent-card.focused {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.card-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.card-top .check {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.card-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 550;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.card-tags {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.card-message {
+  font-size: 11px;
+  color: var(--warn);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+@keyframes sheet {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+/* Touch pointers get larger targets and no hover-only affordances. */
+@media (pointer: coarse) {
+  .btn {
+    height: 36px;
+  }
+  .btn.sm {
+    height: 32px;
+  }
+  .btn.icon {
+    width: 36px;
+  }
+  .check {
+    width: 18px;
+    height: 18px;
+  }
+  .menu button {
+    padding: 9px 10px;
+  }
+  .side-item {
+    padding: 9px;
   }
 }
 
