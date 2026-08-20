@@ -285,10 +285,17 @@ private network, or prefer `/RPC2`, which sits behind Basic auth.
 
 ## Development
 
-The whole toolchain lives in the image; no local Node is required.
+The whole toolchain lives in the image; no local Node is required. The Makefile wraps the usual
+work — `make` on its own lists every target.
 
 ```bash
-docker build -t cascade .            # typechecks and builds both halves
+make build                  # build the image (typechecks both TypeScript halves)
+make run PORT=8080          # run it, mounting ./data
+make smoke                  # build, boot, exercise the API, tear down
+make matrix                 # build against 0.9.8, 0.10.0 and 0.15.2
+make build-source RTORRENT_VERSION=0.9.8
+make attach                 # attach to rtorrent's curses UI
+make logs / shell / stop
 ```
 
 Working on the frontend with live reload, against a running container:
@@ -300,6 +307,7 @@ cd web && npm install && npm run dev     # proxies /api to localhost:8080
 Layout:
 
 ```
+Makefile       build/run/test wrappers around Docker
 server/src/    XML-RPC codec, SCGI transport, capability probe, REST API
 web/src/       React UI (components/, styles.css)
 docker/        entrypoint that renders rtorrent.rc and supervises both processes
