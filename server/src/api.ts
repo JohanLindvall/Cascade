@@ -1,7 +1,8 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import multer from 'multer';
 import type { Config } from './config';
-import { HttpError, type RtorrentService } from './service';
+import { HttpError } from './errors';
+import type { RtorrentService } from './service';
 import type { Store } from './store';
 import { XmlRpcFault, serializeCall, type XValue } from './xmlrpc';
 
@@ -300,7 +301,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.get(
     '/throttles',
     wrap(async (_req, res) => {
-      res.json({ groups: await serviceThrottles(service), rates: await service.throttleRates() });
+      res.json({ groups: store.throttles(), rates: await service.throttleRates() });
     }),
   );
 
@@ -384,12 +385,12 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     }),
   );
 
-  return router;
-}
+  // Unknown API paths must answer JSON, not fall through to the SPA fallback.
+  router.use((req, res) => {
+    res.status(404).json({ error: `no such endpoint: ${req.method} ${req.path}` });
+  });
 
-async function serviceThrottles(service: RtorrentService) {
-  const state = await service.state();
-  return state.throttles;
+  return router;
 }
 
 /** Buffers (base64 values) are not JSON-friendly; render them as base64 strings. */

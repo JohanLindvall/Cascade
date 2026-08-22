@@ -57,16 +57,10 @@ export class RtorrentClient {
 
   /** Batch several commands into one round trip via system.multicall. */
   async multicall(entries: MulticallEntry[]): Promise<XValue[]> {
-    if (entries.length === 0) return [];
-    const payload: XValue[] = entries.map((entry) => ({
-      methodName: entry.methodName,
-      params: entry.params,
-    }));
-    const result = await this.call('system.multicall', [payload]);
-    if (!Array.isArray(result)) throw new Error('system.multicall returned a non-array');
-    return result.map((item) => {
-      if (isFaultStruct(item)) throw faultFrom(item);
-      return Array.isArray(item) && item.length > 0 ? item[0] : '';
+    const results = await this.multicallSettled(entries);
+    return results.map((item) => {
+      if (item instanceof XmlRpcFault) throw item;
+      return item;
     });
   }
 
@@ -79,8 +73,16 @@ export class RtorrentClient {
     }));
     const result = await this.call('system.multicall', [payload]);
     if (!Array.isArray(result)) throw new Error('system.multicall returned a non-array');
-    return result.map((item) => {
-      if (isFaultStruct(item)) return faultFrom(item);
+    return result.map((item, index) => {
+      if (isFaultStruct(item)) {
+        // Name the command in the fault: "-503 Wrong object type" on its own
+        // does not say which of a dozen batched calls went wrong.
+        const fault = faultFrom(item);
+        return new XmlRpcFault(
+          fault.faultCode,
+          `${entries[index]?.methodName ?? 'unknown method'}: ${fault.faultString}`,
+        );
+      }
       return Array.isArray(item) && item.length > 0 ? item[0] : '';
     });
   }

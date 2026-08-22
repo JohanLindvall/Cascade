@@ -11,6 +11,7 @@
  * there. Unsupported settings are reported to the UI so it can hide them.
  */
 import type { RtorrentClient } from './rtorrent';
+import { SETTING_KEYS, SETTING_SPECS } from './settings';
 
 export interface Dialect {
   /** Multicall over the download list, plus the params that precede the fields. */
@@ -39,44 +40,22 @@ export interface BackendInfo {
   supports: Record<string, boolean>;
 }
 
-/** Feature -> command that implements it; a list when the name changed between releases. */
+/**
+ * Feature -> command that implements it, for capabilities that are not global
+ * settings. Every key of SETTING_SPECS additionally becomes a feature of its
+ * own (true when the backend has a working setter), so the UI greys a settings
+ * control out by its own field name rather than through a parallel list.
+ */
 const FEATURE_METHODS: Record<string, string | string[]> = {
   labels: 'd.custom1.set',
   throttleGroups: 'throttle.up',
   perTorrentThrottle: 'd.throttle_name.set',
-  dht: 'dht.mode.set',
-  dhtStatistics: 'dht.statistics',
-  pex: 'protocol.pex.set',
-  encryption: 'protocol.encryption.set',
-  udpTrackers: 'trackers.use_udp.set',
-  portRange: ['network.listen.port.range.set', 'network.port_range.set'],
-  preallocate: 'system.file.allocate.set',
-  checkHashOnCompletion: 'pieces.hash.on_completion.set',
-  memoryLimit: 'pieces.memory.max.set',
-  maxOpenFiles: 'network.max_open_files.set',
-  httpMaxOpen: 'network.http.max_open.set',
-  httpMaxHostConnections: 'network.http.max_host_connections.set',
-  blockOutgoing: 'network.block.outgoing.set',
-  dhtOverridePort: 'dht.override_port.set',
-  proxyGlobal: 'network.proxy.global.set',
-  dualStackBind: 'network.bind_address.ipv4.set',
-  adviseRandomHashing: 'system.files.advise_random.hashing.set',
-  minPeers: 'throttle.min_peers.normal.set',
-  maxPeers: 'throttle.max_peers.normal.set',
-  seedPeers: 'throttle.max_peers.seed.set',
-  maxUploadsGlobal: 'throttle.max_uploads.global.set',
-  maxDownloadsGlobal: 'throttle.max_downloads.global.set',
   perTorrentMaxUploads: 'd.uploads_max.set',
   perTorrentMaxDownloads: 'd.downloads_max.set',
-  moveFiles: 'd.directory.set',
+  dhtStatistics: 'dht.statistics',
   trackerInsert: 'd.tracker.insert',
   trackerToggle: 't.is_enabled.set',
-  fileHashing: 'd.check_hash',
-  sessionSave: 'session.save',
-  logging: 'log.open_file',
-  bindAddress: 'network.bind_address.set',
-  peerExchangeInfo: 'd.peer_exchange',
-  scrape: 'd.tracker_announce',
+  trackerAnnounce: 'd.tracker_announce',
 };
 
 /** Candidate field commands, filtered down to those the backend implements. */
@@ -187,6 +166,11 @@ export class Capabilities {
     for (const [feature, method] of Object.entries(FEATURE_METHODS)) {
       const candidates = Array.isArray(method) ? method : [method];
       supports[feature] = candidates.some((name) => methods.has(name));
+    }
+    for (const key of SETTING_KEYS) {
+      const setter = SETTING_SPECS[key].set;
+      const candidates = setter === undefined ? [] : Array.isArray(setter) ? setter : [setter];
+      supports[key] = candidates.some((name) => methods.has(name));
     }
 
     let rpcFacility = '';

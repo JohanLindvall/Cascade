@@ -107,7 +107,7 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 ENV NODE_ENV=production \
-    RTWEB_WEB_ROOT=/app/web \
+    CASCADE_WEB_ROOT=/app/web \
     RT_DOWNLOAD_DIR=/downloads \
     RT_SESSION_DIR=/config/session \
     RT_WATCH_DIR=/watch \
@@ -118,7 +118,7 @@ ENV NODE_ENV=production \
     TZ=UTC
 
 VOLUME ["/config", "/downloads", "/watch"]
-EXPOSE 8080 50000
+EXPOSE 8080 50000 50000/udp
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -fsS "http://127.0.0.1:${WEB_PORT}/healthz" >/dev/null || exit 1

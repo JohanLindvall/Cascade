@@ -5,3 +5,4 @@ docs
 data
 *.md
 docker-compose*.yml
+.github

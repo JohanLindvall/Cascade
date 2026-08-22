@@ -11,6 +11,7 @@ import {
 } from './achievements';
 import { Capabilities } from './capabilities';
 import type { Config } from './config';
+import { HttpError } from './errors';
 import {
   FILE_FIELDS,
   PEER_FIELDS,
@@ -27,53 +28,18 @@ import {
   type Tracker,
 } from './model';
 import { RtorrentClient, type MulticallEntry } from './rtorrent';
+import {
+  decodeSettingValue,
+  readableSettings,
+  settingEntries,
+  unsupportedSettingKeys,
+  type GlobalSettings,
+} from './settings';
 import { Store, type ThrottleGroup } from './store';
 import { parseTorrentFile } from './torrentfile';
 import type { XValue } from './xmlrpc';
 
-export interface GlobalSettings {
-  downloadRate: number;
-  uploadRate: number;
-  maxUploads: number;
-  maxUploadsGlobal: number;
-  maxDownloads: number;
-  maxDownloadsGlobal: number;
-  maxPeers: number;
-  minPeers: number;
-  maxPeersSeed: number;
-  minPeersSeed: number;
-  maxOpenFiles: number;
-  maxHttpOpen: number;
-  memoryMax: number;
-  portRange: string;
-  portRandom: boolean;
-  dhtMode: string;
-  dhtPort: number;
-  pex: boolean;
-  udpTrackers: boolean;
-  encryption: string;
-  preallocate: boolean;
-  checkHashOnCompletion: boolean;
-  directory: string;
-  sessionDirectory: string;
-  bindAddress: string;
-  localAddress: string;
-  proxyAddress: string;
-  httpCapath: string;
-  httpCacert: string;
-  xmlrpcSizeLimit: number;
-  receiveBuffer: number;
-  sendBuffer: number;
-  maxFileSize: number;
-  // Added in rtorrent 0.16; absent elsewhere and hidden by the capability probe.
-  httpMaxHostConnections: number;
-  blockOutgoing: boolean;
-  dhtOverridePort: number;
-  proxyGlobal: string;
-  bindAddressV4: string;
-  bindAddressV6: string;
-  adviseRandomHashing: boolean;
-}
+export type { GlobalSettings };
 
 export interface GlobalStatus {
   connected: boolean;
@@ -88,6 +54,8 @@ export interface GlobalStatus {
   activeCount: number;
   dhtNodes: number;
   listenPort: number;
+  /** Free bytes on the download volume; null when it cannot be determined. */
+  diskFree: number | null;
   backend: BackendSummary;
   history: RateSample[];
 }
@@ -117,54 +85,6 @@ export interface StateResponse {
 }
 
 const HISTORY_LENGTH = 180;
-
-/** Settings exposed to the UI, keyed by the rtorrent command family behind them. */
-/**
- * Getter command per setting. Some settings were renamed between releases —
- * 0.16 moved the listen-port commands under network.listen.* — so a setting can
- * list alternates, newest first, and the probe picks whichever exists.
- */
-const SETTING_GETTERS: Array<[keyof GlobalSettings, string | string[]]> = [
-  ['downloadRate', 'throttle.global_down.max_rate'],
-  ['uploadRate', 'throttle.global_up.max_rate'],
-  ['maxUploads', 'throttle.max_uploads'],
-  ['maxUploadsGlobal', 'throttle.max_uploads.global'],
-  ['maxDownloads', 'throttle.max_downloads'],
-  ['maxDownloadsGlobal', 'throttle.max_downloads.global'],
-  ['maxPeers', 'throttle.max_peers.normal'],
-  ['minPeers', 'throttle.min_peers.normal'],
-  ['maxPeersSeed', 'throttle.max_peers.seed'],
-  ['minPeersSeed', 'throttle.min_peers.seed'],
-  ['maxOpenFiles', 'network.max_open_files'],
-  ['maxHttpOpen', ['network.http.max_open', 'network.http.max_total_connections']],
-  ['memoryMax', 'pieces.memory.max'],
-  ['portRange', ['network.listen.port.range', 'network.port_range']],
-  ['portRandom', ['network.listen.port.random', 'network.port_random']],
-  ['dhtMode', 'dht.mode'],
-  ['dhtPort', 'dht.port'],
-  ['pex', 'protocol.pex'],
-  ['udpTrackers', 'trackers.use_udp'],
-  ['encryption', 'protocol.encryption'],
-  ['preallocate', 'system.file.allocate'],
-  ['checkHashOnCompletion', 'pieces.hash.on_completion'],
-  ['directory', 'directory.default'],
-  ['sessionDirectory', 'session.path'],
-  ['bindAddress', 'network.bind_address'],
-  ['localAddress', 'network.local_address'],
-  ['proxyAddress', 'network.http.proxy_address'],
-  ['httpCapath', 'network.http.capath'],
-  ['httpCacert', 'network.http.cacert'],
-  ['receiveBuffer', 'network.receive_buffer.size'],
-  ['sendBuffer', 'network.send_buffer.size'],
-  ['maxFileSize', 'system.file.max_size'],
-  ['httpMaxHostConnections', 'network.http.max_host_connections'],
-  ['blockOutgoing', 'network.block.outgoing'],
-  ['dhtOverridePort', 'dht.override_port'],
-  ['proxyGlobal', 'network.proxy.global'],
-  ['bindAddressV4', 'network.bind_address.ipv4'],
-  ['bindAddressV6', 'network.bind_address.ipv6'],
-  ['adviseRandomHashing', 'system.files.advise_random.hashing'],
-];
 
 export class RtorrentService {
   readonly client: RtorrentClient;
@@ -259,12 +179,7 @@ export class RtorrentService {
     const keys = Object.keys(patch);
     if (keys.length === 0) return;
     await this.capabilities.ensure();
-    const unsupported = keys.filter((key) => {
-      const methods = SETTING_GETTERS.find(([name]) => name === key)?.[1];
-      if (methods === undefined) return false;
-      const candidates = Array.isArray(methods) ? methods : [methods];
-      return !candidates.some((name) => this.capabilities.has(`${name}.set`));
-    });
+    const unsupported = unsupportedSettingKeys(keys, this.resolveMethod);
     try {
       await this.updateSettings(patch);
       console.log(
@@ -346,9 +261,11 @@ export class RtorrentService {
     const torrents = rows.map((row) => {
       const hash = String(row['d.hash'] ?? '');
       hashes.add(hash);
-      return mapTorrent(row, this.store.addedAt(hash), '');
+      return mapTorrent(row, this.store.addedAt(hash));
     });
-    this.store.prune(hashes);
+    // Only the complete list may drive pruning: a filtered view would look
+    // like every other torrent had been removed and erase its bookkeeping.
+    if (view === 'main') this.store.prune(hashes);
     return torrents;
   }
 
@@ -389,6 +306,7 @@ export class RtorrentService {
       upLimit: number(5),
       listenPort: number(6),
       dhtNodes,
+      diskFree: await this.freeSpace(),
       torrentCount: list.length,
       activeCount: list.filter((item) => item.status === 'downloading' || item.status === 'seeding')
         .length,
@@ -397,11 +315,21 @@ export class RtorrentService {
     };
   }
 
+  /** Free space on the download volume, or null where statfs is unavailable. */
+  private async freeSpace(): Promise<number | null> {
+    try {
+      const stats = await fs.statfs(this.config.downloadDir);
+      return Number(stats.bavail) * Number(stats.bsize);
+    } catch {
+      return null;
+    }
+  }
+
   /** First command name from the candidates that this backend implements. */
-  private resolve(methods: string | string[]): string | undefined {
+  private readonly resolveMethod = (methods: string | string[]): string | undefined => {
     const candidates = Array.isArray(methods) ? methods : [methods];
     return candidates.find((name) => this.capabilities.has(name));
-  }
+  };
 
   backendSummary(): BackendSummary {
     const info = this.capabilities.info;
@@ -519,10 +447,19 @@ export class RtorrentService {
     options: { start: boolean; directory?: string; label?: string },
   ): Promise<void> {
     await this.capabilities.ensure();
+    // load.* silently queues whatever it is given; a link rtorrent cannot fetch
+    // would just vanish, so refuse anything that is not fetchable up front.
+    const link = url.trim();
+    if (!/^(magnet:\?|https?:\/\/|ftp:\/\/)/i.test(link)) {
+      throw new HttpError(
+        400,
+        `"${link.slice(0, 80)}" is not a magnet link or a torrent URL (magnet:, http(s):, ftp:)`,
+      );
+    }
     const method = options.start
       ? this.capabilities.dialect.loadUrlStart
       : this.capabilities.dialect.loadUrl;
-    await this.client.call(method, ['', url, ...this.loadCommands(options)]);
+    await this.client.call(method, ['', link, ...this.loadCommands(options)]);
   }
 
   private loadCommands(options: { directory?: string; label?: string }): string[] {
@@ -662,7 +599,7 @@ export class RtorrentService {
       throw new HttpError(501, 'this rtorrent build does not expose d.tracker.insert');
     }
     await this.client.multicall([
-      { methodName: 'd.tracker.insert', params: [hash, group, url] },
+      { methodName: 'd.tracker.insert', params: [hash, Math.max(0, Number(group) || 0), url] },
       { methodName: 'd.save_full_session', params: [hash] },
     ]);
   }
@@ -671,8 +608,7 @@ export class RtorrentService {
 
   async settings(): Promise<Partial<GlobalSettings>> {
     await this.capabilities.ensure();
-    const usable = SETTING_GETTERS.map(([key, methods]) => [key, this.resolve(methods)] as const)
-      .filter((entry): entry is readonly [keyof GlobalSettings, string] => entry[1] !== undefined);
+    const usable = readableSettings(this.resolveMethod);
     const results = await this.client.multicallSettled(
       usable.map(([, method]) => ({ methodName: method, params: [] })),
     );
@@ -680,116 +616,14 @@ export class RtorrentService {
     usable.forEach(([key], index) => {
       const value = results[index];
       if (value instanceof Error) return;
-      settings[key] = Buffer.isBuffer(value) ? value.toString('utf8') : value;
+      settings[key] = decodeSettingValue(key, value);
     });
-    // Normalise the boolean-ish values rtorrent returns as 0/1.
-    for (const key of [
-      'portRandom',
-      'pex',
-      'udpTrackers',
-      'preallocate',
-      'checkHashOnCompletion',
-      'blockOutgoing',
-      'adviseRandomHashing',
-    ]) {
-      if (key in settings) settings[key] = Number(settings[key]) !== 0;
-    }
     return settings as Partial<GlobalSettings>;
   }
 
   async updateSettings(patch: Partial<GlobalSettings>): Promise<void> {
     await this.capabilities.ensure();
-    const entries: MulticallEntry[] = [];
-    // rtorrent commands are invoked against a target; the empty string selects
-    // the global/"download-less" target that these settings live on. Omitting
-    // it makes rtorrent read the value as a target and fault with -503.
-    const push = (method: string | string[], ...values: XValue[]) => {
-      const resolved = this.resolve(method);
-      if (resolved) entries.push({ methodName: resolved, params: ['', ...values] });
-    };
-
-    const number = (value: unknown): number => Math.max(0, Math.trunc(Number(value) || 0));
-
-    if (patch.downloadRate !== undefined)
-      push('throttle.global_down.max_rate.set', number(patch.downloadRate));
-    if (patch.uploadRate !== undefined)
-      push('throttle.global_up.max_rate.set', number(patch.uploadRate));
-    if (patch.maxUploads !== undefined) push('throttle.max_uploads.set', number(patch.maxUploads));
-    if (patch.maxUploadsGlobal !== undefined)
-      push('throttle.max_uploads.global.set', number(patch.maxUploadsGlobal));
-    if (patch.maxDownloads !== undefined)
-      push('throttle.max_downloads.set', number(patch.maxDownloads));
-    if (patch.maxDownloadsGlobal !== undefined)
-      push('throttle.max_downloads.global.set', number(patch.maxDownloadsGlobal));
-    if (patch.maxPeers !== undefined) push('throttle.max_peers.normal.set', number(patch.maxPeers));
-    if (patch.minPeers !== undefined) push('throttle.min_peers.normal.set', number(patch.minPeers));
-    if (patch.maxPeersSeed !== undefined)
-      push('throttle.max_peers.seed.set', number(patch.maxPeersSeed));
-    if (patch.minPeersSeed !== undefined)
-      push('throttle.min_peers.seed.set', number(patch.minPeersSeed));
-    if (patch.maxOpenFiles !== undefined)
-      push('network.max_open_files.set', number(patch.maxOpenFiles));
-    // 0.16 dropped network.http.max_open; its max_total_connections successor
-    // registers a .set that has no effect, so the value is read-only there and
-    // the UI greys the field out rather than pretending it applied.
-    if (patch.maxHttpOpen !== undefined) push('network.http.max_open.set', number(patch.maxHttpOpen));
-    if (patch.memoryMax !== undefined) push('pieces.memory.max.set', number(patch.memoryMax));
-    if (patch.portRange !== undefined) {
-      push(['network.listen.port.range.set', 'network.port_range.set'], String(patch.portRange));
-    }
-    if (patch.portRandom !== undefined) {
-      push(['network.listen.port.random.set', 'network.port_random.set'], patch.portRandom ? 1 : 0);
-    }
-    if (patch.dhtMode !== undefined) push('dht.mode.set', String(patch.dhtMode));
-    if (patch.dhtPort !== undefined) push('dht.port.set', number(patch.dhtPort));
-    if (patch.pex !== undefined) push('protocol.pex.set', patch.pex ? 1 : 0);
-    if (patch.udpTrackers !== undefined) push('trackers.use_udp.set', patch.udpTrackers ? 1 : 0);
-    if (patch.encryption !== undefined) {
-      // rtorrent takes each encryption flag as its own argument, mirroring the
-      // comma-separated form used in rtorrent.rc.
-      const flags = String(patch.encryption)
-        .split(',')
-        .map((flag) => flag.trim())
-        .filter(Boolean);
-      push('protocol.encryption.set', ...(flags.length > 0 ? flags : ['none']));
-    }
-    if (patch.preallocate !== undefined) push('system.file.allocate.set', patch.preallocate ? 1 : 0);
-    if (patch.checkHashOnCompletion !== undefined)
-      push('pieces.hash.on_completion.set', patch.checkHashOnCompletion ? 1 : 0);
-    if (patch.directory !== undefined) push('directory.default.set', String(patch.directory));
-    if (patch.bindAddress !== undefined) push('network.bind_address.set', String(patch.bindAddress));
-    if (patch.localAddress !== undefined)
-      push('network.local_address.set', String(patch.localAddress));
-    if (patch.proxyAddress !== undefined)
-      push('network.http.proxy_address.set', String(patch.proxyAddress));
-    if (patch.httpCapath !== undefined) push('network.http.capath.set', String(patch.httpCapath));
-    if (patch.httpCacert !== undefined) push('network.http.cacert.set', String(patch.httpCacert));
-    if (patch.xmlrpcSizeLimit !== undefined)
-      push('network.xmlrpc.size_limit.set', number(patch.xmlrpcSizeLimit));
-    if (patch.receiveBuffer !== undefined)
-      push('network.receive_buffer.size.set', number(patch.receiveBuffer));
-    if (patch.sendBuffer !== undefined) push('network.send_buffer.size.set', number(patch.sendBuffer));
-    if (patch.maxFileSize !== undefined) push('system.file.max_size.set', number(patch.maxFileSize));
-    if (patch.httpMaxHostConnections !== undefined) {
-      push('network.http.max_host_connections.set', number(patch.httpMaxHostConnections));
-    }
-    if (patch.blockOutgoing !== undefined) {
-      push('network.block.outgoing.set', patch.blockOutgoing ? 1 : 0);
-    }
-    if (patch.dhtOverridePort !== undefined) {
-      push('dht.override_port.set', number(patch.dhtOverridePort));
-    }
-    if (patch.proxyGlobal !== undefined) push('network.proxy.global.set', String(patch.proxyGlobal));
-    if (patch.bindAddressV4 !== undefined) {
-      push('network.bind_address.ipv4.set', String(patch.bindAddressV4));
-    }
-    if (patch.bindAddressV6 !== undefined) {
-      push('network.bind_address.ipv6.set', String(patch.bindAddressV6));
-    }
-    if (patch.adviseRandomHashing !== undefined) {
-      push('system.files.advise_random.hashing.set', patch.adviseRandomHashing ? 1 : 0);
-    }
-
+    const entries = settingEntries(patch, this.resolveMethod);
     if (entries.length === 0) return;
     await this.client.multicall(entries);
   }
@@ -848,22 +682,27 @@ export class RtorrentService {
 
   /* -------------------------------- misc -------------------------------- */
 
+  /** Tail of the rtorrent log. Reads only the end — the log grows without bound. */
   async log(lines: number): Promise<string[]> {
+    const TAIL_BYTES = 512 * 1024;
+    let handle;
     try {
-      const content = await fs.readFile(this.config.logFile, 'utf8');
-      return content.split('\n').filter(Boolean).slice(-lines);
+      handle = await fs.open(this.config.logFile, 'r');
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') return [];
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
     }
-  }
-}
-
-export class HttpError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-    this.name = 'HttpError';
+    try {
+      const { size } = await handle.stat();
+      const start = Math.max(0, size - TAIL_BYTES);
+      const buffer = Buffer.alloc(size - start);
+      await handle.read(buffer, 0, buffer.length, start);
+      const rows = buffer.toString('utf8').split('\n').filter(Boolean);
+      if (start > 0) rows.shift(); // The first row is almost certainly cut mid-line.
+      return rows.slice(-lines);
+    } finally {
+      await handle.close();
+    }
   }
 }
 

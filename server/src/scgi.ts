@@ -81,6 +81,22 @@ export function scgiRequest(
       else resolve(value as Buffer);
     };
 
+    const complete = () => {
+      const raw = Buffer.concat(chunks);
+      if (raw.length === 0) {
+        // A closed connection with no bytes is rtorrent dropping the request —
+        // typically mid-startup or under load. An empty buffer would otherwise
+        // surface as a confusing XML parse error.
+        finish(
+          new Error(
+            `rtorrent closed the SCGI connection on ${describeTarget(target)} without responding`,
+          ),
+        );
+        return;
+      }
+      finish(null, stripHttpHeaders(raw));
+    };
+
     socket.setTimeout(timeoutMs, () => {
       finish(new Error(`SCGI request to ${describeTarget(target)} timed out after ${timeoutMs}ms`));
     });
@@ -90,8 +106,8 @@ export function scgiRequest(
       socket.write(body);
     });
     socket.on('data', (chunk) => chunks.push(chunk));
-    socket.on('end', () => finish(null, stripHttpHeaders(Buffer.concat(chunks))));
-    socket.on('close', () => finish(null, stripHttpHeaders(Buffer.concat(chunks))));
+    socket.on('end', complete);
+    socket.on('close', complete);
     socket.on('error', (error) => {
       const code = (error as NodeJS.ErrnoException).code;
       let reason: string;

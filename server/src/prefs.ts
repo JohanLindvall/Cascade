@@ -6,7 +6,7 @@
  * single thing to back up or delete.
  */
 export interface Preferences {
-  /** system | light | dark | retro */
+  /** system | light | dark | retro | blackmetal */
   theme: string;
   sortKey: string;
   sortDir: 'asc' | 'desc';
@@ -36,7 +36,7 @@ const SORT_KEYS = new Set([
   'addedAt',
   'label',
 ]);
-const THEMES = new Set(['system', 'light', 'dark', 'retro']);
+const THEMES = new Set(['system', 'light', 'dark', 'retro', 'blackmetal']);
 
 /** Merge a patch over the current values, dropping anything malformed. */
 export function sanitizePreferences(

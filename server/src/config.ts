@@ -12,7 +12,9 @@ function optional(name: string): string | undefined {
 }
 
 function num(name: string, fallback: number): number {
-  const value = Number(process.env[name]);
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw);
   return Number.isFinite(value) ? value : fallback;
 }
 

@@ -33,8 +33,8 @@ interface StoreData {
   prefs: Preferences;
 }
 
-export class Store {
-  private data: StoreData = {
+function emptyData(): StoreData {
+  return {
     addedAt: {},
     throttles: [],
     stats: { ...EMPTY_STATS },
@@ -43,6 +43,10 @@ export class Store {
     everCompleted: [],
     prefs: { ...DEFAULT_PREFERENCES },
   };
+}
+
+export class Store {
+  private data: StoreData = emptyData();
   private completedSet = new Set<string>();
   private dirty = false;
   private timer: NodeJS.Timeout | null = null;
@@ -66,15 +70,7 @@ export class Store {
       };
     } catch {
       // First run, or an unreadable/corrupt file: start clean.
-      this.data = {
-        addedAt: {},
-        throttles: [],
-        stats: { ...EMPTY_STATS },
-        seen: {},
-        achievements: {},
-        everCompleted: [],
-        prefs: { ...DEFAULT_PREFERENCES },
-      };
+      this.data = emptyData();
     }
     this.completedSet = new Set(this.data.everCompleted);
   }

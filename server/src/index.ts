@@ -4,7 +4,8 @@ import path from 'node:path';
 import { createApi, createRpcProxy } from './api';
 import { basicAuth } from './auth';
 import { config } from './config';
-import { HttpError, RtorrentService } from './service';
+import { HttpError } from './errors';
+import { RtorrentService } from './service';
 import { Store } from './store';
 import { XmlRpcFault } from './xmlrpc';
 import { describeTarget } from './scgi';
@@ -17,6 +18,13 @@ app.disable('x-powered-by');
 app.set('trust proxy', true);
 
 const router = express.Router();
+
+// Health stays outside Basic auth so container healthchecks and orchestrator
+// probes work when WEB_USER/WEB_PASS are set. It reveals nothing but liveness.
+router.get('/healthz', (_req, res) => {
+  res.json({ ok: true, rtorrent: service.capabilities.ready });
+});
+
 router.use(basicAuth(config));
 
 // The XML-RPC proxy needs the untouched body; mount it before the JSON parser.
@@ -30,19 +38,10 @@ router.post(
 router.use(express.json({ limit: '4mb' }));
 router.use('/api', createApi(service, config, store));
 
-router.get('/healthz', (_req, res) => {
-  res.json({
-    ok: true,
-    rtorrent: service.capabilities.ready,
-    endpoint: describeTarget(config.scgi),
-  });
-});
-
 // Static SPA assets, with a history fallback for client-side routing.
 const indexHtml = path.join(config.webRoot, 'index.html');
 router.use(express.static(config.webRoot, { index: false, maxAge: '1h' }));
-router.get('*', (req, res, next) => {
-  if (req.path.startsWith('/api/')) return next();
+router.get('*', (_req, res) => {
   if (!fs.existsSync(indexHtml)) {
     res.status(500).type('text/plain').send(`web assets not found at ${config.webRoot}`);
     return;

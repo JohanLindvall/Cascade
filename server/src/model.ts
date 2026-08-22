@@ -39,13 +39,11 @@ export interface Torrent {
   peersConnected: number;
   peersNotConnected: number;
   peersComplete: number;
-  seedersConnected: number;
   trackerCount: number;
   addedAt: number;
   startedAt: number;
   finishedAt: number;
   createdAt: number;
-  tracker: string;
 }
 
 export const TORRENT_FIELDS = [
@@ -111,7 +109,20 @@ function isRealError(message: string, hashingFailed: number): boolean {
   return !/^Tracker:/i.test(message);
 }
 
-export function mapTorrent(row: Row, addedAt: number, tracker: string): Torrent {
+/**
+ * Labels are URL-encoded in d.custom1 (the ruTorrent convention), but another
+ * client may have written a raw string there; a stray "%" must not take the
+ * whole torrent list down.
+ */
+function decodeLabel(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+export function mapTorrent(row: Row, addedAt: number): Torrent {
   const size = int(row, 'd.size_bytes');
   const completed = int(row, 'd.completed_bytes');
   const left = int(row, 'd.left_bytes');
@@ -149,7 +160,7 @@ export function mapTorrent(row: Row, addedAt: number, tracker: string): Torrent 
     ratio: int(row, 'd.ratio') / 1000,
     eta,
     priority: int(row, 'd.priority'),
-    label: decodeURIComponent(text(row, 'd.custom1') || ''),
+    label: decodeLabel(text(row, 'd.custom1')),
     message,
     directory: text(row, 'd.directory'),
     basePath: text(row, 'd.base_path'),
@@ -165,13 +176,11 @@ export function mapTorrent(row: Row, addedAt: number, tracker: string): Torrent 
     peersConnected: int(row, 'd.peers_connected'),
     peersNotConnected: int(row, 'd.peers_not_connected'),
     peersComplete: int(row, 'd.peers_complete'),
-    seedersConnected: int(row, 'd.peers_complete'),
     trackerCount: int(row, 'd.tracker_size'),
     addedAt,
     startedAt: int(row, 'd.timestamp.started'),
     finishedAt: int(row, 'd.timestamp.finished'),
     createdAt: int(row, 'd.creation_date'),
-    tracker,
   };
 }
 
