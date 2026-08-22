@@ -6,6 +6,15 @@ set -eu
 log() { printf '[cascade] %s\n' "$*"; }
 die() { printf '[cascade] FATAL: %s\n' "$*" >&2; exit 1; }
 
+# `docker run --rm cascade --help` lists every option. Answered first, before
+# any user, directory or rtorrent setup, so it works in any environment. The
+# text is rendered from the option catalog in the server (src/options.ts).
+case "${1:-}" in
+  -h | --help | help)
+    exec node /app/server/index.js --help
+    ;;
+esac
+
 # --------------------------------------------------------------------------
 # defaults
 # --------------------------------------------------------------------------

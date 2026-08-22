@@ -154,6 +154,23 @@ The black metal theme re-carves all gamification copy client-side (`web/src/grim
 achievement id and level title). It is a pure text skin — never branch unlock logic on it — and a
 new badge or level title needs a matching entry there or it shows its plain name in that theme.
 
+## Options and their documentation
+
+Every environment variable the container understands is declared once, in `server/src/options.ts`.
+That catalog is load-bearing rather than descriptive:
+
+- `config.ts` looks each default up **by name**, and the lookup throws for a name the catalog does
+  not list — so the server cannot read an undocumented variable.
+- `docker run --rm cascade --help` renders it (the entrypoint answers `-h`/`--help`/`help` before
+  any setup, so it works in any environment).
+- The README's `<!-- generated: … -->` regions — the sample `docker run` and the whole
+  Configuration section — are produced from it by `npm run options:docs`.
+- `npm run options:check` (in CI) fails if the entrypoint reads a variable missing from the
+  catalog, if a catalogued option is read by nothing, or if the README has drifted.
+
+Adding an option therefore means adding it to `options.ts` and nowhere else; hand-editing the
+generated README regions will fail CI.
+
 ## Persistence
 
 Everything Cascade remembers is in one JSON file, `/config/cascade-state.json`, owned by

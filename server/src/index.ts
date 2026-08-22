@@ -5,10 +5,18 @@ import { createApi, createRpcProxy } from './api';
 import { basicAuth } from './auth';
 import { config } from './config';
 import { HttpError } from './errors';
+import { renderHelp } from './options';
 import { RtorrentService } from './service';
 import { Store } from './store';
 import { XmlRpcFault } from './xmlrpc';
 import { describeTarget } from './scgi';
+
+// Before anything is opened or read: `docker run --rm cascade --help` should
+// print and exit whatever the environment looks like.
+if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h' || arg === 'help')) {
+  console.log(renderHelp());
+  process.exit(0);
+}
 
 const store = new Store(config.stateFile);
 const service = new RtorrentService(config, store);

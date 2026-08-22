@@ -1,27 +1,39 @@
 import path from 'node:path';
+import { documentedDefault } from './options';
 import { parseScgiTarget, type ScgiTarget } from './scgi';
 
-function str(name: string, fallback: string): string {
-  const value = process.env[name];
-  return value === undefined || value === '' ? fallback : value;
-}
-
-function optional(name: string): string | undefined {
+/**
+ * Every value here comes from the catalog in options.ts: the readers below look
+ * their default up by name, and that lookup throws for a name the catalog does
+ * not list. An environment variable therefore cannot reach the server without
+ * also appearing in `--help` and the README.
+ */
+function raw(name: string): string | undefined {
   const value = process.env[name];
   return value === undefined || value === '' ? undefined : value;
 }
 
-function num(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === '') return fallback;
-  const value = Number(raw);
+function str(name: string, fallback = documentedDefault(name) ?? ''): string {
+  return raw(name) ?? fallback;
+}
+
+function optional(name: string): string | undefined {
+  documentedDefault(name); // Asserts the option is catalogued.
+  return raw(name);
+}
+
+function num(name: string, fallback = Number(documentedDefault(name))): number {
+  const value = Number(raw(name));
   return Number.isFinite(value) ? value : fallback;
 }
 
-function bool(name: string, fallback: boolean): boolean {
-  const value = optional(name);
-  if (value === undefined) return fallback;
-  return /^(1|true|yes|on)$/i.test(value);
+const TRUTHY = /^(1|true|yes|on)$/i;
+
+// An option with no documented default reads as false rather than true, so a
+// new flag cannot arrive switched on by accident.
+function bool(name: string, fallback = TRUTHY.test(documentedDefault(name) ?? '')): boolean {
+  const value = raw(name);
+  return value === undefined ? fallback : TRUTHY.test(value);
 }
 
 function normalizeBase(base: string): string {
@@ -31,7 +43,7 @@ function normalizeBase(base: string): string {
   return value;
 }
 
-const downloadDir = str('RT_DOWNLOAD_DIR', '/downloads');
+const downloadDir = str('RT_DOWNLOAD_DIR');
 const completedDir = optional('RT_COMPLETED_DIR');
 
 const deleteRoots = [downloadDir, completedDir, ...str('CASCADE_DELETE_ROOTS', '').split(':')]
@@ -60,22 +72,23 @@ export interface Config {
 }
 
 export const config: Config = {
-  scgi: parseScgiTarget(str('CASCADE_SCGI', str('RT_SCGI_SOCKET', '/run/rtorrent/rpc.socket'))),
-  host: str('WEB_HOST', '0.0.0.0'),
-  port: num('WEB_PORT', 8080),
-  basePath: normalizeBase(str('WEB_BASE_PATH', '/')),
+  scgi: parseScgiTarget(str('CASCADE_SCGI', str('RT_SCGI_SOCKET'))),
+  host: str('WEB_HOST'),
+  port: num('WEB_PORT'),
+  basePath: normalizeBase(str('WEB_BASE_PATH')),
   user: optional('WEB_USER'),
   password: optional('WEB_PASS'),
+  // Falls back to the sibling directory so a source checkout runs too.
   webRoot: str('CASCADE_WEB_ROOT', path.join(__dirname, '..', 'web')),
-  stateFile: str('CASCADE_STATE_FILE', '/config/cascade-state.json'),
+  stateFile: str('CASCADE_STATE_FILE'),
   downloadDir,
   completedDir,
   deleteRoots,
-  allowRawRpc: bool('CASCADE_ALLOW_RAW_RPC', true),
-  allowDataDelete: bool('CASCADE_ALLOW_DATA_DELETE', true),
-  maxUploadBytes: num('CASCADE_MAX_UPLOAD_MB', 64) * 1024 * 1024,
-  pollIntervalMs: num('CASCADE_POLL_MS', 1000),
-  logFile: str('RT_LOG_FILE', '/config/rtorrent.log'),
-  bootSettingsFile: str('CASCADE_BOOT_SETTINGS', '/run/cascade/boot-settings.json'),
-  gamify: bool('CASCADE_GAMIFY', true),
+  allowRawRpc: bool('CASCADE_ALLOW_RAW_RPC'),
+  allowDataDelete: bool('CASCADE_ALLOW_DATA_DELETE'),
+  maxUploadBytes: num('CASCADE_MAX_UPLOAD_MB') * 1024 * 1024,
+  pollIntervalMs: num('CASCADE_POLL_MS'),
+  logFile: str('RT_LOG_FILE'),
+  bootSettingsFile: str('CASCADE_BOOT_SETTINGS'),
+  gamify: bool('CASCADE_GAMIFY'),
 };

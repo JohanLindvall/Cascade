@@ -39,6 +39,11 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npx tsc --noEmit
+      # Fails if the entrypoint reads an option the catalog does not list, or
+      # if the README's generated tables have drifted from it.
+      - name: Options catalog and generated docs are in step
+        working-directory: server
+        run: npm run options:check
       - name: Web (typecheck + production build)
         working-directory: web
         run: |

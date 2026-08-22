@@ -39,17 +39,26 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
 Images are published to GitHub Container Registry for **linux/amd64** and **linux/arm64**
 (so a Raspberry Pi 4/5 or an Apple-silicon Docker host works the same as an x86 server):
 
+<!-- generated: usage -->
 ```bash
-docker run -d --name cascade \
-  -p 8080:8080 -p 50000:50000 -p 50000:50000/udp \
-  -v /srv/downloads:/downloads \
-  -v /srv/cascade-config:/config \
-  -e PUID=1000 -e PGID=1000 \
-  -e RT_DOWNLOAD_RATE=5120 \
-  -e RT_UPLOAD_RATE=1024 \
-  -e WEB_USER=admin -e WEB_PASS=change-me \
+docker run \
+  -d \
+  --name=cascade \
+  -e PUID=1000 \
+  -e PGID=1000 \
+  -e TZ=Europe/Stockholm \
+  -e WEB_USER=jl \
+  -e WEB_PASS=abc123 \
+  -p 8080:8080 \
+  -p 50000:50000 \
+  -p 50000:50000/udp \
+  -v /home/torrent/config:/config \
+  -v /home/torrent/downloads:/downloads \
+  -v /home/torrent/watch:/watch \
+  --restart unless-stopped \
   ghcr.io/johanlindvall/cascade:latest
 ```
+<!-- /generated -->
 
 Open <http://localhost:8080>.
 
@@ -151,91 +160,127 @@ blocking, and a random-access hint for hashing. On older backends those controls
 Everything is an environment variable on `docker run`. Only what you set is applied — anything
 left unset keeps rtorrent's own default.
 
+The image lists them all itself, so you never need this page to be up to date:
+
+```bash
+docker run --rm ghcr.io/johanlindvall/cascade:latest --help
+```
+
+Both that output and the tables below are generated from one catalog in the source
+(`server/src/options.ts`), and CI fails if either drifts from what the container actually reads.
+
+<!-- generated: options -->
 ### Paths and identity
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `RT_DOWNLOAD_DIR` | `/downloads` | Default download directory |
-| `RT_SESSION_DIR` | `/config/session` | rtorrent session state |
-| `RT_SESSION_LOCK_KEEP` | `0` | `1` keeps a leftover `rtorrent.lock` instead of clearing it |
-| `RT_WATCH_DIR` | `/watch` | `.torrent` files dropped here are loaded and started |
-| `RT_WATCH_INTERVAL` | `10` | Watch-directory poll interval, seconds |
-| `RT_WATCH_ENABLE` | `1` | Set `0` to disable the watch directory |
-| `RT_COMPLETED_DIR` | — | If set, finished downloads are moved here |
-| `RT_LOG_FILE` | `/config/rtorrent.log` | rtorrent log file, surfaced in the UI |
-| `RT_LOG_LEVEL` | `info` | Log scopes: `info`, `debug`, `dht_debug`, `tracker_debug`, … |
-| `RT_UMASK` | `0022` | rtorrent umask |
-| `PUID` / `PGID` | `1000` | User/group rtorrent and the server run as |
-| `CASCADE_CHOWN_DOWNLOADS` | `0` | `1` chowns `RT_DOWNLOAD_DIR` to PUID/PGID at startup (slow on large libraries) |
+| `PUID` | `1000` | User id rtorrent and the web server run as |
+| `PGID` | `1000` | Group id rtorrent and the web server run as |
 | `TZ` | `UTC` | Container timezone |
+| `RT_DOWNLOAD_DIR` | `/downloads` | Default download directory |
+| `RT_COMPLETED_DIR` | unset | Move finished downloads here |
+| `RT_SESSION_DIR` | `/config/session` | rtorrent's session state |
+| `RT_WATCH_DIR` | `/watch` | .torrent files dropped here are loaded and started |
+| `RT_WATCH_ENABLE` | `1` | Set 0 to ignore the watch directory |
+| `RT_WATCH_INTERVAL` | `10` | Watch-directory poll interval, seconds |
+| `RT_LOG_FILE` | `/config/rtorrent.log` | rtorrent's log file, surfaced in the UI |
+| `RT_LOG_LEVEL` | `info` | Log scopes: info, debug, dht_debug, tracker_debug, … |
+| `RT_UMASK` | `0022` | umask rtorrent creates files with |
+| `CASCADE_STATE_FILE` | `/config/cascade-state.json` | Preferences, progress, add times and throttle groups |
+| `CASCADE_CHOWN_DOWNLOADS` | `0` | Set 1 to chown the download directory at startup (slow on large libraries) |
+| `RT_SESSION_LOCK_KEEP` | `0` | Set 1 to keep a leftover rtorrent.lock instead of clearing it |
 
 ### Bandwidth and slots
 
-Rates are in **KiB/s**; `0` means unlimited.
+Rates are in KiB/s; 0 means unlimited.
 
-| Variable | Meaning |
-| --- | --- |
-| `RT_DOWNLOAD_RATE` | Global download limit |
-| `RT_UPLOAD_RATE` | Global upload limit |
-| `RT_MAX_UPLOADS` / `RT_MIN_UPLOADS` | Upload slots per torrent |
-| `RT_MAX_UPLOADS_GLOBAL` | Upload slots across all torrents |
-| `RT_MAX_DOWNLOADS` / `RT_MIN_DOWNLOADS` | Download slots per torrent |
-| `RT_MAX_DOWNLOADS_GLOBAL` | Download slots across all torrents |
-| `RT_MIN_PEERS` / `RT_MAX_PEERS` | Peer range while leeching |
-| `RT_MIN_PEERS_SEED` / `RT_MAX_PEERS_SEED` | Peer range while seeding (`-1` disables) |
-| `RT_TRACKER_NUMWANT` | Peers requested per announce (`-1` = tracker default) |
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RT_DOWNLOAD_RATE` | rtorrent default | Global download limit |
+| `RT_UPLOAD_RATE` | rtorrent default | Global upload limit |
+| `RT_MAX_UPLOADS` | rtorrent default | Upload slots per torrent |
+| `RT_MIN_UPLOADS` | rtorrent default | Minimum upload slots per torrent |
+| `RT_MAX_UPLOADS_GLOBAL` | rtorrent default | Upload slots across all torrents |
+| `RT_MAX_DOWNLOADS` | rtorrent default | Download slots per torrent |
+| `RT_MIN_DOWNLOADS` | rtorrent default | Minimum download slots per torrent |
+| `RT_MAX_DOWNLOADS_GLOBAL` | rtorrent default | Download slots across all torrents |
+
+### Peers
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RT_MIN_PEERS` | rtorrent default | Minimum peers while leeching |
+| `RT_MAX_PEERS` | rtorrent default | Maximum peers while leeching |
+| `RT_MIN_PEERS_SEED` | rtorrent default | Minimum peers while seeding (-1 disables) |
+| `RT_MAX_PEERS_SEED` | rtorrent default | Maximum peers while seeding (-1 disables) |
+| `RT_PEX` | rtorrent default | Peer exchange, yes/no |
 
 ### Network
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `RT_PORT_RANGE` | `50000-50000` | Incoming peer port range |
-| `RT_PORT_RANDOM` | `no` | Pick a random port in the range |
-| `RT_PORT_OPEN` | rtorrent default | `yes`/`no` open the listening port (removed in 0.16) |
-| `RT_DHT` | rtorrent default | `disable`, `off`, `auto`, `on` |
-| `RT_DHT_PORT` | `6881` | DHT UDP port |
-| `RT_PEX` | rtorrent default | `yes` / `no` |
-| `RT_UDP_TRACKERS` | rtorrent default | `yes` / `no` |
-| `RT_ENCRYPTION` | rtorrent default | e.g. `allow_incoming,try_outgoing,enable_retry` |
-| `RT_BIND` | — | Bind address for outgoing connections |
-| `RT_IP` | — | Address reported to trackers |
-| `RT_PROXY` | — | HTTP proxy for tracker announces |
-| `RT_HTTP_CAPATH` / `RT_HTTP_CACERT` | — | TLS trust store for announces |
-| `RT_SSL_VERIFY_PEER` / `RT_SSL_VERIFY_HOST` | rtorrent default | Verify tracker TLS certificates / hostnames |
-| `RT_MAX_OPEN_FILES` | rtorrent default | Open file handle cap |
-| `RT_MAX_OPEN_SOCKETS` | rtorrent default | Open socket cap |
-| `RT_MAX_HTTP_OPEN` | rtorrent default | Concurrent HTTP requests (read-only on 0.16+) |
-| `RT_DNS_CACHE_TIMEOUT` | rtorrent default | DNS cache lifetime, seconds |
-| `RT_HTTP_MAX_HOST` | rtorrent default | HTTP connections per host (0.16+) |
-| `RT_PROXY_HTTP` | — | Proxy for all HTTP traffic (0.16+) |
-| `RT_PROXY_GLOBAL` | — | Global proxy for all traffic (0.16+) |
-| `RT_BIND_IPV4` / `RT_BIND_IPV6` | — | Separate bind addresses per family (0.16+) |
-| `RT_DHT_OVERRIDE_PORT` | — | Announce a different DHT port (0.16+) |
-| `RT_BLOCK_OUTGOING` | — | `yes` refuses outgoing connections (0.16+) |
-| `RT_ADVISE_RANDOM_HASHING` | — | Random-access hint while hashing (0.16+) |
-| `RT_RECEIVE_BUFFER` / `RT_SEND_BUFFER` | — | Socket buffer sizes in bytes |
+| `RT_PORT_RANDOM` | `no` | Pick a random port from the range, yes/no |
+| `RT_PORT_OPEN` | rtorrent default | Open the listening port, yes/no (removed in rtorrent 0.16) |
+| `RT_ENCRYPTION` | rtorrent default | e.g. allow_incoming,try_outgoing,enable_retry |
+| `RT_BIND` | unset | Bind address for outgoing connections |
+| `RT_IP` | unset | Address reported to trackers |
+| `RT_BIND_IPV4` | unset | IPv4 bind address (rtorrent 0.16+) |
+| `RT_BIND_IPV6` | unset | IPv6 bind address (rtorrent 0.16+) |
+| `RT_PROXY` | unset | HTTP proxy for tracker announces |
+| `RT_PROXY_HTTP` | unset | Proxy for all HTTP traffic (rtorrent 0.16+) |
+| `RT_PROXY_GLOBAL` | unset | Proxy for all traffic (rtorrent 0.16+) |
+| `RT_BLOCK_OUTGOING` | rtorrent default | yes refuses outgoing connections (rtorrent 0.16+) |
+
+### Trackers and DHT
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RT_DHT` | rtorrent default | disable, off, auto or on |
+| `RT_DHT_PORT` | rtorrent default | DHT UDP port |
+| `RT_DHT_OVERRIDE_PORT` | rtorrent default | Announce a different DHT port (rtorrent 0.16+) |
+| `RT_UDP_TRACKERS` | rtorrent default | Allow UDP trackers, yes/no |
+| `RT_TRACKER_NUMWANT` | rtorrent default | Peers requested per announce (-1 leaves it to the tracker) |
+| `RT_HTTP_CAPATH` | unset | Directory of CA certificates for tracker TLS |
+| `RT_HTTP_CACERT` | unset | CA bundle file for tracker TLS |
+| `RT_SSL_VERIFY_PEER` | rtorrent default | Verify tracker TLS certificates, yes/no |
+| `RT_SSL_VERIFY_HOST` | rtorrent default | Verify tracker TLS hostnames, yes/no |
 
 ### Storage
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `RT_PREALLOCATE` | rtorrent default | Preallocate files (`yes`/`no`) |
-| `RT_HASH_ON_COMPLETION` | rtorrent default | Re-verify on completion (`yes`/`no`) |
+| `RT_PREALLOCATE` | rtorrent default | Preallocate files, yes/no |
+| `RT_HASH_ON_COMPLETION` | rtorrent default | Re-verify on completion, yes/no |
+| `RT_ADVISE_RANDOM_HASHING` | rtorrent default | Random-access hint while hashing, yes/no (rtorrent 0.16+) |
 | `RT_MEMORY_MAX` | rtorrent default | Piece memory cap, bytes |
 | `RT_MAX_FILE_SIZE` | rtorrent default | Largest accepted file, bytes |
 | `RT_SYNC_TIMEOUT` | rtorrent default | Piece disk-sync timeout, seconds |
-| `RT_PRELOAD_TYPE` | rtorrent default | Piece preload: `0` off, `1` madvise, `2` direct paging |
-| `RT_PRELOAD_MIN_SIZE` / `RT_PRELOAD_MIN_RATE` | rtorrent default | Preload thresholds (bytes / bytes-per-second) |
+| `RT_PRELOAD_TYPE` | rtorrent default | Piece preload: 0 off, 1 madvise, 2 direct paging |
+| `RT_PRELOAD_MIN_SIZE` | rtorrent default | Only preload torrents above this piece size, bytes |
+| `RT_PRELOAD_MIN_RATE` | rtorrent default | Only preload above this upload rate, bytes/s |
+
+### Resource limits
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RT_MAX_OPEN_FILES` | rtorrent default | Open file handle cap |
+| `RT_MAX_OPEN_SOCKETS` | rtorrent default | Open socket cap |
+| `RT_MAX_HTTP_OPEN` | rtorrent default | Concurrent HTTP requests (read-only on rtorrent 0.16+) |
+| `RT_HTTP_MAX_HOST` | rtorrent default | HTTP connections per host (rtorrent 0.16+) |
+| `RT_DNS_CACHE_TIMEOUT` | rtorrent default | DNS cache lifetime, seconds |
+| `RT_RECEIVE_BUFFER` | rtorrent default | Socket receive buffer, bytes |
+| `RT_SEND_BUFFER` | rtorrent default | Socket send buffer, bytes |
 
 ### RPC
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `RT_SCGI_SOCKET` | `/run/rtorrent/rpc.socket` | Unix socket rtorrent listens on |
-| `RT_SCGI_PORT` | — | Also listen for SCGI on this TCP port |
-| `RT_SCGI_BIND` | `127.0.0.1` | Interface for `RT_SCGI_PORT` |
-| `RT_XMLRPC_SIZE_LIMIT` | `16777216` | Max XML-RPC request size (raises the `.torrent` upload ceiling) |
-| `CASCADE_SCGI` | `RT_SCGI_SOCKET` | Endpoint the web server talks to — a path, or `host:port` for a remote rtorrent |
+| `RT_SCGI_PORT` | unset | Also listen for SCGI on this TCP port (unauthenticated — keep it private) |
+| `RT_SCGI_BIND` | `127.0.0.1` | Interface for RT_SCGI_PORT |
+| `RT_XMLRPC_SIZE_LIMIT` | `16777216` | Max XML-RPC request size, bytes (raises the .torrent upload ceiling) |
+| `CASCADE_SCGI` | RT_SCGI_SOCKET | Endpoint the web server talks to — a path, or host:port for a remote rtorrent |
 
 ### Web server
 
@@ -243,31 +288,29 @@ Rates are in **KiB/s**; `0` means unlimited.
 | --- | --- | --- |
 | `WEB_PORT` | `8080` | HTTP port |
 | `WEB_HOST` | `0.0.0.0` | Bind address |
-| `WEB_USER` / `WEB_PASS` | — | Enables HTTP Basic auth when **both** are set |
-| `WEB_BASE_PATH` | `/` | Serve under a sub-path, e.g. `/rtorrent` (for a reverse proxy) |
-| `CASCADE_ALLOW_RAW_RPC` | `1` | `0` disables the API console and `/RPC2` |
-| `CASCADE_ALLOW_DATA_DELETE` | `1` | `0` forbids deleting downloaded data |
-| `CASCADE_MAX_UPLOAD_MB` | `64` | Max `.torrent` upload size |
-| `CASCADE_POLL_MS` | `1000` | Backend sampling interval for the rate graph |
-| `CASCADE_GAMIFY` | `1` | `0` removes levels, badges and celebrations |
-| `CASCADE_DELETE_ROOTS` | — | Extra `:`-separated roots data may be deleted from |
-| `CASCADE_STATE_FILE` | `/config/cascade-state.json` | Where preferences and progress are stored |
+| `WEB_USER` | unset (no auth) | Basic-auth user; auth is enabled only when both are set |
+| `WEB_PASS` | unset (no auth) | Basic-auth password |
+| `WEB_BASE_PATH` | `/` | Serve under a sub-path, e.g. /rtorrent |
+| `CASCADE_ALLOW_RAW_RPC` | `1` | Set 0 to disable the API console and /RPC2 |
+| `CASCADE_ALLOW_DATA_DELETE` | `1` | Set 0 to forbid deleting downloaded data |
+| `CASCADE_DELETE_ROOTS` | download + completed dirs | Extra :-separated roots data may be deleted from |
+| `CASCADE_MAX_UPLOAD_MB` | `64` | Largest accepted .torrent upload, MiB |
+| `CASCADE_POLL_MS` | `1000` | Backend sampling interval for the rate graph, ms |
+| `CASCADE_GAMIFY` | `1` | Set 0 to remove levels, badges and celebrations |
+| `CASCADE_WEB_ROOT` | `/app/web` | Directory the built UI is served from |
 
 ### Escape hatches
 
-| Variable | Meaning |
-| --- | --- |
-| `RT_EXTRA_CONFIG` | Raw `rtorrent.rc` lines appended to the generated config |
-| `RT_EXTRA_CONFIG_FILE` | Path to a file of extra `rtorrent.rc` lines |
-| `RT_CONFIG_FILE` | Use this config file verbatim instead of generating one |
-| `RT_CONFIG_KEEP` | `0` regenerates `RT_CONFIG_FILE` on every start instead of keeping it |
+Settings given as environment variables are applied over XML-RPC at startup rather than written into rtorrent.rc, so changes made in the UI last until the container restarts.
 
-> Settings given as environment variables are applied to rtorrent over XML-RPC at startup rather
-> than written into `rtorrent.rc`. rtorrent aborts on an unknown command in its config file and
-> the command set differs between versions, so routing them through the capability probe means an
-> option your rtorrent lacks is skipped with a warning instead of breaking the container.
-> A consequence: changes you make in the UI last until the container restarts, at which point the
-> environment wins again.
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `RT_EXTRA_CONFIG` | unset | Raw rtorrent.rc lines appended to the generated config |
+| `RT_EXTRA_CONFIG_FILE` | unset | File of extra rtorrent.rc lines to append |
+| `RT_CONFIG_FILE` | `/config/rtorrent.rc` | Use this rtorrent.rc verbatim instead of generating one |
+| `RT_CONFIG_KEEP` | `1` | Set 0 to regenerate RT_CONFIG_FILE on every start |
+| `CASCADE_BOOT_SETTINGS` | `/run/cascade/boot-settings.json` | Where the entrypoint stages the settings it hands the server |
+<!-- /generated -->
 
 ## The UI
 
