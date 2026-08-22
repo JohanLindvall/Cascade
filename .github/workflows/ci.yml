@@ -1,0 +1,117 @@
+# Cascade CI: typecheck both TypeScript halves quickly, then build the real
+# image (which compiles rtorrent from source) and probe the running API.
+#
+# The compat job builds the oldest and a mid-series rtorrent on demand — the
+# backend genuinely differs between 0.9.x and 0.16.x, and the capability probe
+# is what keeps one UI working across them.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full-matrix:
+        description: Also build and probe the old rtorrent versions
+        type: boolean
+        default: false
+
+jobs:
+  typecheck:
+    name: Typecheck server + web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Server
+        working-directory: server
+        run: |
+          npm install --no-audit --no-fund
+          npx tsc --noEmit
+      - name: Web (typecheck + production build)
+        working-directory: web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+  smoke:
+    name: Docker build + API smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (compiles rtorrent from source)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          tags: cascade:ci
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Boot and probe the API
+        run: |
+          docker run -d --name cascade-ci -p 18080:8080 -e RT_DHT=off cascade:ci
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break
+            if [ -n "$(docker ps -aq --filter name=^cascade-ci$ --filter status=exited)" ]; then
+              echo "container exited"; docker logs cascade-ci; exit 1
+            fi
+            sleep 1
+          done
+          set -x
+          curl -fsS http://127.0.0.1:18080/healthz | grep '"ok":true'
+          curl -fsS http://127.0.0.1:18080/api/capabilities | grep -o '"clientVersion":"[^"]*"'
+          curl -fsS http://127.0.0.1:18080/api/state >/dev/null
+          curl -fsS http://127.0.0.1:18080/api/settings >/dev/null
+          curl -fsS -X POST http://127.0.0.1:18080/RPC2 -H 'content-type: text/xml' \
+            --data '<?xml version="1.0"?><methodCall><methodName>system.client_version</methodName></methodCall>' \
+            | grep -o '<string>[^<]*</string>'
+          curl -fsS http://127.0.0.1:18080/ | grep -o '<title>[^<]*</title>'
+      - name: Container log on failure
+        if: failure()
+        run: docker logs cascade-ci 2>&1 | tail -50 || true
+      - name: Teardown
+        if: always()
+        run: docker stop -t 20 cascade-ci >/dev/null 2>&1 || true
+
+  compat:
+    name: rtorrent ${{ matrix.rtorrent }}
+    if: github.event_name == 'workflow_dispatch' && inputs.full-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rtorrent: ['0.9.8', '0.15.2']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build against rtorrent ${{ matrix.rtorrent }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: RTORRENT_VERSION=${{ matrix.rtorrent }}
+          tags: cascade:compat
+          load: true
+          cache-from: type=gha
+      - name: Boot and probe the API
+        run: |
+          docker run -d --name cascade-compat -p 18080:8080 -e RT_DHT=off cascade:compat
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break
+            if [ -n "$(docker ps -aq --filter name=^cascade-compat$ --filter status=exited)" ]; then
+              echo "container exited"; docker logs cascade-compat; exit 1
+            fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18080/api/capabilities | grep -o '"clientVersion":"[^"]*"'
+          curl -fsS http://127.0.0.1:18080/api/state >/dev/null
+          curl -fsS http://127.0.0.1:18080/api/settings >/dev/null
+      - name: Container log on failure
+        if: failure()
+        run: docker logs cascade-compat 2>&1 | tail -50 || true
+      - name: Teardown
+        if: always()
+        run: docker stop -t 20 cascade-compat >/dev/null 2>&1 || true

@@ -15,16 +15,20 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
   command names from what the running rtorrent actually implements, hiding unsupported controls
   in the UI instead of failing.
 - **Everything rtorrent exposes** — upload `.torrent` files, magnet links and URLs, global and
-  per-torrent throttling, file priorities, tracker management, peers, labels, live settings, plus
-  a raw API console and an XML-RPC passthrough for anything the UI does not wrap.
+  per-torrent throttling, file priorities, tracker management, peers, labels, plus a raw API
+  console and an XML-RPC passthrough for anything the UI does not wrap. The settings dialog
+  covers the full tunable surface: slots, peer ranges, ports, binds, proxies, encryption,
+  DHT, tracker TLS verification, disk preload/sync, socket buffers and resource limits —
+  each control greyed out when the running rtorrent lacks it.
 - **Drop torrents anywhere** — drag `.torrent` files onto the window and they are added and
   started on the spot, no dialog in the way.
 - **Lightly gamified** — a level and a set of badges earned from real transfer totals, with a
   confetti burst when a download lands. Off with one environment variable if it is not for you.
-- **Four themes** — system, light, dark, and a retro 8-bit CRT mode. Preferences are stored on the
-  server, so they follow the install rather than the browser.
-- **Works on a phone** — the table becomes cards, the sidebar becomes a drawer, and detail and
-  dialogs become full-screen sheets.
+- **Five themes** — system, light, dark, a retro 8-bit CRT mode, and a grim, frostbitten black
+  metal mode. Preferences are stored on the server, so they follow the install rather than the
+  browser.
+- **Works on a phone** — the table becomes cards with their own sort control, the sidebar becomes
+  a drawer that also carries the tools, and detail and dialogs become full-screen sheets.
 - **Configured entirely from `docker run`** — the rtorrent backend options are environment
   variables.
 
@@ -125,12 +129,13 @@ Rates are in **KiB/s**; `0` means unlimited.
 | --- | --- |
 | `RT_DOWNLOAD_RATE` | Global download limit |
 | `RT_UPLOAD_RATE` | Global upload limit |
-| `RT_MAX_UPLOADS` | Upload slots per torrent |
+| `RT_MAX_UPLOADS` / `RT_MIN_UPLOADS` | Upload slots per torrent |
 | `RT_MAX_UPLOADS_GLOBAL` | Upload slots across all torrents |
-| `RT_MAX_DOWNLOADS` | Download slots per torrent |
+| `RT_MAX_DOWNLOADS` / `RT_MIN_DOWNLOADS` | Download slots per torrent |
 | `RT_MAX_DOWNLOADS_GLOBAL` | Download slots across all torrents |
 | `RT_MIN_PEERS` / `RT_MAX_PEERS` | Peer range while leeching |
 | `RT_MIN_PEERS_SEED` / `RT_MAX_PEERS_SEED` | Peer range while seeding (`-1` disables) |
+| `RT_TRACKER_NUMWANT` | Peers requested per announce (`-1` = tracker default) |
 
 ### Network
 
@@ -138,6 +143,7 @@ Rates are in **KiB/s**; `0` means unlimited.
 | --- | --- | --- |
 | `RT_PORT_RANGE` | `50000-50000` | Incoming peer port range |
 | `RT_PORT_RANDOM` | `no` | Pick a random port in the range |
+| `RT_PORT_OPEN` | rtorrent default | `yes`/`no` open the listening port (removed in 0.16) |
 | `RT_DHT` | rtorrent default | `disable`, `off`, `auto`, `on` |
 | `RT_DHT_PORT` | `6881` | DHT UDP port |
 | `RT_PEX` | rtorrent default | `yes` / `no` |
@@ -147,9 +153,13 @@ Rates are in **KiB/s**; `0` means unlimited.
 | `RT_IP` | — | Address reported to trackers |
 | `RT_PROXY` | — | HTTP proxy for tracker announces |
 | `RT_HTTP_CAPATH` / `RT_HTTP_CACERT` | — | TLS trust store for announces |
+| `RT_SSL_VERIFY_PEER` / `RT_SSL_VERIFY_HOST` | rtorrent default | Verify tracker TLS certificates / hostnames |
 | `RT_MAX_OPEN_FILES` | rtorrent default | Open file handle cap |
+| `RT_MAX_OPEN_SOCKETS` | rtorrent default | Open socket cap |
 | `RT_MAX_HTTP_OPEN` | rtorrent default | Concurrent HTTP requests (read-only on 0.16+) |
+| `RT_DNS_CACHE_TIMEOUT` | rtorrent default | DNS cache lifetime, seconds |
 | `RT_HTTP_MAX_HOST` | rtorrent default | HTTP connections per host (0.16+) |
+| `RT_PROXY_HTTP` | — | Proxy for all HTTP traffic (0.16+) |
 | `RT_PROXY_GLOBAL` | — | Global proxy for all traffic (0.16+) |
 | `RT_BIND_IPV4` / `RT_BIND_IPV6` | — | Separate bind addresses per family (0.16+) |
 | `RT_DHT_OVERRIDE_PORT` | — | Announce a different DHT port (0.16+) |
@@ -165,6 +175,9 @@ Rates are in **KiB/s**; `0` means unlimited.
 | `RT_HASH_ON_COMPLETION` | rtorrent default | Re-verify on completion (`yes`/`no`) |
 | `RT_MEMORY_MAX` | rtorrent default | Piece memory cap, bytes |
 | `RT_MAX_FILE_SIZE` | rtorrent default | Largest accepted file, bytes |
+| `RT_SYNC_TIMEOUT` | rtorrent default | Piece disk-sync timeout, seconds |
+| `RT_PRELOAD_TYPE` | rtorrent default | Piece preload: `0` off, `1` madvise, `2` direct paging |
+| `RT_PRELOAD_MIN_SIZE` / `RT_PRELOAD_MIN_RATE` | rtorrent default | Preload thresholds (bytes / bytes-per-second) |
 
 ### RPC
 
@@ -266,9 +279,16 @@ backend exposes with its help text.
 
 ![API console](docs/screenshot-console.png)
 
-Themes are chosen from the header: **System** (follows the OS), **Light**, **Dark**, and a
+Themes are chosen from the header: **System** (follows the OS), **Light**, **Dark**, a
 **Retro 8-bit** mode with CRT phosphor colours, hard pixel edges, stepped progress bars and
-scanlines.
+scanlines — and **Black Metal**: flat black, bone lettering, blood accents, film grain, torn
+sawtooth edges, jagged progress bars, and the wordmark replaced by a properly unreadable band
+logo. The gamification layer is re-carved to match — levels become ranks like *Sower of Plagues*,
+and the badges become sigils such as *First Blood* and *Eternal Winter*.
+
+![Black metal theme](docs/screenshot-blackmetal.png)
+
+![The Grimoire](docs/screenshot-blackmetal-grimoire.png)
 
 ![Theme picker](docs/screenshot-theme-menu.png)
 
@@ -290,17 +310,21 @@ persistent state, and deleting it resets everything.
 ### On small screens
 
 The layout adapts rather than shrinking. Columns drop by usefulness as the window narrows, and
-below 720px the table becomes a card list, the sidebar becomes a drawer behind the filter button,
-and the detail pane and dialogs become full-screen sheets. Touch gets larger targets, and a long
-press stands in for right-click.
+below 720px the table becomes a card list with its own sort control in the toolbar, the sidebar
+becomes a drawer behind the filter button — carrying the settings, throttle and console tools as
+well as the filters — and the detail pane and dialogs become full-screen sheets. The live
+transfer rates stay in the header. Touch gets larger targets, a long press stands in for
+right-click, and polling pauses while the tab is in the background.
 
 <p>
   <img src="docs/screenshot-mobile.png" alt="Mobile layout" width="290">
   <img src="docs/screenshot-mobile-drawer.png" alt="Filter drawer" width="290">
 </p>
 
-Keyboard: `n` add torrents · `Ctrl/⌘+A` select all · `Delete` remove · `Shift+Delete` remove with
-data · `Esc` clear selection. Rows support `Ctrl`-click and `Shift`-click ranges.
+Keyboard: `n` add torrents · `/` search · `↑`/`↓` move through the list · `Ctrl/⌘+A` select all ·
+`Delete` remove · `Shift+Delete` remove with data · `Esc` close details and clear the selection.
+Rows support `Ctrl`-click and `Shift`-click ranges, and the right-click menu can copy a torrent's
+magnet link.
 
 ## API
 
@@ -308,6 +332,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
+| `GET` | `/healthz` | Liveness (deliberately outside Basic auth, for healthchecks) |
 | `GET` | `/api/state` | Torrents, global status, throttle groups (the UI's poll) |
 | `GET` | `/api/torrents?view=main` | Torrent list for an rtorrent view |
 | `GET` | `/api/status` | Global rates, limits and backend summary on their own |
@@ -378,11 +403,15 @@ make run PORT=8080          # run it, mounting ./data, then open it in a browser
 make run OPEN=0             # ...without launching a browser
 make open                   # wait for it to answer, then open it
 make smoke                  # build, boot, exercise the API, tear down
-make matrix                 # build against 0.9.8, 0.10.0 and 0.15.2
-make build-source RTORRENT_VERSION=0.9.8
+make matrix                 # build against 0.9.8, 0.15.2 and 0.16.20
+make build RTORRENT_VERSION=0.9.8
 make attach                 # attach to rtorrent's curses UI
 make logs / shell / stop
 ```
+
+CI (GitHub Actions) runs the same checks on every push: a fast typecheck of both TypeScript
+halves, then a full image build with an API smoke test. A compatibility matrix against rtorrent
+0.9.8 and 0.15.2 can be run from the Actions tab (**Run workflow → full-matrix**).
 
 `make run` waits for `/healthz` before launching the browser, so it opens on a working page rather
 than a connection error. The launcher is `xdg-open` (`BROWSER=` overrides it, `open` is used as a

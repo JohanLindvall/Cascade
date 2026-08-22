@@ -15,12 +15,14 @@ server/src/
   rtorrent.ts     request queue + multicall helpers
   capabilities.ts probes system.listMethods, picks a command dialect
   model.ts        rtorrent fields -> Torrent/File/Peer/Tracker
+  settings.ts     every global setting as one declarative table (see below)
   service.ts      all application behaviour
   achievements.ts badge definitions, XP and level curve
   api.ts          REST routes + /RPC2 passthrough
   index.ts        express wiring, static SPA, auth, error mapping
 web/src/          React UI; components/ + one styles.css of design tokens
 docker/entrypoint.sh  renders rtorrent.rc, supervises rtorrent + node
+.github/workflows/ci.yml  typecheck + Docker build + API smoke on every push
 ```
 
 There are no runtime dependencies beyond express and multer on the server, and react on the
@@ -106,18 +108,28 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
 9. **rtorrent needs a pty**, so it runs inside a detached `screen` session. `SCREENDIR` must be
    mode 0700 or screen refuses to start.
 
-10. **Some settings are write-only** — `dht.mode` and `protocol.encryption` have `.set` but no
-   getter, so the UI cannot show their current value.
+10. **Some settings are write-only** — `dht.mode` has `.set` but no getter, and while 0.16 grew a
+   `protocol.encryption` getter it reports internal flag names (`handshake_allow`, …) that the
+   setter refuses, so neither value can round-trip and the UI shows "(leave unchanged)" instead.
 
 11. **Labels live in `d.custom1`**, URL-encoded (the ruTorrent convention), which is why
    `mapTorrent` decodes and `setLabel` encodes.
 
 ## Adding support for a new backend command
 
-Never call a command unconditionally. Add it to `FEATURE_METHODS` in `capabilities.ts`, guard the
-call with `capabilities.supports('yourFeature')`, and let the UI grey out the control via the
-`supports` map returned by `/api/capabilities`. Field commands in `model.ts` are filtered against
-`system.listMethods` automatically — a field the backend lacks simply maps to `0`/`''`.
+Never call a command unconditionally.
+
+- **A global setting** is one entry in `SETTING_SPECS` (`settings.ts`) — getter, setter (with
+  alternates, newest first, when a release renamed it), and a coercion kind — plus a form field in
+  `SettingsDialog.tsx`. The table drives `/api/settings` reads, writes, the boot-settings warning,
+  and the `supports` map: every setting key automatically becomes a feature that is true when the
+  backend has a working setter, and the dialog greys the control out by that same key. Remember
+  quirk 7: set the value and read it back on the oldest and newest rtorrent before trusting it.
+- **Anything else** (per-torrent commands, probes) goes in `FEATURE_METHODS` in `capabilities.ts`,
+  guarded with `capabilities.supports('yourFeature')`.
+
+Field commands in `model.ts` are filtered against `system.listMethods` automatically — a field the
+backend lacks simply maps to `0`/`''`.
 
 ## The gamification layer
 
@@ -138,6 +150,10 @@ single entry — but the unlock timestamp is persisted, so a badge whose conditi
 holding stays earned. `CASCADE_GAMIFY=0` disables the whole layer; the UI keys off
 `game.enabled`, so anything you add must be behind that flag too.
 
+The black metal theme re-carves all gamification copy client-side (`web/src/grim.ts`, keyed by
+achievement id and level title). It is a pure text skin — never branch unlock logic on it — and a
+new badge or level title needs a matching entry there or it shows its plain name in that theme.
+
 ## Persistence
 
 Everything Cascade remembers is in one JSON file, `/config/cascade-state.json`, owned by
@@ -152,11 +168,17 @@ the file always wins once it loads.
 
 ## Themes
 
-Four modes: `system`, `light`, `dark`, `retro`. `system` resolves through `prefers-color-scheme` in
-`theme.ts`, and the resolved value goes on `<html data-theme>`. Themes are pure token overrides in
-`styles.css` — components carry no per-theme markup, so a new theme is a block of custom properties
-plus, for retro, a set of shape overrides (zero radius, offset shadows, stepped bars). Keep it that
-way.
+Five modes: `system`, `light`, `dark`, `retro`, `blackmetal`. `system` resolves through
+`prefers-color-scheme` in `theme.ts`, and the resolved value goes on `<html data-theme>`. Themes
+are pure token overrides in `styles.css` — components carry no per-theme markup, so a new theme is
+a block of custom properties plus, for retro and black metal, a set of shape overrides (zero
+radius, offset shadows, stepped bars / grain and vignette). Keep it that way. Adding a theme means
+touching four places: the token block in `styles.css`, `THEME_MODES`/`THEME_COLORS` in `theme.ts`,
+a glyph in `ThemePicker.tsx`, and the `THEMES` allowlist in the server's `prefs.ts`.
+
+An inline script in `index.html` applies the cached theme before first paint (no dark flash for
+light-theme users) and `applyTheme` mirrors the page background into `<meta name="theme-color">`;
+both must stay in step with the theme list.
 
 ## Adding torrents
 
@@ -203,7 +225,12 @@ Breakpoints live in `styles.css` and, where a component has to change rather tha
 `useMediaQuery.ts` — keep the two in step (`COMPACT_QUERY` is the 720px one). Columns drop by
 usefulness through 1280/1140/1024px via per-column classes (`col-added`, `col-ratio`, `col-eta`,
 `col-peers`); below 720px `TorrentTable` renders cards instead of a table, the sidebar becomes a
-fixed drawer, and detail/modals become full-screen sheets.
+fixed drawer, and detail/modals become full-screen sheets. On compact layouts the throttle,
+console and settings buttons leave the header (`.compact-hide`) and reappear as the drawer's
+Tools group, the toolbar gains a sort dropdown (cards have no headers to click), and the live
+rates stay in the header in a slimmed form. Long-press opens the context menu on touch; the
+synthesized click that follows the press is deliberately swallowed in `TorrentCard`, or it would
+close the menu the instant it opened.
 
 Two things are easy to get wrong here:
 
@@ -218,7 +245,14 @@ Two things are easy to get wrong here:
 - Comments explain *why*, especially where the code works around one of the quirks above. Do not
   narrate what the next line does.
 - Errors surfaced to the user should name the cause (`HttpError` with a real status; XML-RPC
-  faults become 502 with rtorrent's own message).
+  faults become 502 with rtorrent's own message, prefixed with the command that failed when it
+  came out of a multicall).
 - Anything that deletes data must stay inside `config.deleteRoots`.
 - The UI polls `/api/state` once per interval rather than issuing many calls; rtorrent is single
-  threaded and does not enjoy being hammered (`MAX_CONCURRENCY` in `rtorrent.ts` caps it).
+  threaded and does not enjoy being hammered (`MAX_CONCURRENCY` in `rtorrent.ts` caps it). The
+  poll chains timeouts rather than using an interval, so a slow response never stacks requests,
+  and it pauses entirely while the tab is hidden.
+- `/healthz` is deliberately outside Basic auth (container healthchecks and orchestrator probes
+  must work with `WEB_USER`/`WEB_PASS` set) and reveals nothing but liveness.
+- CI (`.github/workflows/ci.yml`) typechecks both halves and smoke-tests the built image; the
+  0.9.8/0.15.2 compat matrix runs on manual dispatch.
