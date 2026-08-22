@@ -2423,6 +2423,114 @@ td.ratio.poor {
   }
 }
 
+/* Black metal completions mourn rather than celebrate: ash sinks slowly, a
+   few embers flicker among it, lightning pulses twice in the distance and a
+   pall closes in from the edges. Same fire-and-forget contract as confetti. */
+.confetti span.ash {
+  animation-name: fall-ash;
+}
+
+.confetti span.ember {
+  animation-name: fall-ember;
+  border-radius: 0;
+  box-shadow: 0 0 9px color-mix(in srgb, var(--accent) 75%, transparent);
+}
+
+@keyframes fall-ash {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -12px, 0) rotate(0deg);
+  }
+  12% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--drift, 0), 104vh, 0) rotate(150deg);
+  }
+}
+
+@keyframes fall-ember {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -12px, 0);
+  }
+  10% {
+    opacity: 1;
+  }
+  30% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.4;
+  }
+  88% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--drift, 0), 108vh, 0);
+  }
+}
+
+/* Both overlays must undo the .confetti span piece defaults they inherit. */
+.confetti .grim-flash,
+.confetti .grim-pall {
+  position: absolute;
+  inset: 0;
+  top: 0;
+  border-radius: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.confetti .grim-flash {
+  background: #e3ddcf;
+  animation: grim-flash 0.7s ease-out forwards;
+}
+
+.confetti .grim-pall {
+  background: radial-gradient(120% 92% at 50% 42%, transparent 42%, rgba(0, 0, 0, 0.82) 100%);
+  animation: grim-pall 4.6s ease-in-out forwards;
+}
+
+/* Two soft pulses, like lightning behind clouds — never a hard strobe. */
+@keyframes grim-flash {
+  0% {
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.16;
+  }
+  26% {
+    opacity: 0.02;
+  }
+  40% {
+    opacity: 0.1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes grim-pall {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.65;
+  }
+  70% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .toast.achievement {
   border-left: 3px solid var(--gold);
   background: color-mix(in srgb, var(--gold) 8%, var(--bg-elevated));
@@ -3117,6 +3225,65 @@ td.ratio.poor {
       rotate(var(--spin));
     opacity: 0;
   }
+}
+
+/* The black metal drop is a summoning: a sigil cast at the impact point, and
+   shards of ash and ember that arc outward, then fall as they die. */
+.burst-sigil {
+  position: absolute;
+  width: 124px;
+  height: 124px;
+  margin: -62px 0 0 -62px;
+  color: var(--accent);
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--accent) 60%, transparent));
+  animation: sigil-cast 0.95s ease-out forwards;
+}
+
+@keyframes sigil-cast {
+  0% {
+    transform: scale(0.25) rotate(0deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.95;
+  }
+  100% {
+    transform: scale(1.5) rotate(60deg);
+    opacity: 0;
+  }
+}
+
+.burst-shard {
+  border-radius: 0;
+  animation: burst-shard 0.95s cubic-bezier(0.2, 0.7, 0.4, 1) forwards;
+}
+
+.burst-shard.ember {
+  box-shadow: 0 0 9px color-mix(in srgb, var(--accent) 75%, transparent);
+}
+
+@keyframes burst-shard {
+  0% {
+    transform: translate(-50%, -50%) rotate(0deg);
+    opacity: 1;
+  }
+  55% {
+    transform: translate(calc(-50% + var(--sx)), calc(-50% + var(--sy))) rotate(var(--spin));
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(calc(-50% + var(--sx) * 1.15), calc(-50% + var(--sy) + var(--fy)))
+      rotate(var(--spin)) scale(0.4);
+    opacity: 0;
+  }
+}
+
+.drop-burst.grim .burst-score {
+  font-family: 'Times New Roman', Georgia, serif;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--text);
+  text-shadow: 0 2px 12px color-mix(in srgb, var(--accent) 65%, transparent);
 }
 
 /* The payload itself, collected into the Add button */

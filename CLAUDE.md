@@ -208,7 +208,12 @@ a `file://` URI cannot be read by the browser and says so rather than failing qu
 ## Animations
 
 `Celebrate` (download finished) and `DropBurst` (files dropped) are fire-and-forget: the parent
-hands them a trigger and they clean themselves up on a timer.
+hands them a trigger and they clean themselves up on a timer. Both have a black-metal variant
+selected by a `grim` prop derived from the resolved theme — `Celebrate` mourns (ash, embers, a
+lightning flash, a closing pall) and `DropBurst` summons (a cast sigil, falling shards, an
+"offering" score). The prop is latched at launch (ref/memo) so a theme flip mid-flight cannot
+restyle or restart a sequence, and both variants keep the same trigger contract and
+reduced-motion skip.
 
 Both keep their `onDone` in a ref and depend only on the trigger id. That is not incidental — the
 app re-renders on every poll, so an inline `onDone={() => ...}` in the dependency array tears the

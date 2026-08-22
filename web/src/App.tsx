@@ -964,8 +964,8 @@ export function App() {
         </div>
       )}
 
-      <Celebrate trigger={celebration} onDone={clearCelebration} />
-      <DropBurst burst={burst} onDone={clearBurst} />
+      <Celebrate trigger={celebration} grim={resolvedTheme === 'blackmetal'} onDone={clearCelebration} />
+      <DropBurst burst={burst} grim={resolvedTheme === 'blackmetal'} onDone={clearBurst} />
 
       {dialog === 'add' && (
         <AddDialog
