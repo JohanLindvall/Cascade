@@ -17,9 +17,10 @@ import { Header } from './components/Header';
 import { LogDialog } from './components/LogDialog';
 import { RpcConsole } from './components/RpcConsole';
 import { SettingsDialog } from './components/SettingsDialog';
-import { Sidebar, matchesStatus, type Filter } from './components/Sidebar';
+import { Sidebar, matchesStatus, type Filter, type ToolId } from './components/Sidebar';
 import { ThrottleDialog } from './components/ThrottleDialog';
 import {
+  SORT_OPTIONS,
   TorrentTable,
   sortTorrents,
   type SelectMods,
@@ -28,20 +29,22 @@ import {
 } from './components/TorrentTable';
 import {
   IconAlert,
+  IconFilter,
   IconGauge,
-  IconUpload,
+  IconLink,
   IconList,
   IconMove,
   IconPause,
   IconPlay,
   IconRefresh,
-  IconList as IconFilters,
   IconSearch,
   IconStop,
   IconTag,
   IconTrash,
+  IconUpload,
 } from './components/icons';
 import { ContextMenu, MenuItem, useToast } from './components/ui';
+import { grimAchievement, grimGame } from './grim';
 import { COMPACT_QUERY, useMediaQuery } from './useMediaQuery';
 import {
   fetchPreferences,
@@ -53,8 +56,6 @@ import { applyTheme, resolveTheme, type ThemeMode } from './theme';
 import type { GameState, GlobalStatus, ThrottleGroup, Torrent } from './types';
 
 type Dialog = 'add' | 'settings' | 'throttles' | 'console' | 'log' | 'progress' | null;
-
-
 
 interface MenuState {
   x: number;
@@ -96,10 +97,22 @@ export function App() {
 
   const toast = useToast();
   const compact = useMediaQuery(COMPACT_QUERY);
+  const searchRef = useRef<HTMLInputElement>(null);
   const lastAnchor = useRef<string | null>(null);
   const dragDepth = useRef(0);
   const completedRef = useRef<Set<string> | null>(null);
   const seenBadgesRef = useRef<string[] | null>(null);
+  // Read by badge toasts without re-subscribing the poll to theme changes.
+  const grimRef = useRef(resolvedTheme === 'blackmetal');
+  grimRef.current = resolvedTheme === 'blackmetal';
+
+  // The black metal theme re-carves the gamification copy; the server's ids
+  // and progress stay canonical, so switching themes never changes what is
+  // earned.
+  const displayGame = useMemo(
+    () => (game && resolvedTheme === 'blackmetal' ? grimGame(game) : game),
+    [game, resolvedTheme],
+  );
 
   const clearBurst = useCallback(() => setBurst(null), []);
   const clearCelebration = useCallback(() => setCelebration(0), []);
@@ -137,6 +150,35 @@ export function App() {
 
   /* ------------------------------ polling ------------------------------ */
 
+  /** Toast badges the user has not been told about yet. */
+  const announceBadges = useCallback(
+    (state: GameState | null | undefined) => {
+      if (!state?.enabled) return;
+      const seen = seenBadgesRef.current;
+      if (seen === null) return; // Preferences have not loaded yet.
+      const earned = state.achievements.filter((item) => item.unlockedAt !== null);
+      const fresh = earned.filter((item) => !seen.includes(item.id));
+      if (fresh.length === 0) return;
+      const ids = earned.map((item) => item.id);
+      seenBadgesRef.current = ids;
+      // A first run against an established session can earn several at once;
+      // record the baseline quietly rather than firing a wall of toasts.
+      if (seen.length === 0 && fresh.length > 2) {
+        updatePrefs({ seenBadges: ids });
+        return;
+      }
+      for (const item of fresh) {
+        const shown = grimRef.current ? grimAchievement(item) : item;
+        toast.push(
+          'achievement',
+          `${grimRef.current ? 'Sigil earned' : 'Badge unlocked'} — ${shown.title}: ${shown.description}`,
+        );
+      }
+      updatePrefs({ seenBadges: ids });
+    },
+    [toast, updatePrefs],
+  );
+
   const refresh = useCallback(async () => {
     try {
       const state = await api.state();
@@ -164,17 +206,36 @@ export function App() {
       setThrottles(state.throttles);
       setGame(state.game ?? null);
       announceBadges(state.game);
-      setConnectionError(state.status.connected ? null : (state.status.error ?? 'rtorrent is not responding'));
+      setConnectionError(
+        state.status.connected ? null : (state.status.error ?? 'rtorrent is not responding'),
+      );
     } catch (error) {
       setConnectionError(error instanceof Error ? error.message : String(error));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [announceBadges, toast]);
 
+  // Poll by chaining timeouts: a slow response never stacks requests, and a
+  // hidden tab stops polling entirely until it becomes visible again.
   useEffect(() => {
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), REFRESH_MS);
-    return () => window.clearInterval(timer);
+    let alive = true;
+    let timer = 0;
+    const tick = async () => {
+      if (!document.hidden) await refresh();
+      if (alive) timer = window.setTimeout(() => void tick(), REFRESH_MS);
+    };
+    void tick();
+    const onVisible = () => {
+      if (!document.hidden && alive) {
+        window.clearTimeout(timer);
+        void tick();
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
   }, [refresh]);
 
   // Tracker hosts change rarely; refresh them only when the torrent set changes.
@@ -192,31 +253,6 @@ export function App() {
         /* tracker grouping is cosmetic; ignore failures */
       });
   }, [hashKey]);
-
-  /** Toast badges the user has not been told about yet. */
-  const announceBadges = useCallback(
-    (state: GameState | null | undefined) => {
-      if (!state?.enabled) return;
-      const seen = seenBadgesRef.current;
-      if (seen === null) return; // Preferences have not loaded yet.
-      const earned = state.achievements.filter((item) => item.unlockedAt !== null);
-      const fresh = earned.filter((item) => !seen.includes(item.id));
-      if (fresh.length === 0) return;
-      const ids = earned.map((item) => item.id);
-      seenBadgesRef.current = ids;
-      // A first run against an established session can earn several at once;
-      // record the baseline quietly rather than firing a wall of toasts.
-      if (seen.length === 0 && fresh.length > 2) {
-        updatePrefs({ seenBadges: ids });
-        return;
-      }
-      for (const item of fresh) {
-        toast.push('achievement', `Badge unlocked — ${item.title}: ${item.description}`);
-      }
-      updatePrefs({ seenBadges: ids });
-    },
-    [toast, updatePrefs],
-  );
 
   /* --------------------------- drag and drop ---------------------------- */
 
@@ -332,8 +368,7 @@ export function App() {
       form.append('start', '1');
       await submitDrop(form);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [refresh, toast],
+    [submitDrop],
   );
 
   const addDroppedLinks = useCallback(
@@ -343,8 +378,7 @@ export function App() {
       form.append('start', '1');
       await submitDrop(form);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [refresh, toast],
+    [submitDrop],
   );
 
   /* ------------------------------ filtering ---------------------------- */
@@ -484,6 +518,22 @@ export function App() {
     void patchTorrents({ directory });
   }, [focusedTorrent, patchTorrents]);
 
+  const copyMagnets = useCallback(
+    async (hashes: string[]) => {
+      const links = hashes.map((hash) => {
+        const name = byHash.get(hash)?.name;
+        return `magnet:?xt=urn:btih:${hash.toLowerCase()}${name ? `&dn=${encodeURIComponent(name)}` : ''}`;
+      });
+      try {
+        await copyToClipboard(links.join('\n'));
+        toast.push('success', `Copied ${links.length === 1 ? 'magnet link' : `${links.length} magnet links`}`);
+      } catch {
+        toast.push('error', 'Could not write to the clipboard');
+      }
+    },
+    [byHash, toast],
+  );
+
   /* ----------------------------- keyboard ------------------------------ */
 
   // A drop that lands outside the app element would otherwise make the browser
@@ -516,29 +566,58 @@ export function App() {
       } else if (event.key.toLowerCase() === 'a' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
         onSelectAll(true);
+      } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        if (visible.length === 0 || dialog !== null) return;
+        event.preventDefault();
+        const index = focused ? visible.findIndex((t) => t.hash === focused) : -1;
+        const next =
+          event.key === 'ArrowDown'
+            ? Math.min(visible.length - 1, index + 1)
+            : Math.max(0, index < 0 ? 0 : index - 1);
+        const hash = visible[next].hash;
+        setFocused(hash);
+        setSelected(new Set([hash]));
+        lastAnchor.current = hash;
+        document
+          .querySelector(`[data-hash="${hash}"]`)
+          ?.scrollIntoView({ block: 'nearest' });
+      } else if (event.key === '/' && dialog === null) {
+        event.preventDefault();
+        searchRef.current?.focus();
       } else if (event.key === 'Escape') {
         setSelected(new Set());
+        setFocused(null);
         setMenu(null);
         setDrawerOpen(false);
-      } else if (event.key.toLowerCase() === 'n' && !event.ctrlKey && !event.metaKey) {
+      } else if (
+        event.key.toLowerCase() === 'n' &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        dialog === null
+      ) {
         setDialog('add');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [removeTorrents, onSelectAll]);
+  }, [removeTorrents, onSelectAll, visible, focused, dialog]);
 
   /* ------------------------------- render ------------------------------ */
 
+  const applySort = (next: SortState) => {
+    updatePrefs({ sortKey: next.key, sortDir: next.dir });
+    setSort(next);
+  };
+
   const onSort = (key: SortKey) =>
-    setSort((current) => {
-      const next: SortState =
-        current.key === key
-          ? { key, dir: current.dir === 'asc' ? 'desc' : 'asc' }
-          : { key, dir: key === 'name' || key === 'label' ? 'asc' : 'desc' };
-      updatePrefs({ sortKey: next.key, sortDir: next.dir });
-      return next;
-    });
+    applySort(
+      sort.key === key
+        ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
+        : { key, dir: key === 'name' || key === 'label' ? 'asc' : 'desc' },
+    );
+
+  const onSortKey = (key: SortKey) =>
+    applySort({ key, dir: sort.key === key ? sort.dir : key === 'name' || key === 'label' ? 'asc' : 'desc' });
 
   const onDetailHeight = (height: number) => {
     setDetailHeight(height);
@@ -553,6 +632,11 @@ export function App() {
     }
     setFocused(hash);
     setMenu({ x: event.clientX, y: event.clientY, hash });
+  };
+
+  const openTool = (tool: ToolId) => {
+    setDrawerOpen(false);
+    setDialog(tool);
   };
 
   const labels = useMemo(
@@ -572,7 +656,7 @@ export function App() {
     >
       <Header
         status={status}
-        game={game}
+        game={displayGame}
         themeMode={themeMode}
         resolvedTheme={resolvedTheme}
         onThemeChange={(mode: ThemeMode) => updatePrefs({ theme: mode })}
@@ -594,6 +678,9 @@ export function App() {
           setDrawerOpen(false);
         }}
         trackerHosts={trackerHosts}
+        compact={compact}
+        onTool={openTool}
+        showProgress={!!game?.enabled}
       />
 
       <main className="main">
@@ -615,7 +702,7 @@ export function App() {
             title="Filters"
             aria-label="Filters"
           >
-            <IconFilters size={14} />
+            <IconFilter size={14} />
           </button>
           <button className="btn sm" onClick={() => void runAction('start')} disabled={targets.length === 0}>
             <IconPlay size={12} />
@@ -649,6 +736,31 @@ export function App() {
             <span>Label</span>
           </button>
 
+          {compact && (
+            <>
+              <select
+                className="select sort-select"
+                value={sort.key}
+                aria-label="Sort by"
+                onChange={(event) => onSortKey(event.target.value as SortKey)}
+              >
+                {SORT_OPTIONS.map((option) => (
+                  <option key={option.key} value={option.key}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn sm"
+                onClick={() => applySort({ key: sort.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' })}
+                aria-label="Sort direction"
+                title="Sort direction"
+              >
+                {sort.dir === 'asc' ? '▲' : '▼'}
+              </button>
+            </>
+          )}
+
           {targets.length > 0 && (
             <span className="selection-pill">
               {targets.length} selected
@@ -672,8 +784,9 @@ export function App() {
           <div className="search">
             <IconSearch size={14} />
             <input
+              ref={searchRef}
               className="input"
-              placeholder="Search torrents…"
+              placeholder="Search torrents… ( / )"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
@@ -723,6 +836,14 @@ export function App() {
             onClick={() => {
               setMenu(null);
               void runAction('pause', menuTargets);
+            }}
+          />
+          <MenuItem
+            icon={<IconPlay size={13} />}
+            label="Resume"
+            onClick={() => {
+              setMenu(null);
+              void runAction('resume', menuTargets);
             }}
           />
           <MenuItem
@@ -804,6 +925,14 @@ export function App() {
               promptDirectory();
             }}
           />
+          <MenuItem
+            icon={<IconLink size={13} />}
+            label="Copy magnet link"
+            onClick={() => {
+              setMenu(null);
+              void copyMagnets(menuTargets);
+            }}
+          />
           <hr />
           <MenuItem
             icon={<IconTrash size={13} />}
@@ -846,8 +975,12 @@ export function App() {
           labels={labels}
         />
       )}
-      {dialog === 'progress' && game && (
-        <AchievementsDialog game={game} onClose={() => setDialog(null)} />
+      {dialog === 'progress' && displayGame && (
+        <AchievementsDialog
+          game={displayGame}
+          grim={resolvedTheme === 'blackmetal'}
+          onClose={() => setDialog(null)}
+        />
       )}
       {dialog === 'settings' && (
         <SettingsDialog onClose={() => setDialog(null)} backend={status?.backend ?? null} />
@@ -859,4 +992,21 @@ export function App() {
       {dialog === 'log' && <LogDialog onClose={() => setDialog(null)} />}
     </div>
   );
+}
+
+/** Clipboard write with a fallback for non-secure (plain http) origins. */
+function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  try {
+    if (!document.execCommand('copy')) return Promise.reject(new Error('copy rejected'));
+  } finally {
+    area.remove();
+  }
+  return Promise.resolve();
 }

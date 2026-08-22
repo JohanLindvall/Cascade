@@ -41,9 +41,8 @@ export function Header({
         <span className="brand-mark">
           <IconDown size={16} />
         </span>
-        <span>
-          Cascade
-          <br />
+        <span className="brand-text">
+          <span className="brand-name">Cascade</span>
           <small>{status?.backend.clientVersion ? `rtorrent ${status.backend.clientVersion}` : 'connecting…'}</small>
         </span>
       </div>
@@ -79,13 +78,14 @@ export function Header({
         </div>
       </div>
 
-      <button className="btn icon" onClick={onThrottles} title="Throttle groups">
+      {/* On compact layouts these live in the filter drawer's Tools group. */}
+      <button className="btn icon compact-hide" onClick={onThrottles} title="Throttle groups">
         <IconGauge size={16} />
       </button>
-      <button className="btn icon" onClick={onConsole} title="rtorrent API console">
+      <button className="btn icon compact-hide" onClick={onConsole} title="rtorrent API console">
         <IconTerminal size={16} />
       </button>
-      <button className="btn icon" onClick={onSettings} title="rtorrent settings">
+      <button className="btn icon compact-hide" onClick={onSettings} title="rtorrent settings">
         <IconSettings size={16} />
       </button>
       <ThemePicker mode={themeMode} resolved={resolvedTheme} onChange={onThemeChange} />

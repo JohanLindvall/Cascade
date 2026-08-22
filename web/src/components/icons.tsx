@@ -208,3 +208,17 @@ export const IconClock = (p: IconProps) => (
     <path d="M12 7v5.5l3.5 2" />
   </Icon>
 );
+export const IconFilter = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 5h16l-6.2 7.2V19l-3.6 2v-8.8z" />
+  </Icon>
+);
+export const IconSkull = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 3a7 7 0 0 0-7 7c0 2.4 1.2 4.4 3 5.6V19a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-3.4c1.8-1.2 3-3.2 3-5.6a7 7 0 0 0-7-7z" />
+    <circle cx="9.2" cy="10.5" r="1.3" fill="currentColor" stroke="none" />
+    <circle cx="14.8" cy="10.5" r="1.3" fill="currentColor" stroke="none" />
+    <path d="M12 13.2l-1 2h2z" fill="currentColor" stroke="none" />
+    <path d="M10 21v-2M14 21v-2" />
+  </Icon>
+);

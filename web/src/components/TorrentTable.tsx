@@ -1,14 +1,14 @@
 import { useMemo, useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
+import { bytes, duration, percent, rate, relative } from '../format';
+import type { Torrent } from '../types';
+import { EmptyState, ProgressBar } from './ui';
+import { IconDown } from './icons';
 
 /** Modifier keys that drive multi-select, decoupled from the DOM event type. */
 export interface SelectMods {
   ctrl: boolean;
   shift: boolean;
 }
-import { bytes, duration, percent, rate, relative } from '../format';
-import type { Torrent } from '../types';
-import { EmptyState, ProgressBar } from './ui';
-import { IconDown } from './icons';
 
 export type SortKey =
   | 'name'
@@ -48,6 +48,22 @@ const COLUMNS: Column[] = [
   { key: 'addedAt', label: 'Added', align: 'right', className: 'col-added' },
 ];
 
+/** Sortable fields with labels, for the compact layout's sort dropdown. */
+export const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
+  ...COLUMNS.map(({ key, label }) => ({ key, label })),
+  { key: 'label', label: 'Label' },
+];
+
+/** Sorting by status should follow the lifecycle, not the alphabet. */
+const STATUS_RANK: Record<Torrent['status'], number> = {
+  downloading: 0,
+  seeding: 1,
+  checking: 2,
+  paused: 3,
+  stopped: 4,
+  error: 5,
+};
+
 function sortValue(torrent: Torrent, key: SortKey): number | string {
   switch (key) {
     case 'name':
@@ -55,7 +71,7 @@ function sortValue(torrent: Torrent, key: SortKey): number | string {
     case 'label':
       return torrent.label.toLowerCase();
     case 'status':
-      return torrent.status;
+      return STATUS_RANK[torrent.status];
     case 'peers':
       return torrent.peersConnected;
     case 'eta':
@@ -129,6 +145,7 @@ export function TorrentTable({
         return (
           <tr
             key={torrent.hash}
+            data-hash={torrent.hash}
             className={`${checked ? 'selected' : ''} ${focused === torrent.hash ? 'focused' : ''}`}
             onClick={(event) =>
               onSelect(torrent.hash, {
@@ -144,6 +161,7 @@ export function TorrentTable({
                 type="checkbox"
                 checked={checked}
                 onChange={() => onSelect(torrent.hash, { ctrl: true, shift: false })}
+                aria-label={`Select ${torrent.name}`}
               />
             </td>
             <td className="col-name">
@@ -248,6 +266,7 @@ export function TorrentTable({
                   if (element) element.indeterminate = !allSelected && someSelected;
                 }}
                 onChange={(event) => onSelectAll(event.target.checked)}
+                aria-label="Select all"
               />
             </th>
             {COLUMNS.map((column) => (
@@ -255,6 +274,13 @@ export function TorrentTable({
                 key={column.key}
                 className={`${column.className ?? ''} ${sort.key === column.key ? 'sorted' : ''}`}
                 style={column.align === 'right' ? { textAlign: 'right' } : undefined}
+                aria-sort={
+                  sort.key === column.key
+                    ? sort.dir === 'asc'
+                      ? 'ascending'
+                      : 'descending'
+                    : undefined
+                }
                 onClick={() => onSort(column.key)}
               >
                 {column.label}
@@ -289,10 +315,16 @@ function TorrentCard({
   onContextMenu: (hash: string, event: MouseEvent) => void;
 }) {
   const press = useRef<number | undefined>(undefined);
+  // Whether the long press already opened the menu; the synthesized click that
+  // follows touchend must then be swallowed, or it instantly closes the menu
+  // and selects the card underneath it.
+  const pressFired = useRef(false);
 
   const startPress = (event: ReactTouchEvent) => {
     const touch = event.touches[0];
+    pressFired.current = false;
     press.current = window.setTimeout(() => {
+      pressFired.current = true;
       onContextMenu(torrent.hash, {
         preventDefault: () => {},
         clientX: touch.clientX,
@@ -300,17 +332,30 @@ function TorrentCard({
       } as MouseEvent);
     }, 500);
   };
-  const cancelPress = () => window.clearTimeout(press.current);
+  const cancelPress = () => {
+    window.clearTimeout(press.current);
+    pressFired.current = false;
+  };
+  const endPress = (event: ReactTouchEvent) => {
+    window.clearTimeout(press.current);
+    if (pressFired.current) event.preventDefault();
+  };
 
   return (
     <article
       className={`torrent-card ${selected ? 'selected' : ''} ${focused ? 'focused' : ''}`}
-      onClick={(event) =>
-        onSelect(torrent.hash, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey })
-      }
+      data-hash={torrent.hash}
+      onClick={(event) => {
+        if (pressFired.current) {
+          // Belt to the preventDefault braces: some browsers fire the click anyway.
+          pressFired.current = false;
+          return;
+        }
+        onSelect(torrent.hash, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey });
+      }}
       onContextMenu={(event) => onContextMenu(torrent.hash, event)}
       onTouchStart={startPress}
-      onTouchEnd={cancelPress}
+      onTouchEnd={endPress}
       onTouchMove={cancelPress}
       onTouchCancel={cancelPress}
     >

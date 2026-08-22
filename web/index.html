@@ -7,6 +7,26 @@
     <meta name="theme-color" content="#0b0d13" />
     <title>Cascade</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%237c9bff'/%3E%3Cstop offset='1' stop-color='%23b06bff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='%23121620'/%3E%3Cpath d='M16 6v14M16 21l-6-6M16 21l6-6' stroke='url(%23g)' stroke-width='3' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3Crect x='8' y='24' width='16' height='3' rx='1.5' fill='url(%23g)'/%3E%3C/svg%3E" />
+    <script>
+      // Apply the cached theme before the first paint so a light/retro user
+      // does not get a dark flash while the bundle loads. Mirrors theme.ts;
+      // the cache key must match prefs.ts.
+      (function () {
+        try {
+          var prefs = JSON.parse(localStorage.getItem('cascade.prefs') || '{}');
+          var mode = prefs.theme || 'system';
+          var resolved =
+            mode === 'system'
+              ? window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+              : mode;
+          document.documentElement.dataset.theme = resolved;
+        } catch (error) {
+          /* keep the data-theme="dark" default */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

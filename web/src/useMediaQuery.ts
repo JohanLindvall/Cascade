@@ -16,6 +16,5 @@ export function useMediaQuery(query: string): boolean {
   return matches;
 }
 
-/** Breakpoints shared between the hook and the stylesheet. */
+/** The 720px breakpoint, shared with the stylesheet's compact layout rules. */
 export const COMPACT_QUERY = '(max-width: 720px)';
-export const TABLET_QUERY = '(max-width: 1024px)';

@@ -190,6 +190,12 @@ textarea {
   box-shadow: 0 4px 14px rgba(124, 155, 255, 0.35);
 }
 
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+
 .brand small {
   color: var(--text-faint);
   font-weight: 500;
@@ -338,10 +344,28 @@ textarea {
   border-radius: 8px;
 }
 
+/* Keyboard focus must be visible on every interactive control. */
+button:focus-visible,
+.side-item:focus-visible,
+.tab:focus-visible,
+.check:focus-visible,
+.switch input:focus-visible + .track {
+  outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent);
+  outline-offset: 2px;
+}
+
 .field {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* Row of toggles under a form grid, in dialogs. */
+.switch-row {
+  display: flex;
+  gap: 22px;
+  margin-top: 14px;
+  flex-wrap: wrap;
 }
 
 .field > label {
@@ -560,6 +584,12 @@ textarea {
   height: 7px;
   border-radius: 50%;
   flex: none;
+}
+
+.side-more {
+  padding: 3px 9px;
+  font-size: 11px;
+  color: var(--text-faint);
 }
 
 .side-stats {
@@ -1511,6 +1541,12 @@ table.grid tr.detail-row > td {
   color: var(--text);
 }
 
+.method-more {
+  padding: 8px 10px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 .log-view {
   font-family: var(--mono);
   font-size: 11.8px;
@@ -1649,7 +1685,7 @@ body {
 }
 
 @media (max-width: 880px) {
-  .brand span:not(.brand-mark) {
+  .brand-text {
     display: none;
   }
   .rate-value span {
@@ -1714,7 +1750,8 @@ body {
     animation: fade 0.15s ease;
   }
 
-  /* Header: mark, add button, rates, overflow actions. */
+  /* Header: mark, add button, live rates, theme. Throttles, console and
+     settings move into the drawer's Tools group. */
   .header {
     gap: 8px;
     padding: 0 8px;
@@ -1727,8 +1764,27 @@ body {
   }
 
   .header .btn.primary span,
-  .rate-cluster {
+  .compact-hide {
     display: none;
+  }
+
+  /* Keep the transfer rates on screen — that is the one live number a phone
+     user checks — just without the chrome around them. */
+  .rate-cluster {
+    gap: 8px;
+    padding: 3px 8px;
+  }
+
+  .rate {
+    min-width: 0;
+    gap: 4px;
+  }
+
+  .rate-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    background: none;
   }
 
   .header-spacer {
@@ -1750,6 +1806,16 @@ body {
   .toolbar .divider,
   .toolbar .btn.sm span {
     display: none;
+  }
+
+  /* Sorting has no table headers to click in the card layout. */
+  .sort-select {
+    width: auto;
+    min-width: 92px;
+    flex: 0 1 128px;
+    height: 30px;
+    padding: 0 26px 0 9px;
+    font-size: 12px;
   }
 
   .search {
@@ -1966,6 +2032,7 @@ body {
     transform: translateY(12px);
   }
 }
+
 
 /* Touch pointers get larger targets and no hover-only affordances. */
 @media (pointer: coarse) {
@@ -2376,6 +2443,14 @@ td.ratio.poor {
   }
 }
 
+/* Phone-width: the level chip yields its header room to the live rates; the
+   progress dialog stays reachable from the drawer's Tools group. */
+@media (max-width: 480px) {
+  .level-chip {
+    display: none;
+  }
+}
+
 /* ============================ retro 8-bit ============================== */
 
 /*
@@ -2663,7 +2738,265 @@ td.ratio.poor {
   border-radius: 0;
 }
 
-/* ============================ theme picker ============================= */
+/* ============================ black metal ============================== */
+
+/*
+ * Trve and grim: flat black, bone lettering, blood accents, film grain and a
+ * closing vignette. The wordmark becomes an unreadable band logo (the bundled
+ * web/src/assets/cascade-blackmetal.png, bone ink on transparency), so this
+ * theme alone runs a taller header to house it. Torn sawtooth edges, jagged
+ * progress bars, serif headings carved wide. Like retro, it is all tokens plus
+ * shape overrides — components carry no per-theme markup.
+ */
+:root[data-theme='blackmetal'] {
+  --header-h: 92px;
+  --bg: #000000;
+  --bg-elevated: #0a0a0a;
+  --panel: rgba(255, 255, 255, 0.028);
+  --panel-strong: rgba(255, 255, 255, 0.06);
+  --border: #1f1f1f;
+  --border-strong: #3d3d3d;
+  --text: #e3ddcf;
+  --text-dim: #9d968a;
+  --text-faint: #5a554b;
+
+  --accent: #b3202e;
+  --accent-2: #5c636e;
+  --accent-soft: rgba(179, 32, 46, 0.16);
+  --accent-line: linear-gradient(180deg, #c22b38, #6e1018);
+
+  --down: #7f9cb8;
+  --up: #d4454f;
+  --ok: #8aa37d;
+  --warn: #c9a227;
+  --danger: #e63946;
+  --gold: #b08d3f;
+  --silver: #b6bcc4;
+  --bronze: #8a6a4f;
+
+  --radius: 0px;
+  --radius-sm: 0px;
+  --shadow: 0 18px 50px rgba(0, 0, 0, 0.95);
+  --shadow-sm: 0 3px 12px rgba(0, 0, 0, 0.8);
+}
+
+/* Cold light from above, darkness closing in from the edges. */
+:root[data-theme='blackmetal'] body::before {
+  background:
+    radial-gradient(1000px 460px at 50% -14%, rgba(163, 178, 194, 0.07), transparent 62%),
+    radial-gradient(135% 105% at 50% 55%, transparent 52%, rgba(0, 0, 0, 0.78) 100%);
+}
+
+/* Film grain. Pointer-events off so it never blocks the UI. */
+:root[data-theme='blackmetal'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  pointer-events: none;
+  opacity: 0.55;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.018) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.013) 0 1px, transparent 1px 2px);
+}
+
+/* The wordmark: an unreadable thorn-and-antler sigil, as demanded by the
+   genre. The name survives for screen readers (font-size 0) and the rtorrent
+   version line below stays legible for mortals. */
+:root[data-theme='blackmetal'] .brand-mark {
+  display: none;
+}
+
+:root[data-theme='blackmetal'] .brand-name {
+  width: 114px;
+  height: 75px;
+  font-size: 0;
+  filter: drop-shadow(0 0 8px rgba(227, 221, 207, 0.22));
+  background: url('./assets/cascade-blackmetal.png') center / contain no-repeat;
+}
+
+:root[data-theme='blackmetal'] .brand small {
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.34em;
+  font-size: 9px;
+}
+
+/* Carved lettering: headings go serif, uppercase and widely tracked. */
+:root[data-theme='blackmetal'] .modal-head h2,
+:root[data-theme='blackmetal'] .section > h3,
+:root[data-theme='blackmetal'] .side-group > h4,
+:root[data-theme='blackmetal'] .menu .heading,
+:root[data-theme='blackmetal'] .level-title,
+:root[data-theme='blackmetal'] .empty h3 {
+  font-family: 'Times New Roman', Georgia, serif;
+  text-transform: uppercase;
+  letter-spacing: 0.24em;
+  font-weight: 700;
+}
+
+:root[data-theme='blackmetal'] table.torrents thead th,
+:root[data-theme='blackmetal'] table.grid th,
+:root[data-theme='blackmetal'] .pill,
+:root[data-theme='blackmetal'] .tab,
+:root[data-theme='blackmetal'] .badge-title,
+:root[data-theme='blackmetal'] .level-chip-title,
+:root[data-theme='blackmetal'] .btn {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* No soft edges anywhere — several radii are hardcoded per component. */
+:root[data-theme='blackmetal'] .btn,
+:root[data-theme='blackmetal'] .toast,
+:root[data-theme='blackmetal'] .menu,
+:root[data-theme='blackmetal'] .menu button,
+:root[data-theme='blackmetal'] .tag,
+:root[data-theme='blackmetal'] .pill,
+:root[data-theme='blackmetal'] .tabs,
+:root[data-theme='blackmetal'] .tab,
+:root[data-theme='blackmetal'] .side-item,
+:root[data-theme='blackmetal'] .side-item .count,
+:root[data-theme='blackmetal'] .rate-cluster,
+:root[data-theme='blackmetal'] .rate-icon,
+:root[data-theme='blackmetal'] .level-chip,
+:root[data-theme='blackmetal'] .level-chip-num,
+:root[data-theme='blackmetal'] .level-ring,
+:root[data-theme='blackmetal'] .badge-medal,
+:root[data-theme='blackmetal'] .empty .glyph,
+:root[data-theme='blackmetal'] .check,
+:root[data-theme='blackmetal'] .switch .track,
+:root[data-theme='blackmetal'] .switch .track::after,
+:root[data-theme='blackmetal'] .bar,
+:root[data-theme='blackmetal'] .bar > i,
+:root[data-theme='blackmetal'] .spark,
+:root[data-theme='blackmetal'] .selection-pill,
+:root[data-theme='blackmetal'] .file-chip,
+:root[data-theme='blackmetal'] .burst-payload,
+:root[data-theme='blackmetal'] .dropzone,
+:root[data-theme='blackmetal'] .drop-card,
+:root[data-theme='blackmetal'] .confetti span {
+  border-radius: 0;
+}
+
+/* Raw surfaces: no glass blur; the header ends in a torn sawtooth edge. */
+:root[data-theme='blackmetal'] .header,
+:root[data-theme='blackmetal'] .overlay,
+:root[data-theme='blackmetal'] table.torrents thead th {
+  backdrop-filter: none;
+}
+
+:root[data-theme='blackmetal'] .header {
+  background: var(--bg-elevated);
+  border-bottom: none;
+}
+
+:root[data-theme='blackmetal'] .header::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -7px;
+  height: 7px;
+  pointer-events: none;
+  background:
+    linear-gradient(-45deg, var(--bg-elevated) 4px, transparent 0) 0 0 / 9px 7px repeat-x,
+    linear-gradient(45deg, var(--bg-elevated) 4px, transparent 0) 0 0 / 9px 7px repeat-x;
+  filter: drop-shadow(0 1px 0 var(--border-strong));
+}
+
+:root[data-theme='blackmetal'] table.torrents thead th {
+  background: var(--bg);
+}
+
+/* Double coffin frames instead of soft shadows. */
+:root[data-theme='blackmetal'] .modal,
+:root[data-theme='blackmetal'] .menu,
+:root[data-theme='blackmetal'] .toast {
+  border: 1px solid var(--border-strong);
+  outline: 1px solid #000;
+  box-shadow:
+    0 0 0 4px rgba(255, 255, 255, 0.045),
+    var(--shadow);
+}
+
+:root[data-theme='blackmetal'] .btn.primary {
+  background: var(--accent-line);
+  color: #efe8d8;
+  font-weight: 700;
+  border: 1px solid #000;
+  box-shadow: none;
+  text-shadow: none;
+}
+
+/* Jagged teeth instead of smooth progress fills. */
+:root[data-theme='blackmetal'] .bar {
+  height: 7px;
+  border: 1px solid var(--border-strong);
+  background: #050505;
+}
+
+:root[data-theme='blackmetal'] .bar > i {
+  background: repeating-linear-gradient(115deg, var(--accent) 0 6px, #4d0d14 6px 8px);
+}
+
+:root[data-theme='blackmetal'] .bar.done > i {
+  background: repeating-linear-gradient(115deg, #cfc7b4 0 6px, #6f695c 6px 8px);
+}
+
+:root[data-theme='blackmetal'] .bar.error > i {
+  background: repeating-linear-gradient(115deg, var(--danger) 0 6px, #57131a 6px 8px);
+}
+
+:root[data-theme='blackmetal'] .bar.idle > i {
+  background: repeating-linear-gradient(115deg, var(--text-faint) 0 6px, #262319 6px 8px);
+}
+
+:root[data-theme='blackmetal'] .bar.checking > i {
+  background: repeating-linear-gradient(115deg, var(--warn) 0 6px, #4d3c10 6px 8px);
+}
+
+/* Occult geometry: dots become diamonds. */
+:root[data-theme='blackmetal'] .side-dot,
+:root[data-theme='blackmetal'] .pill .dot {
+  border-radius: 0;
+  transform: rotate(45deg);
+}
+
+:root[data-theme='blackmetal'] .pill .dot {
+  width: 5px;
+  height: 5px;
+}
+
+:root[data-theme='blackmetal'] .side-item.active {
+  border-left: 3px solid var(--accent);
+}
+
+:root[data-theme='blackmetal'] .level-chip-num,
+:root[data-theme='blackmetal'] .level-ring,
+:root[data-theme='blackmetal'] .burst-payload {
+  color: #efe8d8;
+  box-shadow: none;
+}
+
+/* The logo stays on narrow screens (the plain wordmark normally leaves);
+   only the version caption goes, and the header gives back some height. */
+@media (max-width: 880px) {
+  :root[data-theme='blackmetal'] {
+    --header-h: 64px;
+  }
+  :root[data-theme='blackmetal'] .brand-text {
+    display: flex;
+  }
+  :root[data-theme='blackmetal'] .brand-text small {
+    display: none;
+  }
+  :root[data-theme='blackmetal'] .brand-name {
+    width: 84px;
+    height: 54px;
+  }
+}
+
 
 .theme-picker {
   position: relative;

@@ -37,13 +37,11 @@ export interface Torrent {
   peersConnected: number;
   peersNotConnected: number;
   peersComplete: number;
-  seedersConnected: number;
   trackerCount: number;
   addedAt: number;
   startedAt: number;
   finishedAt: number;
   createdAt: number;
-  tracker: string;
 }
 
 export interface BackendSummary {
@@ -76,6 +74,8 @@ export interface GlobalStatus {
   activeCount: number;
   dhtNodes: number;
   listenPort: number;
+  /** Free bytes on the download volume; null when the server cannot tell. */
+  diskFree: number | null;
   backend: BackendSummary;
   history: RateSample[];
 }
@@ -199,36 +199,62 @@ export interface Tracker {
   nextActivity: number;
 }
 
+/** Mirrors the server's GlobalSettings; everything is optional because the
+ *  backend only reports what this rtorrent build implements. */
 export interface Settings {
-  httpMaxHostConnections?: number;
-  blockOutgoing?: boolean;
-  dhtOverridePort?: number;
-  proxyGlobal?: string;
-  bindAddressV4?: string;
-  bindAddressV6?: string;
-  adviseRandomHashing?: boolean;
   downloadRate?: number;
   uploadRate?: number;
   maxUploads?: number;
-  maxUploadsGlobal?: number;
+  minUploads?: number;
   maxDownloads?: number;
+  minDownloads?: number;
+  maxUploadsGlobal?: number;
   maxDownloadsGlobal?: number;
+  maxUploadsDiv?: number;
+  maxDownloadsDiv?: number;
   maxPeers?: number;
   minPeers?: number;
   maxPeersSeed?: number;
   minPeersSeed?: number;
   maxOpenFiles?: number;
+  maxOpenSockets?: number;
   maxHttpOpen?: number;
+  httpMaxHostConnections?: number;
+  dnsCacheTimeout?: number;
   memoryMax?: number;
+  syncTimeout?: number;
+  preloadType?: number;
+  preloadMinSize?: number;
+  preloadMinRate?: number;
   portRange?: string;
   portRandom?: boolean;
+  portOpen?: boolean;
   dhtMode?: string;
   dhtPort?: number;
+  dhtOverridePort?: number;
   pex?: boolean;
   udpTrackers?: boolean;
+  trackersNumwant?: number;
   encryption?: string;
   preallocate?: boolean;
   checkHashOnCompletion?: boolean;
+  adviseRandomHashing?: boolean;
   directory?: string;
   sessionDirectory?: string;
+  bindAddress?: string;
+  bindAddressV4?: string;
+  bindAddressV6?: string;
+  localAddress?: string;
+  proxyAddress?: string;
+  proxyHttp?: string;
+  proxyGlobal?: string;
+  httpCapath?: string;
+  httpCacert?: string;
+  sslVerifyPeer?: boolean;
+  sslVerifyHost?: boolean;
+  xmlrpcSizeLimit?: number;
+  receiveBuffer?: number;
+  sendBuffer?: number;
+  maxFileSize?: number;
+  blockOutgoing?: boolean;
 }

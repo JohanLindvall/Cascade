@@ -25,10 +25,10 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
       .catch((error) => toast.error(error));
   }, [toast]);
 
-  const filtered = useMemo(() => {
+  const { shown, hidden } = useMemo(() => {
     const needle = filter.trim().toLowerCase();
     const list = needle ? methods.filter((name) => name.toLowerCase().includes(needle)) : methods;
-    return list.slice(0, 400);
+    return { shown: list.slice(0, 400), hidden: Math.max(0, list.length - 400) };
   }, [methods, filter]);
 
   const run = async () => {
@@ -101,12 +101,13 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
             onChange={(event) => setFilter(event.target.value)}
           />
           <div className="method-list">
-            {filtered.map((name) => (
+            {shown.map((name) => (
               <button key={name} onClick={() => void pick(name)} title={name}>
                 {name}
               </button>
             ))}
-            {filtered.length === 0 && (
+            {hidden > 0 && <div className="method-more">…{hidden} more — narrow the filter</div>}
+            {shown.length === 0 && (
               <div style={{ padding: 10, color: 'var(--text-faint)', fontSize: 12 }}>No matches</div>
             )}
           </div>

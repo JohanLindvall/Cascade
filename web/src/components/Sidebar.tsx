@@ -1,11 +1,15 @@
 import { bytes, rate } from '../format';
 import type { GlobalStatus, Torrent, TorrentStatus } from '../types';
-import { IconGlobe, IconList, IconTag } from './icons';
+import { IconGauge, IconGlobe, IconList, IconSettings, IconTag, IconTerminal, IconTrophy } from './icons';
 
 export interface Filter {
   kind: 'status' | 'label' | 'tracker';
   value: string;
 }
+
+/** Dialogs reachable from the drawer on compact layouts, where the header has
+ *  no room for their buttons. */
+export type ToolId = 'progress' | 'settings' | 'throttles' | 'console';
 
 interface SidebarProps {
   /** Extra classes — used to slide the drawer in on narrow viewports. */
@@ -15,6 +19,10 @@ interface SidebarProps {
   filter: Filter;
   onFilter: (filter: Filter) => void;
   trackerHosts: Record<string, string>;
+  /** Compact layout only: render the tools group and route its clicks here. */
+  compact?: boolean;
+  onTool?: (tool: ToolId) => void;
+  showProgress?: boolean;
 }
 
 const STATUS_ORDER: Array<{ value: string; label: string; color?: string }> = [
@@ -27,6 +35,8 @@ const STATUS_ORDER: Array<{ value: string; label: string; color?: string }> = [
   { value: 'checking', label: 'Checking', color: 'var(--accent-2)' },
   { value: 'error', label: 'Error', color: 'var(--danger)' },
 ];
+
+const MAX_TRACKER_ROWS = 14;
 
 export function matchesStatus(torrent: Torrent, value: string): boolean {
   if (value === 'all') return true;
@@ -41,6 +51,9 @@ export function Sidebar({
   filter,
   onFilter,
   trackerHosts,
+  compact,
+  onTool,
+  showProgress,
 }: SidebarProps) {
   const countFor = (value: string) => torrents.filter((t) => matchesStatus(t, value)).length;
 
@@ -110,7 +123,7 @@ export function Sidebar({
           <h4>Trackers</h4>
           {[...trackers.entries()]
             .sort((a, b) => b[1] - a[1])
-            .slice(0, 14)
+            .slice(0, MAX_TRACKER_ROWS)
             .map(([host, count]) => (
               <button
                 key={host}
@@ -123,6 +136,33 @@ export function Sidebar({
                 <span className="count">{count}</span>
               </button>
             ))}
+          {trackers.size > MAX_TRACKER_ROWS && (
+            <div className="side-more">…and {trackers.size - MAX_TRACKER_ROWS} more</div>
+          )}
+        </div>
+      )}
+
+      {compact && onTool && (
+        <div className="side-group">
+          <h4>Tools</h4>
+          {showProgress && (
+            <button className="side-item" onClick={() => onTool('progress')}>
+              <IconTrophy size={14} />
+              <span className="label">Progress &amp; badges</span>
+            </button>
+          )}
+          <button className="side-item" onClick={() => onTool('throttles')}>
+            <IconGauge size={14} />
+            <span className="label">Throttle groups</span>
+          </button>
+          <button className="side-item" onClick={() => onTool('console')}>
+            <IconTerminal size={14} />
+            <span className="label">API console</span>
+          </button>
+          <button className="side-item" onClick={() => onTool('settings')}>
+            <IconSettings size={14} />
+            <span className="label">rtorrent settings</span>
+          </button>
         </div>
       )}
 
@@ -144,6 +184,14 @@ export function Sidebar({
           <b>{bytes(totalUp)}</b>
         </div>
         <div>
+          <span>Down rate</span>
+          <b>{rate(status?.downRate ?? 0)}</b>
+        </div>
+        <div>
+          <span>Up rate</span>
+          <b>{rate(status?.upRate ?? 0)}</b>
+        </div>
+        <div>
           <span>Down limit</span>
           <b>{status?.downLimit ? rate(status.downLimit) : '∞'}</b>
         </div>
@@ -151,6 +199,12 @@ export function Sidebar({
           <span>Up limit</span>
           <b>{status?.upLimit ? rate(status.upLimit) : '∞'}</b>
         </div>
+        {status?.diskFree != null && (
+          <div>
+            <span>Free space</span>
+            <b>{bytes(status.diskFree)}</b>
+          </div>
+        )}
         <div>
           <span>Listen port</span>
           <b>{status?.listenPort || '—'}</b>

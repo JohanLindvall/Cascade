@@ -51,9 +51,12 @@ function describeProgress(item: Achievement): string {
 
 export function AchievementsDialog({
   game,
+  grim,
   onClose,
 }: {
   game: GameState;
+  /** Black metal theme: the copy is re-carved (see grim.ts). */
+  grim?: boolean;
   onClose: () => void;
 }) {
   const sorted = [...game.achievements].sort((a, b) => {
@@ -68,7 +71,7 @@ export function AchievementsDialog({
 
   return (
     <Modal
-      title="Progress"
+      title={grim ? 'The Grimoire' : 'Progress'}
       wide
       onClose={onClose}
       footer={
@@ -121,7 +124,7 @@ export function AchievementsDialog({
 
       <div className="section">
         <h3>
-          Badges — {game.unlocked} of {game.total}
+          {grim ? 'Sigils' : 'Badges'} — {game.unlocked} of {game.total}
         </h3>
         <div className="badge-grid">
           {sorted.map((item) => {

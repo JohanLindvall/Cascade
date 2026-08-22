@@ -11,7 +11,7 @@ import type {
 } from './types';
 
 // Resolve against the document base so the UI works under any WEB_BASE_PATH.
-const API_BASE = new URL('api/', document.baseURI).toString();
+export const API_BASE = new URL('api/', document.baseURI).toString();
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -20,11 +20,34 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    credentials: 'same-origin',
-    ...init,
-  });
+interface RequestInitEx extends RequestInit {
+  /** Abort the request after this long; a hung server must not stall polling. */
+  timeoutMs?: number;
+}
+
+function timeoutSignal(ms: number): AbortSignal | undefined {
+  // AbortSignal.timeout is baseline in every browser this UI targets, but a
+  // missing implementation should degrade to "no timeout", not a crash.
+  return typeof AbortSignal !== 'undefined' && 'timeout' in AbortSignal
+    ? AbortSignal.timeout(ms)
+    : undefined;
+}
+
+async function request<T>(path: string, init?: RequestInitEx): Promise<T> {
+  const { timeoutMs = 15_000, ...rest } = init ?? {};
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      credentials: 'same-origin',
+      signal: timeoutSignal(timeoutMs),
+      ...rest,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'TimeoutError') {
+      throw new ApiError(`no response after ${Math.round(timeoutMs / 1000)}s — server busy?`, 0);
+    }
+    throw new ApiError('cannot reach the Cascade server', 0);
+  }
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try {
@@ -47,6 +70,9 @@ function json<T>(path: string, method: string, body?: unknown): Promise<T> {
   });
 }
 
+/** Keep the query string bounded no matter how many torrents are loaded. */
+const TRACKER_CHUNK = 80;
+
 export const api = {
   state: () => request<StateResponse>('state'),
   capabilities: () => request<BackendSummary>('capabilities'),
@@ -54,15 +80,24 @@ export const api = {
   files: (hash: string) => request<TorrentFile[]>(`torrents/${hash}/files`),
   peers: (hash: string) => request<Peer[]>(`torrents/${hash}/peers`),
   trackers: (hash: string) => request<Tracker[]>(`torrents/${hash}/trackers`),
-  trackerHosts: (hashes: string[]) =>
-    hashes.length === 0
-      ? Promise.resolve({} as Record<string, string>)
-      : request<Record<string, string>>(`trackers?hashes=${hashes.join(',')}`),
+  trackerHosts: async (hashes: string[]) => {
+    const map: Record<string, string> = {};
+    for (let i = 0; i < hashes.length; i += TRACKER_CHUNK) {
+      const chunk = hashes.slice(i, i + TRACKER_CHUNK);
+      Object.assign(
+        map,
+        await request<Record<string, string>>(`trackers?hashes=${chunk.join(',')}`),
+      );
+    }
+    return map;
+  },
 
   upload: (form: FormData) =>
     request<{ added: number; errors: string[] }>('torrents/upload', {
       method: 'POST',
       body: form,
+      // Uploads carry payloads and wait for rtorrent to confirm each load.
+      timeoutMs: 120_000,
     }),
 
   action: (hash: string, action: string) =>

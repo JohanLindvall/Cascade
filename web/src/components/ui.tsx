@@ -21,6 +21,8 @@ interface ModalProps {
 }
 
 export function Modal({ title, onClose, children, footer, wide }: ModalProps) {
+  const ref = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
@@ -29,9 +31,21 @@ export function Modal({ title, onClose, children, footer, wide }: ModalProps) {
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Move focus into the dialog so keyboard users are not left behind it.
+  useEffect(() => {
+    ref.current?.focus();
+  }, []);
+
   return (
     <div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <div className={wide ? 'modal wide' : 'modal'} role="dialog" aria-modal="true">
+      <div
+        className={wide ? 'modal wide' : 'modal'}
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === 'string' ? title : undefined}
+        ref={ref}
+        tabIndex={-1}
+      >
         <div className="modal-head">
           <h2>{title}</h2>
           <button className="btn icon ghost" onClick={onClose} aria-label="Close">

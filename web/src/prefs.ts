@@ -6,6 +6,7 @@
  * first paint instead of flashing the default while the fetch is in flight. The
  * file is the source of truth and overwrites the cache once it arrives.
  */
+import { API_BASE } from './api';
 import type { ThemeMode } from './theme';
 
 export interface Preferences {
@@ -24,8 +25,8 @@ export const DEFAULT_PREFERENCES: Preferences = {
   seenBadges: [],
 };
 
+// Also read by the inline pre-paint script in index.html — keep them in step.
 const CACHE_KEY = 'cascade.prefs';
-const API_BASE = new URL('api/', document.baseURI).toString();
 
 export function readCache(): Preferences {
   try {
@@ -69,6 +70,8 @@ export function savePreferences(patch: Partial<Preferences>, current: Preference
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
+      // Let a save fired just before the tab closes still reach the server.
+      keepalive: true,
     }).catch(() => {
       // Offline or unauthenticated: the cache keeps the UI consistent.
     });
