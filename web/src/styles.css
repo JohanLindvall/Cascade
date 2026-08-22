@@ -217,11 +217,14 @@ textarea {
   background: var(--panel);
 }
 
+/* Fixed, not minimum: the readout changes text every poll, and a rate growing
+   from "0 B/s" to "1023.9 MiB/s" would otherwise slide the whole cluster. */
 .rate {
   display: flex;
   align-items: center;
   gap: 7px;
-  min-width: 104px;
+  width: 126px;
+  flex: none;
 }
 
 .rate-icon {
@@ -733,10 +736,59 @@ th.col-check {
   padding-right: 0;
 }
 
-td.col-name {
-  max-width: 0;
-  width: 42%;
+/*
+ * Column widths are fixed, not derived from content.
+ *
+ * Left to size themselves the columns follow their text, and nearly all of it
+ * changes on every poll — an ETA ticking from "2m 54s" to "2m 9s" is one
+ * character narrower, the name column absorbs the difference, and the whole
+ * table steps sideways twice a second. table-layout: fixed takes content out
+ * of the calculation entirely.
+ *
+ * The widths are percentages rather than pixels so they scale down with the
+ * window instead of overflowing it; the columns that drop out at each
+ * breakpoint give their share back to the ones that remain.
+ */
+table.torrents {
+  table-layout: fixed;
 }
+
+th.col-size {
+  width: 7%;
+}
+th.col-progress {
+  width: 14%;
+}
+th.col-status {
+  width: 11%;
+}
+th.col-peers {
+  width: 6%;
+}
+th.col-down,
+th.col-up {
+  width: 8.5%;
+}
+th.col-ratio {
+  width: 5%;
+}
+th.col-eta {
+  width: 6.5%;
+}
+/* Wide enough for the longest relative time ("365d 23h ago"). */
+th.col-added {
+  width: 9%;
+}
+
+/* Fixed columns clip rather than stretch, so nothing may spill out of one. */
+table.torrents td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* No width: the name column absorbs whatever the pinned columns leave. Under
+   table-layout: fixed the cell clips on its own, so the old max-width: 0
+   ellipsis trick is no longer needed. */
 
 .name-cell {
   display: flex;
@@ -875,7 +927,7 @@ td.col-name {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 118px;
+  min-width: 0;
 }
 
 .progress-cell .bar {
@@ -884,8 +936,17 @@ td.col-name {
 
 .progress-cell .num {
   width: 46px;
+  flex: none;
   text-align: right;
   color: var(--text-dim);
+}
+
+/* Narrow desktop: the bar alone carries the progress, the percentage is in the
+   detail pane anyway. Keeps the fixed progress column from clipping its bar. */
+@media (max-width: 1000px) {
+  table.torrents .progress-cell .num {
+    display: none;
+  }
 }
 
 /* status pill */
@@ -1163,6 +1224,9 @@ table.grid {
   border-collapse: separate;
   border-spacing: 0;
   font-size: 12.2px;
+  /* Same reason as the torrent table: peer and tracker figures change every
+     couple of seconds, and content-sized columns would twitch with them. */
+  table-layout: fixed;
 }
 
 table.grid th {
@@ -1776,7 +1840,7 @@ body {
   }
 
   .rate {
-    min-width: 0;
+    width: 108px;
     gap: 4px;
   }
 
@@ -2010,6 +2074,12 @@ body {
   font-size: 11.5px;
 }
 
+/* Give the live rates a fixed slot so the stats after them stop shuffling
+   every poll. */
+.card-stats .rate-num {
+  min-width: 106px;
+}
+
 .card-tags {
   display: flex;
   align-items: center;
@@ -2105,11 +2175,13 @@ body {
   flex: none;
 }
 
+/* Wide enough for the longest rank name, and fixed so that levelling up does
+   not shunt everything beside it sideways. */
 .level-chip-body {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 74px;
+  width: 118px;
 }
 
 .level-chip-title {
@@ -2118,6 +2190,9 @@ body {
   letter-spacing: 0.01em;
   color: var(--text-dim);
   line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .level-chip-bar {

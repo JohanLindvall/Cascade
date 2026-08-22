@@ -189,7 +189,7 @@ export function DetailPanel({ torrent, onClose, onHeightChange, height }: Detail
             <thead>
               <tr>
                 <th>File</th>
-                <th style={{ textAlign: 'right' }}>Size</th>
+                <th style={{ width: 96, textAlign: 'right' }}>Size</th>
                 <th style={{ width: 170 }}>Progress</th>
                 <th style={{ width: 130 }}>Priority</th>
               </tr>
@@ -246,17 +246,20 @@ export function DetailPanel({ torrent, onClose, onHeightChange, height }: Detail
           <table className="grid">
             <thead>
               <tr>
-                <th>Address</th>
+                <th style={{ width: 160 }}>Address</th>
                 <th>Client</th>
                 <th style={{ width: 140 }}>Progress</th>
-                <th style={{ textAlign: 'right' }}>Down</th>
-                <th style={{ textAlign: 'right' }}>Up</th>
-                <th style={{ textAlign: 'right' }} title="What this peer is pulling from the swarm">
+                <th style={{ width: 92, textAlign: 'right' }}>Down</th>
+                <th style={{ width: 92, textAlign: 'right' }}>Up</th>
+                <th
+                  style={{ width: 92, textAlign: 'right' }}
+                  title="What this peer is pulling from the swarm"
+                >
                   Swarm
                 </th>
-                <th style={{ textAlign: 'right' }}>Downloaded</th>
-                <th style={{ textAlign: 'right' }}>Uploaded</th>
-                <th>Flags</th>
+                <th style={{ width: 100, textAlign: 'right' }}>Downloaded</th>
+                <th style={{ width: 100, textAlign: 'right' }}>Uploaded</th>
+                <th style={{ width: 150 }}>Flags</th>
               </tr>
             </thead>
             <tbody>
@@ -340,17 +343,20 @@ export function DetailPanel({ torrent, onClose, onHeightChange, height }: Detail
             <thead>
               <tr>
                 <th>URL</th>
-                <th>Type</th>
-                <th>State</th>
-                <th style={{ textAlign: 'right' }}>Seeders</th>
-                <th style={{ textAlign: 'right' }}>Leechers</th>
-                <th style={{ textAlign: 'right' }}>Downloaded</th>
-                <th style={{ textAlign: 'right' }} title="Peers returned by the last announce">
+                <th style={{ width: 64 }}>Type</th>
+                <th style={{ width: 132 }}>State</th>
+                <th style={{ width: 80, textAlign: 'right' }}>Seeders</th>
+                <th style={{ width: 84, textAlign: 'right' }}>Leechers</th>
+                <th style={{ width: 100, textAlign: 'right' }}>Downloaded</th>
+                <th
+                  style={{ width: 76, textAlign: 'right' }}
+                  title="Peers returned by the last announce"
+                >
                   Peers
                 </th>
-                <th>Next announce</th>
-                <th style={{ textAlign: 'right' }}>OK / fail</th>
-                <th>Enabled</th>
+                <th style={{ width: 116 }}>Next announce</th>
+                <th style={{ width: 88, textAlign: 'right' }}>OK / fail</th>
+                <th style={{ width: 72 }}>Enabled</th>
               </tr>
             </thead>
             <tbody>

@@ -255,7 +255,15 @@ rates stay in the header in a slimmed form. Long-press opens the context menu on
 synthesized click that follows the press is deliberately swallowed in `TorrentCard`, or it would
 close the menu the instant it opened.
 
-Two things are easy to get wrong here:
+**Nothing that updates on the poll may size its own container.** Both tables run
+`table-layout: fixed` with per-column widths (`th.col-*`), the header's rate readouts and level
+chip have fixed widths, and the card layout's rate spans have a `min-width` — because an ETA
+ticking from `2m 54s` to `2m 9s` is one character narrower, and with content-sized columns the
+name column absorbs the difference and the whole table steps sideways twice a second. Column
+widths are percentages so narrow windows squeeze rather than scroll; check with
+`getBoundingClientRect()` on the `th`s before and after a value change, not by eye.
+
+Two other things are easy to get wrong here:
 
 - **Button labels must be wrapped in a `<span>`.** The compact rules hide labels to leave icons;
   a bare text node inside a button cannot be targeted.

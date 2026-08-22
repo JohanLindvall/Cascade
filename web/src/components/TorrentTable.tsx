@@ -35,14 +35,20 @@ interface Column {
   align?: 'right';
 }
 
+/**
+ * Every column carries a class so styles.css can pin its width. Without that
+ * the browser sizes columns from their content, and since most of these change
+ * text on every poll ("2m 54s" becomes "2m 9s") the whole table shifts
+ * sideways twice a second.
+ */
 const COLUMNS: Column[] = [
-  { key: 'name', label: 'Name' },
-  { key: 'size', label: 'Size', align: 'right' },
-  { key: 'progress', label: 'Progress' },
-  { key: 'status', label: 'Status' },
+  { key: 'name', label: 'Name', className: 'col-name' },
+  { key: 'size', label: 'Size', align: 'right', className: 'col-size' },
+  { key: 'progress', label: 'Progress', className: 'col-progress' },
+  { key: 'status', label: 'Status', className: 'col-status' },
   { key: 'peers', label: 'Peers', align: 'right', className: 'col-peers' },
-  { key: 'downRate', label: 'Down', align: 'right' },
-  { key: 'upRate', label: 'Up', align: 'right' },
+  { key: 'downRate', label: 'Down', align: 'right', className: 'col-down' },
+  { key: 'upRate', label: 'Up', align: 'right', className: 'col-up' },
   { key: 'ratio', label: 'Ratio', align: 'right', className: 'col-ratio' },
   { key: 'eta', label: 'ETA', align: 'right', className: 'col-eta' },
   { key: 'addedAt', label: 'Added', align: 'right', className: 'col-added' },
