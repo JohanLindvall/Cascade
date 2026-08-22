@@ -8,7 +8,8 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
 
 ## Highlights
 
-- **One container, batteries included** — rtorrent, its config, and the UI. Nothing else to run.
+- **One container, batteries included** — rtorrent, its config, and the UI. Nothing else to run,
+  published for amd64 and arm64, and buildable from source in one command.
 - **rtorrent 0.16.20, compiled from source** — the version in the image is exactly the upstream
   tag you asked for, not whatever a distro packaged. Any other tag builds with one build arg.
 - **Works across backend versions** — the server probes `system.listMethods` on connect and picks
@@ -35,36 +36,83 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
 
 ## Quick start
 
-```bash
-docker build -t cascade .
+Images are published to GitHub Container Registry for **linux/amd64** and **linux/arm64**
+(so a Raspberry Pi 4/5 or an Apple-silicon Docker host works the same as an x86 server):
 
+```bash
 docker run -d --name cascade \
-  -p 8080:8080 -p 50000:50000 \
+  -p 8080:8080 -p 50000:50000 -p 50000:50000/udp \
   -v /srv/downloads:/downloads \
   -v /srv/cascade-config:/config \
+  -e PUID=1000 -e PGID=1000 \
   -e RT_DOWNLOAD_RATE=5120 \
   -e RT_UPLOAD_RATE=1024 \
   -e WEB_USER=admin -e WEB_PASS=change-me \
-  cascade
+  ghcr.io/johanlindvall/cascade:latest
 ```
 
 Open <http://localhost:8080>.
 
-Or let the Makefile do it: `make run` starts the container against `./data`, waits for it to
-answer, and opens a browser.
+Two volumes matter: `/config` holds rtorrent's session, its log and
+`cascade-state.json` (preferences, progress, throttle groups) and should be persistent;
+`/downloads` is where the data lands. Port 50000 is the peer port — publish it on TCP **and** UDP
+so DHT works — and `PUID`/`PGID` should match the owner of your download directory.
+
+Stop it with `docker stop cascade` rather than `docker rm -f`: rtorrent only releases its session
+lock on a clean shutdown.
+
+### Image tags
+
+Every push to `main` is published, so tags are cheap and specific:
+
+| Tag | Points at |
+| --- | --- |
+| `latest` | The newest published build |
+| `v0.1.42` | One exact release, built against the default rtorrent |
+| `v0.1.42-0.16.20` | The same release, naming the rtorrent version explicitly |
+
+The `-<rtorrent-version>` suffix is always present so that builds against other rtorrent releases
+can be published under the same scheme later. Pin `vX.Y.Z-<rtorrent>` for anything you care about
+keeping still; `latest` moves with `main`.
 
 ```bash
-make build && make run
+docker pull ghcr.io/johanlindvall/cascade:v0.1.42-0.16.20   # pin a release
+docker pull ghcr.io/johanlindvall/cascade:latest            # follow main
 ```
 
-Or with compose:
+> GitHub creates a new container package as **private**, whoever owns it. If pulls come back
+> `denied`, either `docker login ghcr.io` with a token that can read packages, or flip the package
+> to public once under **Packages → cascade → Package settings → Change visibility**.
+
+Upgrading is a pull and a re-create; all state lives in the two volumes:
+
+```bash
+docker pull ghcr.io/johanlindvall/cascade:latest
+docker stop cascade && docker rm cascade
+docker run -d --name cascade ...   # same flags as before
+```
+
+### With compose
+
+`docker-compose.yml` in this repository uses the published image and carries the common settings:
 
 ```bash
 docker compose up -d
 ```
 
+### Building it yourself
+
+Nothing here needs the published image — the whole thing builds from source, and that is also how
+you get an rtorrent version other than the default:
+
+```bash
+docker build -t cascade .
+make build && make run     # build, run against ./data, open a browser
+```
+
 ## Choosing the rtorrent version
 
+The published images carry the default rtorrent; for any other version, build it yourself.
 rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.20**:
 
 ```bash
@@ -414,9 +462,16 @@ make attach                 # attach to rtorrent's curses UI
 make logs / shell / stop
 ```
 
-CI (GitHub Actions) runs the same checks on every push: a fast typecheck of both TypeScript
-halves, then a full image build with an API smoke test. A compatibility matrix against rtorrent
-0.9.8 and 0.15.2 can be run from the Actions tab (**Run workflow → full-matrix**).
+CI (GitHub Actions) runs the same checks: a fast typecheck of both TypeScript halves on every
+push and pull request, plus a full image build with an API smoke test on pull requests. A
+compatibility matrix against rtorrent 0.9.8 and 0.15.2 can be run from the Actions tab
+(**Run workflow → full-matrix**).
+
+Pushing to `main` releases. The release workflow tags the commit `v0.1.<run number>`, builds the
+image for amd64 and arm64 on native runners, boots each one and probes its API, and only then
+joins them into the tagged manifests described under [Image tags](#image-tags) — so a build that
+does not run never claims a tag. Pushing a `vX.Y.Z` tag yourself publishes under that name
+instead of an auto-generated one.
 
 `make run` waits for `/healthz` before launching the browser, so it opens on a working page rather
 than a connection error. The launcher is `xdg-open` (`BROWSER=` overrides it, `open` is used as a

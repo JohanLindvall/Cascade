@@ -1,11 +1,14 @@
 services:
   cascade:
-    build:
-      context: .
-      args:
-        # Any upstream tag; libtorrent is pinned to match.
-        RTORRENT_VERSION: "0.16.20"
-    image: cascade
+    # Multi-arch (amd64/arm64). Pin a release — cascade:vX.Y.Z-0.16.20 — if you
+    # would rather not follow main. Comment this out and uncomment `build` to
+    # compile it yourself, which is also how you pick another rtorrent version.
+    image: ghcr.io/johanlindvall/cascade:latest
+    # build:
+    #   context: .
+    #   args:
+    #     # Any upstream tag; libtorrent is pinned to match.
+    #     RTORRENT_VERSION: "0.16.20"
     container_name: cascade
     restart: unless-stopped
     ports:

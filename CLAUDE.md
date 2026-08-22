@@ -260,5 +260,14 @@ Two things are easy to get wrong here:
   and it pauses entirely while the tab is hidden.
 - `/healthz` is deliberately outside Basic auth (container healthchecks and orchestrator probes
   must work with `WEB_USER`/`WEB_PASS` set) and reveals nothing but liveness.
-- CI (`.github/workflows/ci.yml`) typechecks both halves and smoke-tests the built image; the
-  0.9.8/0.15.2 compat matrix runs on manual dispatch.
+- CI (`.github/workflows/ci.yml`) typechecks both halves and smoke-tests the built image on pull
+  requests; the 0.9.8/0.15.2 compat matrix runs on manual dispatch. Main pushes skip the smoke
+  job because `release.yml` builds and probes those commits on both architectures anyway.
+- `release.yml` publishes to GHCR. Every push to main is a release: it tags the commit
+  `v0.1.<run_number>` and publishes `cascade:<version>-<rtorrent-version>` (plus the bare
+  `<version>` and `latest` for `DEFAULT_RTORRENT`); pushing a `vX.Y.Z` tag publishes under that
+  name instead. Builds run per platform on native amd64/arm64 runners, are pushed **by digest**,
+  smoke-tested on their own architecture, and only then joined into a tagged manifest — so a
+  broken or half-built release never claims a tag. The tag the workflow pushes does not
+  re-trigger it (GitHub does not run workflows for refs created with `GITHUB_TOKEN`), which is
+  why tagging lives in that workflow rather than a separate one.

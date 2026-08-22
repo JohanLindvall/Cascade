@@ -1,0 +1,216 @@
+# Publish multi-arch images to GHCR.
+#
+# Every push to main is a release: the workflow tags the commit (v0.1.<run>)
+# and publishes that tag. Pushing a vX.Y.Z tag yourself publishes it under that
+# name instead. Images are built for linux/amd64 and linux/arm64 on native
+# runners — arm64 under QEMU would spend an hour emulating a C++ compile — and
+# joined into one manifest per rtorrent version.
+#
+# Image tags are <version>-<rtorrent-version>, e.g. v1.2.0-0.16.20. The build
+# of DEFAULT_RTORRENT additionally answers to the bare <version> and :latest.
+#
+# The tag this workflow pushes does not re-trigger it: GitHub deliberately does
+# not run workflows for refs created with GITHUB_TOKEN, which is why the tag is
+# created here rather than in a separate workflow.
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  # The rtorrent build that also carries the bare <version> and :latest tags.
+  DEFAULT_RTORRENT: 0.16.20
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # pushes the tag for main builds
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the version and image name
+        id: resolve
+        run: |
+          set -eu
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            version="${{ github.ref_name }}"
+          else
+            # run_number is monotonic per workflow, so auto tags never collide
+            # or go backwards. Explicit vX.Y.Z tags are the real releases.
+            version="v0.1.${{ github.run_number }}"
+          fi
+          # GHCR rejects uppercase in image names; the owner login has it.
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "version=$version"
+            echo "image=${REGISTRY}/${owner}/cascade"
+          } >> "$GITHUB_OUTPUT"
+          echo "publishing ${REGISTRY}/${owner}/cascade:${version}-*"
+
+      - name: Tag the commit
+        if: github.ref_type != 'tag'
+        run: |
+          set -eu
+          version='${{ steps.resolve.outputs.version }}'
+          if git rev-parse "$version" >/dev/null 2>&1; then
+            echo "$version already exists — reusing it (re-run?)"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$version" -m "Cascade $version"
+          git push origin "$version"
+
+  build:
+    name: ${{ matrix.platform }} · rtorrent ${{ matrix.rtorrent }}
+    needs: version
+    runs-on: ${{ matrix.platform == 'linux/arm64' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # Adding a version here publishes another -<rtorrent-version> tag.
+        rtorrent: ['0.16.20']
+        platform: [linux/amd64, linux/arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Name this platform
+        run: echo "PLATFORM_TAG=${PLATFORM//\//-}" >> "$GITHUB_ENV"
+        env:
+          PLATFORM: ${{ matrix.platform }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed by digest only: tags are attached to the merged manifest in the
+      # publish job, after both platforms have been built and smoke-tested, so
+      # a half-built or broken release never claims a tag.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          build-args: RTORRENT_VERSION=${{ matrix.rtorrent }}
+          # image.source is also what links the GHCR package back to this repo.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.description=A modern web UI for rtorrent, with rtorrent ${{ matrix.rtorrent }} built in
+            org.opencontainers.image.version=${{ needs.version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          # An attestation manifest would join the index and break the merge.
+          provenance: false
+          cache-from: type=gha,scope=${{ matrix.rtorrent }}-${{ env.PLATFORM_TAG }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.rtorrent }}-${{ env.PLATFORM_TAG }}
+          outputs: type=image,name=${{ needs.version.outputs.image }},push-by-digest=true,name-canonical=true,push=true
+
+      # Runs natively on this platform's own runner, so the arm64 image is
+      # genuinely exercised on arm64. A build that fails here never reaches the
+      # publish job, so no tag is ever created for an image that will not boot.
+      - name: Verify this build runs
+        run: |
+          set -eu
+          ref='${{ needs.version.outputs.image }}@${{ steps.build.outputs.digest }}'
+          docker run -d --name verify -p 18080:8080 -e RT_DHT=off "$ref"
+          for _ in $(seq 1 90); do
+            curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18080/healthz | grep '"ok":true'
+          curl -fsS http://127.0.0.1:18080/api/capabilities | grep -o '"clientVersion":"[^"]*"'
+          curl -fsS http://127.0.0.1:18080/api/state >/dev/null
+          curl -fsS http://127.0.0.1:18080/ | grep -o '<title>[^<]*</title>'
+          docker stop -t 20 verify >/dev/null
+
+      - name: Container log on failure
+        if: failure()
+        run: docker logs verify 2>&1 | tail -50 || true
+
+      - name: Export the digest
+        run: |
+          set -eu
+          mkdir -p /tmp/digests
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.rtorrent }}-${{ env.PLATFORM_TAG }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish rtorrent ${{ matrix.rtorrent }}
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        # Keep in step with the build matrix above (Actions has no anchors).
+        rtorrent: ['0.16.20']
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ matrix.rtorrent }}-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Join the per-platform builds into one manifest
+        working-directory: /tmp/digests
+        run: |
+          set -eu
+          image='${{ needs.version.outputs.image }}'
+          version='${{ needs.version.outputs.version }}'
+          rtorrent='${{ matrix.rtorrent }}'
+          set -- --tag "${image}:${version}-${rtorrent}"
+          if [ "$rtorrent" = "$DEFAULT_RTORRENT" ]; then
+            set -- "$@" --tag "${image}:${version}" --tag "${image}:latest"
+          fi
+          # One digest file per platform, named by the digest the build pushed.
+          for digest in *; do
+            set -- "$@" "${image}@sha256:${digest}"
+          done
+          docker buildx imagetools create "$@"
+
+      - name: Show what was published
+        run: |
+          set -eu
+          ref='${{ needs.version.outputs.image }}:${{ needs.version.outputs.version }}-${{ matrix.rtorrent }}'
+          docker buildx imagetools inspect "$ref"
+          {
+            echo "### \`$ref\`"
+            echo '```'
+            echo "docker pull $ref"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

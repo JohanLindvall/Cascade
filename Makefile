@@ -105,8 +105,8 @@ shell: ## Open a shell inside the container
 attach: ## Attach to rtorrent's curses UI (detach with ctrl-a d)
 	docker exec -it $(CONTAINER) sh -c 'SCREENDIR=/run/rtorrent/screen screen -r rtorrent'
 
-up: ## Start via docker compose
-	docker compose up -d --build
+up: ## Start via docker compose (uses the published image)
+	docker compose up -d
 
 down: ## Stop the compose stack
 	docker compose down
