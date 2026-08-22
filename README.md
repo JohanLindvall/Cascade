@@ -49,6 +49,7 @@ docker run \
   -e TZ=Europe/Stockholm \
   -e WEB_USER=jl \
   -e WEB_PASS=abc123 \
+  -e RT_PORT_RANGE=50000-50000 \
   -p 8080:8080 \
   -p 50000:50000 \
   -p 50000:50000/udp \
