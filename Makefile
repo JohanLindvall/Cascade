@@ -28,7 +28,7 @@ REF = $(IMAGE):$(TAG)
 
 .DEFAULT_GOAL := help
 .PHONY: help build matrix run open stop logs shell attach rtorrent-log \
-        smoke up down clean distclean dev version
+        smoke clean distclean dev version
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nCascade\n\nUsage: make \033[36m<target>\033[0m [VAR=value]\n\nTargets:\n"} \
@@ -104,12 +104,6 @@ shell: ## Open a shell inside the container
 
 attach: ## Attach to rtorrent's curses UI (detach with ctrl-a d)
 	docker exec -it $(CONTAINER) sh -c 'SCREENDIR=/run/rtorrent/screen screen -r rtorrent'
-
-up: ## Start via docker compose (uses the published image)
-	docker compose up -d
-
-down: ## Stop the compose stack
-	docker compose down
 
 ##@ Develop
 

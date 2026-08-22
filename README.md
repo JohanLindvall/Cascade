@@ -101,14 +101,6 @@ docker stop cascade && docker rm cascade
 docker run -d --name cascade ...   # same flags as before
 ```
 
-### With compose
-
-`docker-compose.yml` in this repository uses the published image and carries the common settings:
-
-```bash
-docker compose up -d
-```
-
 ### Building it yourself
 
 Nothing here needs the published image — the whole thing builds from source, and that is also how

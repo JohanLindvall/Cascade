@@ -15,14 +15,25 @@ server/src/
   rtorrent.ts     request queue + multicall helpers
   capabilities.ts probes system.listMethods, picks a command dialect
   model.ts        rtorrent fields -> Torrent/File/Peer/Tracker
-  settings.ts     every global setting as one declarative table (see below)
+  settings.ts     every rtorrent global setting as one declarative table
+  options.ts      every environment variable as one catalog; renders --help
+  optionsdoc.ts   dev/CI only: checks that catalog against the container + README
+  config.ts       env -> Config, defaults taken from options.ts
   service.ts      all application behaviour
+  store.ts        the one JSON state file
   achievements.ts badge definitions, XP and level curve
+  torrentfile.ts  bencode parse: reject non-torrents, derive the info hash
+  prefs.ts        UI preference shape and validation
+  auth.ts         optional HTTP Basic
+  errors.ts       HttpError
   api.ts          REST routes + /RPC2 passthrough
-  index.ts        express wiring, static SPA, auth, error mapping
-web/src/          React UI; components/ + one styles.css of design tokens
-docker/entrypoint.sh  renders rtorrent.rc, supervises rtorrent + node
-.github/workflows/ci.yml  typecheck + Docker build + API smoke on every push
+  index.ts        express wiring, static SPA, auth, error mapping, --help
+web/src/          React UI: components/, one styles.css of design tokens,
+                  theme.ts (themes + effect flavors), grim.ts (black metal
+                  copy), assets/ (the retro and black metal wordmarks)
+docker/entrypoint.sh      renders rtorrent.rc, supervises rtorrent + node
+.github/workflows/ci.yml  typecheck, options check, Docker build + API smoke
+.github/workflows/release.yml  multi-arch GHCR publish, tags every main push
 ```
 
 There are no runtime dependencies beyond express and multer on the server, and react on the
@@ -36,7 +47,8 @@ No local Node is needed — the toolchain lives in the image:
 docker build -t cascade:test .        # typechecks server and web, fails the build on errors
 ```
 
-Both `tsc` runs are strict (`noUnusedLocals` on the web side), so a build is a real typecheck.
+Both `tsc` runs are strict, with `noUnusedLocals` and `noUnusedParameters` on each side, so a
+build is a real typecheck.
 
 Run it and exercise the API:
 
@@ -55,7 +67,16 @@ Old tags need `-include algorithm -include cstdint` to compile against a current
 Dockerfile passes that to every source build.
 
 A full end-to-end transfer can be staged with two containers and a throwaway tracker: seed a real
-file from one, download it in the other, and watch progress, peers and rates in the UI.
+file from one, download it in the other, and watch progress, peers and rates in the UI. A
+completion — and so the finish animation — can be forced without a swarm: put the payload in
+`/downloads` first, then upload its `.torrent`, and rtorrent's hash check completes it outright.
+
+**Check UI work by looking at it.** A build only proves it typechecks; CSS regressions do not
+fail a build. Boot the image, seed a few torrents through the API, set the theme with
+`PATCH /api/prefs`, and screenshot with headless Chrome at desktop and 390px widths. For anything
+that needs interaction or measurement (an open drawer, a dialog, whether a column moved between
+polls) drive the same browser over the DevTools protocol — `--remote-debugging-port` — and assert
+on `getBoundingClientRect()` rather than on how it looks.
 
 ## rtorrent quirks that cost time to discover
 
@@ -64,9 +85,9 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
 1. **Commands take a target argument.** Global setters are
    `throttle.global_up.max_rate.set("", value)`, not `(value)`. Passing the value alone makes
    rtorrent read it as a target and fault with `-503 Wrong object type` (or `-501 Could not find
-   info-hash`). `service.updateSettings`'s `push()` helper adds the `''` for you. Getters are fine
-   with no arguments. Per-torrent commands take the info hash as that target, and file/tracker
-   commands take `"<hash>:f<index>"` / `"<hash>:t<index>"`.
+   info-hash`). `settingEntries` in `settings.ts` adds the `''` for you. Getters are fine with no
+   arguments. Per-torrent commands take the info hash as that target, and file/tracker commands
+   take `"<hash>:f<index>"` / `"<hash>:t<index>"`.
 
 2. **`protocol.encryption.set` takes one argument per flag** — `("", "allow_incoming",
    "try_outgoing")`, not one comma-joined string.
@@ -196,6 +217,11 @@ a glyph in `ThemePicker.tsx`, and the `THEMES` allowlist in the server's `prefs.
 An inline script in `index.html` applies the cached theme before first paint (no dark flash for
 light-theme users) and `applyTheme` mirrors the page background into `<meta name="theme-color">`;
 both must stay in step with the theme list.
+
+Retro and black metal each replace the wordmark with an image from `web/src/assets/`, swapped in
+by CSS on `.brand-name` — a generated pixel grid for retro, a deliberately illegible band logo for
+black metal, which is also why that theme runs a taller header. They are intentional, not
+placeholders; black metal's was supplied by the user, so regenerate it only on request.
 
 ## Adding torrents
 
