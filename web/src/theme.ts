@@ -35,6 +35,17 @@ const THEME_COLORS: Record<ResolvedTheme, string> = {
   blackmetal: '#000000',
 };
 
+/** How the celebration effects (drop pickup, download finished) present
+ *  themselves: the default party look, black metal's grim rites, or retro's
+ *  8-bit arcade. Purely visual — the triggers and timings stay shared. */
+export type FxFlavor = 'party' | 'grim' | 'arcade';
+
+export function fxFlavor(resolved: ResolvedTheme): FxFlavor {
+  if (resolved === 'blackmetal') return 'grim';
+  if (resolved === 'retro') return 'arcade';
+  return 'party';
+}
+
 export function applyTheme(mode: ThemeMode): ResolvedTheme {
   const resolved = resolveTheme(mode);
   document.documentElement.dataset.theme = resolved;

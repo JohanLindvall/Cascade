@@ -23,8 +23,8 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
 - **Drop torrents anywhere** — drag `.torrent` files onto the window and they are added and
   started on the spot, no dialog in the way.
 - **Lightly gamified** — a level and a set of badges earned from real transfer totals, with a
-  confetti burst when a download lands (falling ash, embers and distant lightning in the black
-  metal theme). Off with one environment variable if it is not for you.
+  confetti burst when a download lands (stepped pixel rain in retro; falling ash, embers and
+  distant lightning in black metal). Off with one environment variable if it is not for you.
 - **Five themes** — system, light, dark, a retro 8-bit CRT mode, and a grim, frostbitten black
   metal mode. Preferences are stored on the server, so they follow the install rather than the
   browser.
@@ -247,9 +247,10 @@ URLs can be dragged in the same way, straight from another browser tab.
 
 Dropped files are added and started immediately — no dialog, no questions. The confirmation is a
 pickup: a shockwave and sparks at the point of impact, a `+N torrents` score, and the payload
-flying up into the Add button, which takes the hit. In the retro theme the whole thing goes
-blocky; in black metal the drop becomes a summoning — a sigil cast at the impact point, shards
-of ash and ember that fall as they die, and the score counted in offerings.
+flying up into the Add button, which takes the hit. In the retro theme the pickup goes full
+arcade — pixel rings, an eight-way pixel burst and points on the score; in black metal the drop
+becomes a summoning — a sigil cast at the impact point, shards of ash and ember that fall as
+they die, and the score counted in offerings.
 
 ![Drop pickup](docs/screenshot-drop-burst.png)
 
@@ -283,8 +284,9 @@ backend exposes with its help text.
 ![API console](docs/screenshot-console.png)
 
 Themes are chosen from the header: **System** (follows the OS), **Light**, **Dark**, a
-**Retro 8-bit** mode with CRT phosphor colours, hard pixel edges, stepped progress bars and
-scanlines — and **Black Metal**: flat black, bone lettering, blood accents, film grain, torn
+**Retro 8-bit** mode with CRT phosphor colours, hard pixel edges, stepped progress bars,
+scanlines and a pixel-art arcade wordmark — and **Black Metal**: flat black, bone lettering,
+blood accents, film grain, torn
 sawtooth edges, jagged progress bars, and the wordmark replaced by a properly unreadable band
 logo. The gamification layer is re-carved to match — levels become ranks like *Sower of Plagues*,
 and the badges become sigils such as *First Blood* and *Eternal Winter*.

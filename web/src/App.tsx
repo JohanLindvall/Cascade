@@ -52,7 +52,7 @@ import {
   savePreferences,
   type Preferences,
 } from './prefs';
-import { applyTheme, resolveTheme, type ThemeMode } from './theme';
+import { applyTheme, fxFlavor, resolveTheme, type ResolvedTheme, type ThemeMode } from './theme';
 import type { GameState, GlobalStatus, ThrottleGroup, Torrent } from './types';
 
 type Dialog = 'add' | 'settings' | 'throttles' | 'console' | 'log' | 'progress' | null;
@@ -964,8 +964,8 @@ export function App() {
         </div>
       )}
 
-      <Celebrate trigger={celebration} grim={resolvedTheme === 'blackmetal'} onDone={clearCelebration} />
-      <DropBurst burst={burst} grim={resolvedTheme === 'blackmetal'} onDone={clearBurst} />
+      <Celebrate trigger={celebration} flavor={fxFlavor(resolvedTheme as ResolvedTheme)} onDone={clearCelebration} />
+      <DropBurst burst={burst} flavor={fxFlavor(resolvedTheme as ResolvedTheme)} onDone={clearBurst} />
 
       {dialog === 'add' && (
         <AddDialog

@@ -2476,6 +2476,57 @@ td.ratio.poor {
   }
 }
 
+/* Retro completions: chunky phosphor pixels raining in stepped motion under a
+   brief CRT flicker. */
+.confetti span.pixel {
+  animation-name: fall-pixel;
+  animation-timing-function: steps(14, end);
+  border-radius: 0;
+}
+
+@keyframes fall-pixel {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, -14px, 0);
+  }
+  8% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(var(--drift, 0), 102vh, 0);
+  }
+}
+
+.confetti .arcade-flash {
+  position: absolute;
+  inset: 0;
+  top: 0;
+  border-radius: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: #34ff9e;
+  animation: arcade-flash 0.5s steps(2, end) forwards;
+}
+
+/* Two palette blinks, gentle and brief — a victory flicker, not a strobe. */
+@keyframes arcade-flash {
+  0% {
+    opacity: 0.09;
+    background: #34ff9e;
+  }
+  50% {
+    opacity: 0.07;
+    background: #ff4fd8;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 /* Both overlays must undo the .confetti span piece defaults they inherit. */
 .confetti .grim-flash,
 .confetti .grim-pall {
@@ -2646,6 +2697,16 @@ td.ratio.poor {
 
 :root[data-theme='retro'] .brand {
   font-size: 13px;
+}
+
+/* The wordmark becomes a pixel arcade title (the bundled cascade-retro.svg,
+   generated pixel-by-pixel — regenerate it, do not hand-edit). */
+:root[data-theme='retro'] .brand-name {
+  width: 95px;
+  height: 18px;
+  font-size: 0;
+  background: url('./assets/cascade-retro.svg') left center / contain no-repeat;
+  image-rendering: pixelated;
 }
 
 /* Hard pixel borders and offset shadows. */
@@ -3286,6 +3347,56 @@ td.ratio.poor {
   text-shadow: 0 2px 12px color-mix(in srgb, var(--accent) 65%, transparent);
 }
 
+/* The retro drop is an arcade pickup: expanding pixel rings, an eight-way
+   pixel burst, and points on the score — everything snapped to steps. */
+.burst-pixelring {
+  width: 30px;
+  height: 30px;
+  margin: -15px 0 0 -15px;
+  border: 4px solid #34ff9e;
+  animation: pixelring 0.6s steps(5, end) forwards;
+}
+
+.burst-pixelring.two {
+  border-color: #ff4fd8;
+  animation-delay: 0.1s;
+  animation-duration: 0.7s;
+}
+
+@keyframes pixelring {
+  from {
+    transform: scale(0.3);
+    opacity: 1;
+  }
+  to {
+    transform: scale(6);
+    opacity: 0;
+  }
+}
+
+.burst-pixel {
+  animation: burst-pixel 0.55s steps(5, end) forwards;
+}
+
+@keyframes burst-pixel {
+  from {
+    transform: translate(-50%, -50%);
+    opacity: 1;
+  }
+  to {
+    transform: translate(calc(-50% + var(--sx)), calc(-50% + var(--sy)));
+    opacity: 0;
+  }
+}
+
+.drop-burst.arcade .burst-score {
+  font-family: var(--mono);
+  color: #ffd23f;
+  letter-spacing: 0.06em;
+  text-shadow: 2px 2px 0 #0d0620;
+  animation-timing-function: steps(8, end);
+}
+
 /* The payload itself, collected into the Add button */
 .burst-payload {
   display: flex;
@@ -3374,16 +3485,11 @@ td.ratio.poor {
   }
 }
 
-/* Retro keeps its hard pixel edges through the whole sequence. */
-:root[data-theme='retro'] .burst-ring,
+/* Retro keeps hard pixel edges on the shared pieces of the sequence (the
+   rings and sparks themselves are replaced by the arcade variant). */
 :root[data-theme='retro'] .burst-flash,
 :root[data-theme='retro'] .burst-payload {
   border-radius: 0;
-}
-
-:root[data-theme='retro'] .burst-spark {
-  border-radius: 0;
-  box-shadow: none;
 }
 
 :root[data-theme='retro'] .burst-payload {
@@ -3391,11 +3497,6 @@ td.ratio.poor {
   color: #0d0620;
   box-shadow: var(--shadow-sm);
   text-shadow: none;
-}
-
-:root[data-theme='retro'] .burst-ring,
-:root[data-theme='retro'] .burst-spark {
-  animation-timing-function: steps(9, end);
 }
 
 @media (prefers-reduced-motion: reduce) {
