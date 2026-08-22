@@ -26,10 +26,14 @@ jobs:
     name: Typecheck server + web
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
+          # setup-node v5+ turns caching on by itself once package.json grows a
+          # "packageManager" field, and then fails for want of a lockfile —
+          # this repo deliberately has none (the image runs a plain install).
+          package-manager-cache: false
       - name: Server
         working-directory: server
         run: |
@@ -46,10 +50,10 @@ jobs:
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build image (compiles rtorrent from source)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           tags: cascade:ci
@@ -91,10 +95,10 @@ jobs:
       matrix:
         rtorrent: ['0.9.8', '0.15.2']
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
       - name: Build against rtorrent ${{ matrix.rtorrent }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           build-args: RTORRENT_VERSION=${{ matrix.rtorrent }}

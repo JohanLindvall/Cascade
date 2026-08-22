@@ -80,9 +80,8 @@ docker pull ghcr.io/johanlindvall/cascade:v0.1.42-0.16.20   # pin a release
 docker pull ghcr.io/johanlindvall/cascade:latest            # follow main
 ```
 
-> GitHub creates a new container package as **private**, whoever owns it. If pulls come back
-> `denied`, either `docker login ghcr.io` with a token that can read packages, or flip the package
-> to public once under **Packages → cascade → Package settings → Change visibility**.
+> No login is needed — the package is public. If a pull ever comes back `denied`, check
+> **Packages → cascade → Package settings → Change visibility**.
 
 Upgrading is a pull and a re-create; all state lives in the two volumes:
 
