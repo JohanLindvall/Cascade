@@ -341,11 +341,18 @@ export function App() {
     if (/^file:/i.test(text)) {
       toast.push(
         'error',
-        'Your file manager handed over a link rather than the file — use the Add torrent button, or drag from a file manager that supplies file data.',
+        'Your file manager passed the path rather than the file itself, which the browser is not allowed to read. Use the Add torrent button and pick the file, or drag it from a different file manager.',
       );
       return;
     }
-    if (text) toast.push('info', 'Nothing to add — drop .torrent files, magnet links or URLs.');
+    // Anything else, including a drop carrying nothing at all, has to say so:
+    // a drop that quietly does nothing looks exactly like a broken torrent.
+    toast.push(
+      'info',
+      text
+        ? 'Nothing to add — drop .torrent files, magnet links or URLs.'
+        : 'That drop carried no file or link the browser could read — use the Add torrent button instead.',
+    );
   };
 
   const submitDrop = useCallback(

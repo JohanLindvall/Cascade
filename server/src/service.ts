@@ -459,7 +459,56 @@ export class RtorrentService {
     const method = options.start
       ? this.capabilities.dialect.loadUrlStart
       : this.capabilities.dialect.loadUrl;
+
+    // A magnet carries its own info hash, so the load can be confirmed exactly.
+    // For a fetched URL there is nothing to compare against, so note what the
+    // session held first and watch for something new to appear.
+    const wanted = magnetInfoHash(link);
+    const before = wanted ? null : await this.sessionHashes();
+
     await this.client.call(method, ['', link, ...this.loadCommands(options)]);
+
+    if (wanted) {
+      if (await this.waitForTorrent(wanted)) return;
+      throw new HttpError(
+        502,
+        `rtorrent did not accept the magnet for ${wanted} \u2014 see the rtorrent log`,
+      );
+    }
+
+    // rtorrent has to fetch the file first, so allow longer than a raw upload.
+    // The wait is bounded, so the wording admits that a slow fetch may still
+    // land rather than claiming the link is definitely broken.
+    if (await this.waitForNewTorrent(before as Set<string>, 10_000)) return;
+    throw new HttpError(
+      502,
+      `rtorrent loaded nothing from "${link.slice(0, 120)}" within 10s \u2014 the link may need ` +
+        'a login, may not point at a .torrent, or may already be loaded. Check the rtorrent log; ' +
+        'if it was merely slow it may still appear.',
+    );
+  }
+
+  /** Every info hash currently in the session. */
+  private async sessionHashes(): Promise<Set<string>> {
+    const dialect = this.capabilities.dialect;
+    const rows = await this.client.fieldMulticall(
+      dialect.downloadMulticall,
+      dialect.downloadMulticallPrefix('main'),
+      ['d.hash'],
+    );
+    return new Set(rows.map((row) => String(row['d.hash'] ?? '').toUpperCase()));
+  }
+
+  /** Poll until a hash the session did not have before turns up. */
+  private async waitForNewTorrent(before: Set<string>, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      for (const hash of await this.sessionHashes()) {
+        if (!before.has(hash)) return true;
+      }
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
 
   private loadCommands(options: { directory?: string; label?: string }): string[] {
@@ -704,6 +753,33 @@ export class RtorrentService {
       await handle.close();
     }
   }
+}
+
+/**
+ * The info hash out of a magnet's xt=urn:btih:, hex or base32, so a magnet load
+ * can be confirmed the same way an uploaded file is.
+ */
+function magnetInfoHash(link: string): string | undefined {
+  const match = /xt=urn:btih:([A-Za-z0-9]+)/i.exec(link);
+  if (!match) return undefined;
+  const value = match[1];
+  if (/^[0-9a-f]{40}$/i.test(value)) return value.toUpperCase();
+  if (/^[A-Za-z2-7]{32}$/.test(value)) return base32ToHex(value);
+  return undefined;
+}
+
+const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32ToHex(value: string): string | undefined {
+  let bits = '';
+  for (const character of value.toUpperCase()) {
+    const index = BASE32.indexOf(character);
+    if (index < 0) return undefined;
+    bits += index.toString(2).padStart(5, '0');
+  }
+  const bytes = bits.slice(0, 160).match(/.{8}/g);
+  if (!bytes || bytes.length !== 20) return undefined;
+  return bytes.map((byte) => parseInt(byte, 2).toString(16).padStart(2, '0')).join('').toUpperCase();
 }
 
 /** rtorrent's command parser uses double quotes around loading commands. */
