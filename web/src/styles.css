@@ -134,6 +134,68 @@ textarea {
   font-size: 12.2px;
 }
 
+/* Log rows: a time column that stays put, the level as colour rather than a
+   badge (a log is read by scanning, and a column of chips is noise), and the
+   message taking the rest. Wrapping is on so a long line is readable without
+   scrolling sideways, with the continuation indented past the time column. */
+.log-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0 8px;
+  align-items: baseline;
+  padding: 0.5px 0;
+}
+.log-time {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.log-level {
+  text-transform: uppercase;
+  font-size: 9.5px;
+  letter-spacing: 0.05em;
+  color: var(--text-faint);
+  min-width: 4.2em;
+}
+.log-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+/* Only the levels worth spotting are coloured; info and debug are the
+   background hum and stay as they are. */
+.log-row.warn .log-level,
+.log-row.warn .log-text {
+  color: var(--warn);
+}
+.log-row.error .log-level,
+.log-row.error .log-text,
+.log-row.critical .log-level,
+.log-row.critical .log-text {
+  color: var(--danger);
+}
+.log-row.notice .log-level {
+  color: var(--accent);
+}
+.log-row.debug .log-text {
+  color: var(--text-dim);
+}
+/* Where the log crosses midnight, say which day the times below belong to. */
+.log-day {
+  position: sticky;
+  top: 0;
+  margin: 8px 0 3px;
+  padding: 2px 0;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-strong);
+}
+.log-day:first-child {
+  margin-top: 0;
+}
+
 /* The log dialog's verbosity row: the boot scopes as fixed tags, the rest as
    toggles. A button styled as the tag it flips keeps the row one line of
    like things instead of a form. */

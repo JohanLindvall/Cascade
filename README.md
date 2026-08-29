@@ -312,6 +312,10 @@ list, `Ctrl/⌘-A` selects everything visible, `Delete` removes the selection (`
 deletes its data, behind a confirmation), `Esc` clears the selection or closes what is open, and
 the column headers sort from the keyboard too.
 
+The log reads as a log: rtorrent's raw epoch seconds become clock times in your own timezone,
+with the level shown as colour (warnings amber, errors red) and a separator wherever the log
+crosses midnight. A line that is not in rtorrent's format is shown exactly as written.
+
 The log dialog carries a **Verbosity** row: the scopes `RT_LOG_LEVEL` baked in at container start
 show as fixed tags, and the rest — `debug`, `tracker_debug`, `dht_debug` and friends — toggle live,
 no restart. Raising one takes effect immediately and is remembered (re-attached after every

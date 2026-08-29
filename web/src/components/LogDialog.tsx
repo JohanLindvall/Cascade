@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { api, type LogScopes } from '../api';
+import { logDay, logTime, parseLogLine } from '../format';
 import { Modal, useToast } from './ui';
 
 export function LogDialog({ onClose }: { onClose: () => void }) {
@@ -70,6 +71,40 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
     if (view && stickToEnd.current) view.scrollTop = view.scrollHeight;
   }, [lines]);
 
+  /**
+   * The lines as rows: a clock in the viewer's own timezone instead of raw
+   * epoch seconds, the level as a colour, and a separator wherever the day
+   * changes — the times alone would otherwise be ambiguous across a log that
+   * spans midnight. Anything that is not a log line is shown verbatim.
+   */
+  const rows = useMemo(() => {
+    let day = '';
+    return lines.map((raw, index) => {
+      const line = parseLogLine(raw);
+      const rowDay = line.at ? logDay(line.at) : '';
+      const newDay = rowDay !== '' && rowDay !== day;
+      if (newDay) day = rowDay;
+      return (
+        <Fragment key={index}>
+          {newDay && <div className="log-day">{rowDay}</div>}
+          {line.at ? (
+            <div className={`log-row ${line.level}`}>
+              <span className="log-time" title={line.at.toLocaleString()}>
+                {logTime(line.at)}
+              </span>
+              {line.level && <span className="log-level">{line.level}</span>}
+              <span className="log-text">{line.text}</span>
+            </div>
+          ) : (
+            <div className="log-row">
+              <span className="log-text">{raw}</span>
+            </div>
+          )}
+        </Fragment>
+      );
+    });
+  }, [lines]);
+
   return (
     <Modal
       title="rtorrent log"
@@ -130,7 +165,13 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
           stickToEnd.current = view.scrollHeight - view.scrollTop - view.clientHeight < 48;
         }}
       >
-        {lines.length > 0 ? lines.join('\n') : 'Log is empty — set RT_LOG_LEVEL to raise verbosity.'}
+        {lines.length > 0 ? (
+          rows
+        ) : scopes?.supported ? (
+          'Log is empty — raise a scope above to see more.'
+        ) : (
+          'Log is empty — set RT_LOG_LEVEL to raise verbosity.'
+        )}
       </pre>
     </Modal>
   );

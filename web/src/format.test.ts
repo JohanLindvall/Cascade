@@ -12,6 +12,9 @@ import {
   duration,
   fileName,
   formatRateInput,
+  logDay,
+  logTime,
+  parseLogLine,
   parseRate,
   percent,
   rate,
@@ -67,4 +70,58 @@ test('percent clamps into [0, 100]', () => {
 test('fileName takes the last path segment', () => {
   assert.equal(fileName('dir/sub/movie.mkv'), 'movie.mkv');
   assert.equal(fileName('plain.mkv'), 'plain.mkv');
+});
+
+test('log lines split into time, level and message', () => {
+  // The shape both 0.9.8 and 0.16.20 write.
+  const line = parseLogLine('1788016396 W Ignoring rtorrent.rc.');
+  assert.equal(line.level, 'warn');
+  assert.equal(line.text, 'Ignoring rtorrent.rc.');
+  assert.equal(line.at?.getTime(), 1788016396 * 1000);
+
+  assert.equal(parseLogLine('1788015928 I resource_manager: adjusting').level, 'info');
+  assert.equal(parseLogLine('1788015928 D could not open input history').level, 'debug');
+  assert.equal(parseLogLine('1788015928 N rtorrent main: Starting thread.').level, 'notice');
+  assert.equal(parseLogLine('1788015928 E something failed').level, 'error');
+  assert.equal(parseLogLine('1788015928 C the worst kind').level, 'critical');
+});
+
+test('a message keeps everything after the level, colons and all', () => {
+  const line = parseLogLine(
+    '1788015928 I ABC123->tracker_list: added tracker (group:0 url:http://t/announce)',
+  );
+  assert.equal(line.text, 'ABC123->tracker_list: added tracker (group:0 url:http://t/announce)');
+});
+
+test('anything that is not a log line is handed back whole', () => {
+  for (const raw of [
+    'a bare sentence',
+    '1788015928 X unknown level letter',
+    '1788015928I missing the space',
+    '12345 I timestamp too short to be epoch seconds',
+    '',
+    '  1788015928 I leading space',
+  ]) {
+    const line = parseLogLine(raw);
+    assert.equal(line.at, null, raw);
+    assert.equal(line.text, raw, raw);
+    assert.equal(line.level, '', raw);
+  }
+});
+
+test('an implausible epoch is text, not a date from 1970', () => {
+  const line = parseLogLine('0000000001 I long ago');
+  assert.equal(line.at, null);
+  assert.equal(line.text, '0000000001 I long ago');
+});
+
+test('a message spanning lines keeps its tail', () => {
+  const line = parseLogLine('1788015928 E first\nsecond');
+  assert.equal(line.text, 'first\nsecond');
+});
+
+test('the rendered time and day are stable strings', () => {
+  const at = new Date(1788016396 * 1000);
+  assert.match(logTime(at), /^\d{2}:\d{2}:\d{2}$/);
+  assert.ok(logDay(at).length > 0);
 });

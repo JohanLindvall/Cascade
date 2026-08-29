@@ -320,6 +320,12 @@ Two other things are easy to get wrong here:
   faults become 502 with rtorrent's own message, prefixed with the command that failed when it
   came out of a multicall).
 - Anything that deletes data must stay inside `config.deleteRoots`.
+- Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes
+  `<epoch seconds> <level letter> <text>` — the same shape on 0.9.8 and 0.16.20, checked — and
+  the dialog renders the time in the viewer's timezone. Anything that does not match is shown
+  verbatim rather than mangled to fit, which is what keeps a crash dump or a future format
+  readable. The day separator exists because the row shows only a clock: without it, a log
+  spanning midnight is ambiguous.
 - Log scopes raised in the UI are written **twice**: the entrypoint reads them out of the state
   file and emits `log.add_output` lines into the generated rc (so they cover rtorrent's own
   startup — the session load and the first announces happen before the web server has

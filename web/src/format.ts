@@ -81,6 +81,70 @@ export function formatRateInput(value: number): string {
   return `${Math.round(value / 1024)}k`;
 }
 
+/**
+ * One rtorrent log line, split up for display.
+ *
+ * rtorrent writes "<unix seconds> <level letter> <text>" — the same shape on
+ * every release this UI drives (checked against 0.9.8 and 0.16.20). Raw epoch
+ * seconds are unreadable, so the dialog renders the time in the viewer's own
+ * timezone; but nothing else is touched, and a line that does not match the
+ * shape (a continuation, a crash dump, a future format) is handed back whole
+ * rather than mangled to fit.
+ */
+export interface LogLine {
+  /** When it happened, or null when the line carries no timestamp. */
+  at: Date | null;
+  /** critical | error | warn | notice | info | debug — "" when unknown. */
+  level: string;
+  /** Everything after the timestamp and level. */
+  text: string;
+}
+
+const LOG_LEVELS: Record<string, string> = {
+  C: 'critical',
+  E: 'error',
+  W: 'warn',
+  N: 'notice',
+  I: 'info',
+  D: 'debug',
+};
+
+// A ten-digit epoch, a single level letter, then the message. Anchored so a
+// message that merely begins with digits cannot be mistaken for a timestamp.
+const LOG_RE = /^(\d{9,11}) ([CEWNID]) (.*)$/s;
+
+export function parseLogLine(line: string): LogLine {
+  const match = LOG_RE.exec(line);
+  if (!match) return { at: null, level: '', text: line };
+  const seconds = Number(match[1]);
+  // A timestamp is only useful if it is a plausible one; anything else is
+  // left as text rather than rendered as a date from 1970 or 3000.
+  const at = seconds > 946_684_800 && seconds < 4_102_444_800 ? new Date(seconds * 1000) : null;
+  return at
+    ? { at, level: LOG_LEVELS[match[2]] ?? '', text: match[3] }
+    : { at: null, level: '', text: line };
+}
+
+/** Clock time for a log row: seconds matter here, the date does not. */
+export function logTime(at: Date): string {
+  return at.toLocaleTimeString(undefined, {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+/** The day a log row belongs to, for the separator between days. */
+export function logDay(at: Date): string {
+  return at.toLocaleDateString(undefined, {
+    weekday: 'short',
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+  });
+}
+
 export function fileName(path: string): string {
   const index = path.lastIndexOf('/');
   return index < 0 ? path : path.slice(index + 1);
