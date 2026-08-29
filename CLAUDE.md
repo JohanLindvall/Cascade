@@ -48,7 +48,15 @@ docker build -t cascade:test .        # typechecks server and web, fails the bui
 ```
 
 Both `tsc` runs are strict, with `noUnusedLocals` and `noUnusedParameters` on each side, so a
-build is a real typecheck.
+build is a real typecheck — and it also runs both unit suites (`server/src/*.test.ts`,
+`web/src/*.test.ts`, node's built-in runner, no frameworks), so a red test is a failed build.
+The server suite compiles through `tsconfig.test.json` into `dist-test/` and runs an explicit
+`dist-test/*.test.js` glob — never point `node --test` at the directory, because it would also
+load `index.js`, which starts the server and hangs the run. The web suite runs the `.ts` files
+directly under `--experimental-strip-types`; those files are excluded from each side's build
+tsconfig, which is why the runtime `dist/` stays clean and the DOM-flavoured web typecheck does
+not need node types. Pure logic belongs where the runner can reach it — `sortTorrents` lives in
+`web/src/sort.ts` (re-exported by `TorrentTable`) for exactly that reason.
 
 Run it and exercise the API:
 
@@ -199,6 +207,13 @@ Everything Cascade remembers is in one JSON file, `/config/cascade-state.json`, 
 last-seen totals, and throttle groups. Writes are debounced and go through a temp file plus rename,
 so add state there rather than introducing another file.
 
+**Only a real change may dirty the store.** `recordTorrents` folds the whole list in on every
+poll, and an unconditional `scheduleFlush` there meant an idle session rewrote the JSON file
+every two seconds for as long as a browser was open. Every mutation site now sets a `changed`
+flag first (the ever-growing seed clock coarsens to the minute for the same reason), and the
+store test pins it: fold the same list twice, and the second fold must not recreate a deleted
+state file. Keep that property when adding counters.
+
 Preferences are validated in `prefs.ts` (`sanitizePreferences`) before being stored — an unknown
 theme or sort key falls back to the default instead of reaching the UI. The browser keeps a
 localStorage copy of the preferences, but only as a cache so the theme can apply on first paint;
@@ -311,8 +326,16 @@ Two other things are easy to get wrong here:
   and it pauses entirely while the tab is hidden.
 - `/healthz` is deliberately outside Basic auth (container healthchecks and orchestrator probes
   must work with `WEB_USER`/`WEB_PASS` set) and reveals nothing but liveness.
-- CI (`.github/workflows/ci.yml`) typechecks both halves and smoke-tests the built image on pull
-  requests; the 0.9.8/0.15.2 compat matrix runs on manual dispatch. Main pushes skip the smoke
+- Static caching is split by what can change: Vite's content-hashed `assets/` are served
+  immutable for a year, and everything else — above all the `index.html` that names those
+  hashes — is `no-cache`, so it revalidates (304) on every load. A heuristically cached shell
+  used to survive a redeploy and ask for hashed files that no longer existed, which looks like
+  a blank page until a hard reload.
+- The listing multicall asks only for fields something maps: `d.state` and `d.peers_accounted`
+  were fetched on every poll for years and read by nothing, and every stray field is one more
+  command per torrent per poll on a single-threaded rtorrent.
+- CI (`.github/workflows/ci.yml`) typechecks both halves, runs both unit suites, and smoke-tests
+  the built image on pull requests; the 0.9.8/0.15.2 compat matrix runs on manual dispatch. Main pushes skip the smoke
   job because `release.yml` builds and probes those commits on both architectures anyway.
 - `release.yml` publishes to GHCR. Every push to main is a release: it tags the commit
   `v0.1.<run_number>` and publishes `cascade:<version>-<rtorrent-version>` (plus the bare

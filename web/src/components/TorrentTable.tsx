@@ -1,31 +1,18 @@
 import { useMemo, useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { bytes, duration, percent, rate, relative } from '../format';
+import type { SortKey, SortState } from '../sort';
 import type { Torrent } from '../types';
 import { EmptyState, ProgressBar } from './ui';
 import { IconDown } from './icons';
+
+// The ordering itself lives in sort.ts, where the test runner can reach it;
+// callers keep importing it from here.
+export { sortTorrents, type SortKey, type SortState } from '../sort';
 
 /** Modifier keys that drive multi-select, decoupled from the DOM event type. */
 export interface SelectMods {
   ctrl: boolean;
   shift: boolean;
-}
-
-export type SortKey =
-  | 'name'
-  | 'size'
-  | 'progress'
-  | 'status'
-  | 'downRate'
-  | 'upRate'
-  | 'ratio'
-  | 'eta'
-  | 'peers'
-  | 'addedAt'
-  | 'label';
-
-export interface SortState {
-  key: SortKey;
-  dir: 'asc' | 'desc';
 }
 
 interface Column {
@@ -59,45 +46,6 @@ export const SORT_OPTIONS: Array<{ key: SortKey; label: string }> = [
   ...COLUMNS.map(({ key, label }) => ({ key, label })),
   { key: 'label', label: 'Label' },
 ];
-
-/** Sorting by status should follow the lifecycle, not the alphabet. */
-const STATUS_RANK: Record<Torrent['status'], number> = {
-  downloading: 0,
-  seeding: 1,
-  checking: 2,
-  paused: 3,
-  stopped: 4,
-  error: 5,
-};
-
-function sortValue(torrent: Torrent, key: SortKey): number | string {
-  switch (key) {
-    case 'name':
-      return torrent.name.toLowerCase();
-    case 'label':
-      return torrent.label.toLowerCase();
-    case 'status':
-      return STATUS_RANK[torrent.status];
-    case 'peers':
-      return torrent.peersConnected;
-    case 'eta':
-      return torrent.eta === null ? Number.MAX_SAFE_INTEGER : torrent.eta;
-    default:
-      return torrent[key] as number;
-  }
-}
-
-export function sortTorrents(torrents: Torrent[], sort: SortState): Torrent[] {
-  const factor = sort.dir === 'asc' ? 1 : -1;
-  return [...torrents].sort((a, b) => {
-    const left = sortValue(a, sort.key);
-    const right = sortValue(b, sort.key);
-    if (typeof left === 'string' || typeof right === 'string') {
-      return String(left).localeCompare(String(right)) * factor;
-    }
-    return (left - right) * factor;
-  });
-}
 
 /** Colour the ratio by how much the torrent has given back. */
 function ratioTier(ratio: number): string {
@@ -288,6 +236,14 @@ export function TorrentTable({
                     : undefined
                 }
                 onClick={() => onSort(column.key)}
+                // Sorting is an action, so the headers take the keyboard too.
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    onSort(column.key);
+                  }
+                }}
               >
                 {column.label}
                 {sort.key === column.key && (
@@ -325,10 +281,12 @@ function TorrentCard({
   // follows touchend must then be swallowed, or it instantly closes the menu
   // and selects the card underneath it.
   const pressFired = useRef(false);
+  const pressStart = useRef({ x: 0, y: 0 });
 
   const startPress = (event: ReactTouchEvent) => {
     const touch = event.touches[0];
     pressFired.current = false;
+    pressStart.current = { x: touch.clientX, y: touch.clientY };
     press.current = window.setTimeout(() => {
       pressFired.current = true;
       onContextMenu(torrent.hash, {
@@ -341,6 +299,15 @@ function TorrentCard({
   const cancelPress = () => {
     window.clearTimeout(press.current);
     pressFired.current = false;
+  };
+  // A held finger trembles a few pixels; only real travel is a scroll. Any
+  // movement at all used to cancel, which made the menu a lottery.
+  const movePress = (event: ReactTouchEvent) => {
+    const touch = event.touches[0];
+    if (!touch) return cancelPress();
+    const dx = touch.clientX - pressStart.current.x;
+    const dy = touch.clientY - pressStart.current.y;
+    if (dx * dx + dy * dy > 10 * 10) cancelPress();
   };
   const endPress = (event: ReactTouchEvent) => {
     window.clearTimeout(press.current);
@@ -362,7 +329,7 @@ function TorrentCard({
       onContextMenu={(event) => onContextMenu(torrent.hash, event)}
       onTouchStart={startPress}
       onTouchEnd={endPress}
-      onTouchMove={cancelPress}
+      onTouchMove={movePress}
       onTouchCancel={cancelPress}
     >
       <div className="card-top">

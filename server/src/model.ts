@@ -76,12 +76,10 @@ export const TORRENT_FIELDS = [
   'd.peers_connected',
   'd.peers_not_connected',
   'd.peers_complete',
-  'd.peers_accounted',
   'd.tracker_size',
   'd.timestamp.started',
   'd.timestamp.finished',
   'd.creation_date',
-  'd.state',
 ] as const;
 
 type Row = Record<string, XValue>;

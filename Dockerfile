@@ -36,8 +36,11 @@ RUN cd server && npm install --no-audit --no-fund --loglevel=error
 COPY web/ web/
 COPY server/ server/
 
-RUN cd web && npm run build
-RUN cd server && npm run build && npm prune --omit=dev
+# Unit tests run inside the build, so a red suite is a failed image — the
+# same contract as the typecheck. Both use node's own runner: no frameworks,
+# no new dependencies.
+RUN cd web && npm test && npm run build
+RUN cd server && npm run build && npm test && npm prune --omit=dev
 
 # --------------------------------------------------------------------------
 # 2. compile libtorrent and rtorrent from upstream tags

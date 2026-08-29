@@ -38,7 +38,9 @@ function decode(buf: Buffer, start: number): [Bencode, number] {
 
   // Dictionary: d<key><value>...e
   if (marker === 0x64) {
-    const result: Record<string, Bencode> = {};
+    // Null-prototyped, so a key that happens to be "__proto__" stays an
+    // ordinary entry instead of rewiring the object it lands in.
+    const result: Record<string, Bencode> = Object.create(null) as Record<string, Bencode>;
     let offset = start + 1;
     while (buf[offset] !== 0x65) {
       const [key, afterKey] = decode(buf, offset);
@@ -73,6 +75,33 @@ export interface TorrentFileInfo {
 }
 
 /** Throws when the data is not a usable .torrent. */
+/**
+ * The info hash out of a magnet's xt=urn:btih:, hex or base32, so a magnet
+ * load can be confirmed the same way an uploaded file is.
+ */
+export function magnetInfoHash(link: string): string | undefined {
+  const match = /xt=urn:btih:([A-Za-z0-9]+)/i.exec(link);
+  if (!match) return undefined;
+  const value = match[1];
+  if (/^[0-9a-f]{40}$/i.test(value)) return value.toUpperCase();
+  if (/^[A-Za-z2-7]{32}$/.test(value)) return base32ToHex(value);
+  return undefined;
+}
+
+const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+
+function base32ToHex(value: string): string | undefined {
+  let bits = '';
+  for (const character of value.toUpperCase()) {
+    const index = BASE32.indexOf(character);
+    if (index < 0) return undefined;
+    bits += index.toString(2).padStart(5, '0');
+  }
+  const bytes = bits.slice(0, 160).match(/.{8}/g);
+  if (!bytes || bytes.length !== 20) return undefined;
+  return bytes.map((byte) => parseInt(byte, 2).toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
 export function parseTorrentFile(data: Buffer): TorrentFileInfo {
   let root: Bencode;
   try {

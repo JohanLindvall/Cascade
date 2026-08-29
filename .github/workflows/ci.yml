@@ -39,6 +39,9 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npx tsc --noEmit
+      - name: Server unit tests
+        working-directory: server
+        run: npm test
       # Fails if the entrypoint reads an option the catalog does not list, or
       # if the README's generated tables have drifted from it.
       - name: Options catalog and generated docs are in step
@@ -49,6 +52,9 @@ jobs:
         run: |
           npm install --no-audit --no-fund
           npm run build
+      - name: Web unit tests
+        working-directory: web
+        run: npm test
 
   smoke:
     name: Docker build + API smoke test

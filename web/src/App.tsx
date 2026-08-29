@@ -192,8 +192,10 @@ export function App() {
         const fresh = state.torrents.filter(
           (torrent) => torrent.progress >= 1 && !completedRef.current?.has(torrent.hash),
         );
-        if (fresh.length > 0 && state.game?.enabled) {
-          setCelebration((value) => value + 1);
+        if (fresh.length > 0) {
+          // The toast is plain feedback and fires for everyone; only the
+          // confetti belongs to the gamification layer and its flag.
+          if (state.game?.enabled) setCelebration((value) => value + 1);
           for (const torrent of fresh) {
             toast.push('success', `Finished — ${torrent.name}`);
           }
@@ -263,24 +265,28 @@ export function App() {
     );
 
   /**
-   * Whether a drag is carrying files. Some sources populate dataTransfer.items
-   * without advertising the "Files" type, so check both.
+   * Whether a drag is carrying something droppable: files, or a link — which
+   * is how a magnet arrives when dragged out of another tab. Some sources
+   * populate dataTransfer.items without advertising the "Files" type, so
+   * both are checked. Plain text selections are left out on purpose: they
+   * would light the overlay for drags that can never add anything.
    */
-  const carriesFiles = (event: DragEvent): boolean => {
+  const carriesPayload = (event: DragEvent): boolean => {
     const transfer = event.dataTransfer;
     if (!transfer) return false;
-    if (Array.from(transfer.types ?? []).includes('Files')) return true;
+    const types = Array.from(transfer.types ?? []);
+    if (types.includes('Files') || types.includes('text/uri-list')) return true;
     return Array.from(transfer.items ?? []).some((item) => item.kind === 'file');
   };
 
   const onDragEnter = (event: DragEvent) => {
-    if (!carriesFiles(event)) return;
+    if (!carriesPayload(event)) return;
     dragDepth.current += 1;
     setDropping(true);
   };
 
   const onDragLeave = (event: DragEvent) => {
-    if (!carriesFiles(event)) return;
+    if (!carriesPayload(event)) return;
     dragDepth.current = Math.max(0, dragDepth.current - 1);
     if (dragDepth.current === 0) setDropping(false);
   };
@@ -592,6 +598,9 @@ export function App() {
         event.preventDefault();
         searchRef.current?.focus();
       } else if (event.key === 'Escape') {
+        // With a dialog open, Escape belongs to the dialog — closing it must
+        // not also clear the selection behind it.
+        if (dialog !== null) return;
         setSelected(new Set());
         setFocused(null);
         setMenu(null);
@@ -966,7 +975,7 @@ export function App() {
           <div className="drop-card">
             <IconUpload size={30} />
             <strong>Drop to add</strong>
-            <span>.torrent files start immediately</span>
+            <span>.torrent files, magnet links and URLs start immediately</span>
           </div>
         </div>
       )}

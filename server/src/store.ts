@@ -186,22 +186,38 @@ export class Store {
     let peers = 0;
     const labels = new Set<string>();
     const now = Math.floor(Date.now() / 1000);
+    // Every poll folds the list in, so an idle session must not mark the
+    // store dirty: unchanged counters used to rewrite the JSON file every
+    // couple of seconds for as long as a browser was open.
+    let changed = false;
 
     for (const torrent of torrents) {
       const previous = this.data.seen[torrent.hash];
       const complete = torrent.progress >= 1;
 
       if (previous) {
-        if (torrent.upTotal > previous.up) stats.lifetimeUp += torrent.upTotal - previous.up;
+        if (torrent.upTotal > previous.up) {
+          stats.lifetimeUp += torrent.upTotal - previous.up;
+          changed = true;
+        }
         if (torrent.downTotal > previous.down) {
           stats.lifetimeDown += torrent.downTotal - previous.down;
+          changed = true;
         }
-        if (complete && !previous.complete) this.countCompletion(torrent.hash);
+        if (complete && !previous.complete) {
+          this.countCompletion(torrent.hash);
+          changed = true;
+        }
+        if (previous.up !== torrent.upTotal || previous.down !== torrent.downTotal ||
+            previous.complete !== complete) {
+          changed = true;
+        }
       } else {
         stats.everAdded += 1;
         stats.lifetimeUp += torrent.upTotal;
         stats.lifetimeDown += torrent.downTotal;
         if (complete) this.countCompletion(torrent.hash);
+        changed = true;
       }
 
       this.data.seen[torrent.hash] = {
@@ -210,20 +226,38 @@ export class Store {
         complete,
       };
 
-      if (torrent.ratio > stats.bestRatio) stats.bestRatio = torrent.ratio;
+      if (torrent.ratio > stats.bestRatio) {
+        stats.bestRatio = torrent.ratio;
+        changed = true;
+      }
       if (torrent.status === 'seeding') seeding += 1;
       peers += torrent.peersConnected;
       if (torrent.label) labels.add(torrent.label);
       if (torrent.finishedAt > 0 && complete) {
         const seeded = now - torrent.finishedAt;
-        if (seeded > stats.longestSeed) stats.longestSeed = seeded;
+        // A finished torrent's seed time grows every second by definition;
+        // recording it once a minute keeps the badge honest without turning
+        // the clock itself into a reason to rewrite the file on every poll.
+        if (seeded > stats.longestSeed + 60) {
+          stats.longestSeed = seeded;
+          changed = true;
+        }
       }
     }
 
-    if (seeding > stats.maxSeeding) stats.maxSeeding = seeding;
-    if (peers > stats.peakPeers) stats.peakPeers = peers;
-    if (labels.size > stats.maxLabels) stats.maxLabels = labels.size;
-    this.scheduleFlush();
+    if (seeding > stats.maxSeeding) {
+      stats.maxSeeding = seeding;
+      changed = true;
+    }
+    if (peers > stats.peakPeers) {
+      stats.peakPeers = peers;
+      changed = true;
+    }
+    if (labels.size > stats.maxLabels) {
+      stats.maxLabels = labels.size;
+      changed = true;
+    }
+    if (changed) this.scheduleFlush();
   }
 
   /** Count a finished torrent once, even if it is later removed and re-added. */

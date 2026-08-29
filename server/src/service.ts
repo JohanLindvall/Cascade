@@ -36,7 +36,7 @@ import {
   type GlobalSettings,
 } from './settings';
 import { Store, type ThrottleGroup } from './store';
-import { parseTorrentFile } from './torrentfile';
+import { magnetInfoHash, parseTorrentFile } from './torrentfile';
 import type { XValue } from './xmlrpc';
 
 export type { GlobalSettings };
@@ -281,7 +281,11 @@ export class RtorrentService {
       { methodName: 'throttle.global_up.max_rate', params: [] },
       { methodName: 'network.listen.port', params: [] },
     ];
+    // Remember where the optional entry lands instead of hard-coding its
+    // position: a probe added above it would silently read the wrong slot.
+    let dhtIndex = -1;
     if (this.capabilities.supports('dhtStatistics')) {
+      dhtIndex = entries.length;
       entries.push({ methodName: 'dht.statistics', params: [] });
     }
     const results = await this.client.multicallSettled(entries);
@@ -290,7 +294,7 @@ export class RtorrentService {
       return value instanceof Error ? 0 : Number(value) || 0;
     };
     let dhtNodes = 0;
-    const dht = results[7];
+    const dht = dhtIndex >= 0 ? results[dhtIndex] : undefined;
     if (dht && !(dht instanceof Error) && typeof dht === 'object' && !Array.isArray(dht)) {
       dhtNodes = Number((dht as Record<string, XValue>).active_nodes ?? 0) || 0;
     }
@@ -464,11 +468,8 @@ export class RtorrentService {
     // For a fetched URL there is nothing to compare against, so note what the
     // session held first and watch for something new to appear.
     const wanted = magnetInfoHash(link);
-    const before = wanted ? null : await this.sessionHashes();
-
-    await this.client.call(method, ['', link, ...this.loadCommands(options)]);
-
     if (wanted) {
+      await this.client.call(method, ['', link, ...this.loadCommands(options)]);
       if (await this.waitForTorrent(wanted)) return;
       throw new HttpError(
         502,
@@ -476,10 +477,13 @@ export class RtorrentService {
       );
     }
 
+    const before = await this.sessionHashes();
+    await this.client.call(method, ['', link, ...this.loadCommands(options)]);
+
     // rtorrent has to fetch the file first, so allow longer than a raw upload.
     // The wait is bounded, so the wording admits that a slow fetch may still
     // land rather than claiming the link is definitely broken.
-    if (await this.waitForNewTorrent(before as Set<string>, 10_000)) return;
+    if (await this.waitForNewTorrent(before, 10_000)) return;
     throw new HttpError(
       502,
       `rtorrent loaded nothing from "${link.slice(0, 120)}" within 10s \u2014 the link may need ` +
@@ -559,14 +563,21 @@ export class RtorrentService {
         throw new HttpError(403, 'deleting torrent data is disabled (CASCADE_ALLOW_DATA_DELETE=0)');
       }
       basePath = String(await this.client.call('d.base_path', [hash]));
+      // Refused before the torrent is erased: rejecting the path afterwards
+      // left the metadata gone and the data behind — the one combination the
+      // user did not ask for. An empty base path (never started) has nothing
+      // to check or delete.
+      if (basePath) this.assertDeletable(basePath);
     }
     await this.client.call('d.erase', [hash]);
     this.store.forget(hash);
-    if (deleteData && basePath) await this.deleteData(basePath);
+    if (deleteData && basePath) {
+      await fs.rm(this.assertDeletable(basePath), { recursive: true, force: true });
+    }
   }
 
   /** Only ever unlink paths that live inside a configured data root. */
-  private async deleteData(basePath: string): Promise<void> {
+  private assertDeletable(basePath: string): string {
     const resolved = path.resolve(basePath);
     const allowed = this.config.deleteRoots.some(
       (root) => resolved === root || resolved.startsWith(`${root}${path.sep}`),
@@ -580,7 +591,7 @@ export class RtorrentService {
     if (this.config.deleteRoots.includes(resolved)) {
       throw new HttpError(403, `refusing to delete the data root itself (${resolved})`);
     }
-    await fs.rm(resolved, { recursive: true, force: true });
+    return resolved;
   }
 
   async setPriority(hash: string, priority: number): Promise<void> {
@@ -753,33 +764,6 @@ export class RtorrentService {
       await handle.close();
     }
   }
-}
-
-/**
- * The info hash out of a magnet's xt=urn:btih:, hex or base32, so a magnet load
- * can be confirmed the same way an uploaded file is.
- */
-function magnetInfoHash(link: string): string | undefined {
-  const match = /xt=urn:btih:([A-Za-z0-9]+)/i.exec(link);
-  if (!match) return undefined;
-  const value = match[1];
-  if (/^[0-9a-f]{40}$/i.test(value)) return value.toUpperCase();
-  if (/^[A-Za-z2-7]{32}$/.test(value)) return base32ToHex(value);
-  return undefined;
-}
-
-const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-
-function base32ToHex(value: string): string | undefined {
-  let bits = '';
-  for (const character of value.toUpperCase()) {
-    const index = BASE32.indexOf(character);
-    if (index < 0) return undefined;
-    bits += index.toString(2).padStart(5, '0');
-  }
-  const bytes = bits.slice(0, 160).match(/.{8}/g);
-  if (!bytes || bytes.length !== 20) return undefined;
-  return bytes.map((byte) => parseInt(byte, 2).toString(16).padStart(2, '0')).join('').toUpperCase();
 }
 
 /** rtorrent's command parser uses double quotes around loading commands. */

@@ -307,6 +307,11 @@ Settings given as environment variables are applied over XML-RPC at startup rath
 
 ## The UI
 
+The keyboard works throughout: `/` focuses search, `n` opens the Add dialog, `↑`/`↓` walk the
+list, `Ctrl/⌘-A` selects everything visible, `Delete` removes the selection (`Shift-Delete` also
+deletes its data, behind a confirmation), `Esc` clears the selection or closes what is open, and
+the column headers sort from the keyboard too.
+
 Click a torrent for details — general, files with per-file priority, live peers and trackers. Peer
 and tracker rows expand for everything rtorrent knows: peer id, protocol extensions, direction,
 encryption and the preferred/snubbed/unwanted/banned flags.
@@ -486,7 +491,7 @@ The whole toolchain lives in the image; no local Node is required. The Makefile 
 work — `make` on its own lists every target.
 
 ```bash
-make build                  # build the image (typechecks both TypeScript halves)
+make build                  # build the image (typechecks + unit tests, both halves)
 make run PORT=8080          # run it, mounting ./data, then open it in a browser
 make run OPEN=0             # ...without launching a browser
 make open                   # wait for it to answer, then open it
@@ -497,8 +502,17 @@ make attach                 # attach to rtorrent's curses UI
 make logs / shell / stop
 ```
 
-CI (GitHub Actions) runs the same checks: a fast typecheck of both TypeScript halves on every
-push and pull request, plus a full image build with an API smoke test on pull requests. A
+Both halves carry unit tests beside their sources (`server/src/*.test.ts`, `web/src/*.test.ts`),
+written for node's built-in test runner — no frameworks, no new dependencies. They run inside
+every image build, so a red suite fails the build exactly as a type error does; to run them alone:
+
+```bash
+docker run --rm -v "$PWD/server":/s -w /s node:22-alpine sh -c 'npm install && npm test'
+docker run --rm -v "$PWD/web":/w -w /w node:22-alpine sh -c 'npm install && npm test'
+```
+
+CI (GitHub Actions) runs the same checks: a fast typecheck and the unit tests of both TypeScript
+halves on every push and pull request, plus a full image build with an API smoke test on pull requests. A
 compatibility matrix against rtorrent 0.9.8 and 0.15.2 can be run from the Actions tab
 (**Run workflow → full-matrix**).
 

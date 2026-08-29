@@ -47,13 +47,30 @@ router.use(express.json({ limit: '4mb' }));
 router.use('/api', createApi(service, config, store));
 
 // Static SPA assets, with a history fallback for client-side routing.
+//
+// Vite writes content-hashed files under assets/, so those are immutable: a
+// rebuild changes their names, never their bytes. Everything else — above all
+// the shell that names those hashes — must revalidate on every load, or a
+// browser that cached yesterday's index.html asks for hashed files that no
+// longer exist after a redeploy and shows a blank page until a hard reload.
+// no-cache still gives 304s (the files carry real mtimes), so it costs a
+// conditional request, not a re-download.
 const indexHtml = path.join(config.webRoot, 'index.html');
-router.use(express.static(config.webRoot, { index: false, maxAge: '1h' }));
+router.use(
+  express.static(config.webRoot, {
+    index: false,
+    setHeaders: (res, filePath) => {
+      const hashed = filePath.startsWith(path.join(config.webRoot, 'assets') + path.sep);
+      res.setHeader('Cache-Control', hashed ? 'public, max-age=31536000, immutable' : 'no-cache');
+    },
+  }),
+);
 router.get('*', (_req, res) => {
   if (!fs.existsSync(indexHtml)) {
     res.status(500).type('text/plain').send(`web assets not found at ${config.webRoot}`);
     return;
   }
+  res.setHeader('Cache-Control', 'no-cache');
   res.sendFile(indexHtml);
 });
 

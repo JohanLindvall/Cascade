@@ -134,6 +134,13 @@ textarea {
   font-size: 12.2px;
 }
 
+/* While the detail divider is being dragged: no text selection sweeping the
+   page, and the resize cursor everywhere the pointer goes. */
+body.row-resizing {
+  user-select: none;
+  cursor: row-resize;
+}
+
 /* =============================== layout ================================ */
 
 .app {

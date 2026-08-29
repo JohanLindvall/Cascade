@@ -119,12 +119,14 @@ export function DetailPanel({ torrent, onClose, onHeightChange, height }: Detail
     };
     const onUp = () => {
       dragState.current = null;
+      document.body.classList.remove('row-resizing');
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     return () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      document.body.classList.remove('row-resizing');
     };
   }, [onHeightChange]);
 
@@ -155,7 +157,11 @@ export function DetailPanel({ torrent, onClose, onHeightChange, height }: Detail
       <div
         className="detail-resize"
         onMouseDown={(event) => {
+          event.preventDefault();
           dragState.current = { startY: event.clientY, startHeight: height };
+          // Without this the drag doubles as a text selection sweeping the
+          // whole page; the class also keeps the resize cursor while moving.
+          document.body.classList.add('row-resizing');
         }}
       />
       <div className="detail-head">

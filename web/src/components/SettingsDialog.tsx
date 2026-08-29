@@ -199,7 +199,11 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
       <div className="section">
         <h3>Network</h3>
         <div className="form-grid">
-          {textField('portRange', 'Listening port range', { hint: 'e.g. 50000-50000' })}
+          {textField('portRange', 'Listening port range', {
+            // Applying it over XML-RPC does not rebind a running rtorrent
+            // (CLAUDE.md quirk 6): saying so beats a field that looks applied.
+            hint: 'e.g. 50000-50000 — binds on the next container start',
+          })}
           {textField('bindAddress', 'Bind address', { hint: 'all connections' })}
           {textField('localAddress', 'Address reported to trackers')}
           {supports('bindAddressV4') &&
@@ -238,7 +242,7 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
           </Field>
         </div>
         <div className="switch-row">
-          {switchField('portRandom', 'Randomise listening port')}
+          {switchField('portRandom', 'Randomise listening port (next start)')}
           {supports('portOpen') && switchField('portOpen', 'Open the listening port')}
           {supports('blockOutgoing') && switchField('blockOutgoing', 'Block outgoing connections')}
         </div>

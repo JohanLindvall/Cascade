@@ -57,23 +57,33 @@ export async function fetchPreferences(): Promise<Preferences> {
 let pending: Partial<Preferences> = {};
 let timer: number | undefined;
 
+function send(): void {
+  window.clearTimeout(timer);
+  timer = undefined;
+  if (Object.keys(pending).length === 0) return;
+  const body = pending;
+  pending = {};
+  void fetch(`${API_BASE}prefs`, {
+    method: 'PATCH',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    // Let a save fired just before the tab closes still reach the server.
+    keepalive: true,
+  }).catch(() => {
+    // Offline or unauthenticated: the cache keeps the UI consistent.
+  });
+}
+
+// The debounce buys nothing if the tab closes inside it: a theme picked and
+// the window shut within half a second used to reach only the cache. pagehide
+// is the last reliable moment, and keepalive lets the request outlive the tab.
+window.addEventListener('pagehide', send);
+
 /** Merge-and-save, coalescing rapid changes such as dragging the detail pane. */
 export function savePreferences(patch: Partial<Preferences>, current: Preferences): void {
   writeCache({ ...current, ...patch });
   pending = { ...pending, ...patch };
   window.clearTimeout(timer);
-  timer = window.setTimeout(() => {
-    const body = pending;
-    pending = {};
-    void fetch(`${API_BASE}prefs`, {
-      method: 'PATCH',
-      credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      // Let a save fired just before the tab closes still reach the server.
-      keepalive: true,
-    }).catch(() => {
-      // Offline or unauthenticated: the cache keeps the UI consistent.
-    });
-  }, 400);
+  timer = window.setTimeout(send, 400);
 }

@@ -1,4 +1,8 @@
 node_modules/
 dist/
+web/dist/
 data/
 *.log
+dist-test/
+package-lock.json
+*.tsbuildinfo

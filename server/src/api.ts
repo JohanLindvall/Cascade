@@ -27,6 +27,17 @@ function asBool(value: unknown, fallback = false): boolean {
 
 const HASH_RE = /^[0-9A-Fa-f]{40}$/;
 
+/** A file/tracker index from the path: a small whole number, or a 400 — an
+ *  unchecked NaN used to reach rtorrent as "<hash>:fNaN" and come back as an
+ *  opaque 502 fault. */
+function requireIndex(value: unknown): number {
+  const index = Number(value);
+  if (!Number.isInteger(index) || index < 0 || index > 100_000) {
+    throw new HttpError(400, 'invalid index');
+  }
+  return index;
+}
+
 function requireHash(req: Request): string {
   const hash = String(req.params.hash ?? '');
   if (!HASH_RE.test(hash)) throw new HttpError(400, 'invalid info hash');
@@ -258,7 +269,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     wrap(async (req, res) => {
       const priority = Number((req.body as { priority?: unknown }).priority);
       if (![0, 1, 2].includes(priority)) throw new HttpError(400, 'priority must be 0, 1 or 2');
-      await service.setFilePriority(requireHash(req), Number(req.params.index), priority);
+      await service.setFilePriority(requireHash(req), requireIndex(req.params.index), priority);
       res.json({ ok: true });
     }),
   );
@@ -267,7 +278,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     '/torrents/:hash/trackers/:index/enabled',
     wrap(async (req, res) => {
       const enabled = asBool((req.body as { enabled?: unknown }).enabled);
-      await service.setTrackerEnabled(requireHash(req), Number(req.params.index), enabled);
+      await service.setTrackerEnabled(requireHash(req), requireIndex(req.params.index), enabled);
       res.json({ ok: true });
     }),
   );
@@ -276,7 +287,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     '/torrents/:hash/trackers',
     wrap(async (req, res) => {
       const body = req.body as Record<string, unknown>;
-      await service.addTracker(requireHash(req), requireString(body.url, 'url'), Number(body.group ?? 0));
+      await service.addTracker(requireHash(req), requireString(body.url, 'url'), requireIndex(body.group ?? 0));
       res.json({ ok: true });
     }),
   );

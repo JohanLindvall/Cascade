@@ -33,7 +33,11 @@ export class RtorrentClient {
   }
 
   private async withSlot<T>(task: () => Promise<T>): Promise<T> {
-    if (this.active >= MAX_CONCURRENCY) {
+    // Re-check after every wake: a wake and the increment are not atomic, so
+    // with a plain `if` a caller arriving between a finisher's decrement and
+    // the woken waiter's increment pushed the count past the cap — and the
+    // cap exists because rtorrent is single-threaded.
+    while (this.active >= MAX_CONCURRENCY) {
       await new Promise<void>((resolve) => this.queue.push(resolve));
     }
     this.active++;
