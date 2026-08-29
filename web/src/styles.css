@@ -179,18 +179,24 @@ textarea {
 .log-row.debug .log-text {
   color: var(--text-dim);
 }
-/* Where the log crosses midnight, say which day the times below belong to. */
+/* Where the log crosses midnight, say which day the times below belong to.
+   It sticks to the top so the day is always known while scrolling — which
+   means it must be *opaque*: --panel-strong is a 6% white wash meant to sit
+   on a solid surface, and used here it let every row scroll visibly through
+   the heading. The log view's own background is the only correct answer, and
+   the padding has to cover the row's full height or ascenders show above it. */
 .log-day {
   position: sticky;
-  top: 0;
+  top: -12px; /* cancels .console-output's padding, so it pins to the edge */
+  z-index: 1;
   margin: 8px 0 3px;
-  padding: 2px 0;
+  padding: 14px 0 3px;
   font-size: 10.5px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-faint);
   border-bottom: 1px solid var(--border);
-  background: var(--panel-strong);
+  background: var(--bg);
 }
 .log-day:first-child {
   margin-top: 0;

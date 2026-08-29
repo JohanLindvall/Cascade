@@ -325,7 +325,9 @@ Two other things are easy to get wrong here:
   the dialog renders the time in the viewer's timezone. Anything that does not match is shown
   verbatim rather than mangled to fit, which is what keeps a crash dump or a future format
   readable. The day separator exists because the row shows only a clock: without it, a log
-  spanning midnight is ambiguous.
+  spanning midnight is ambiguous — and being sticky, it must be painted in `--bg` rather than
+  one of the `--panel-*` washes: those are transparent overlays meant to sit on a solid
+  surface, and one used here let every scrolled row show straight through the heading.
 - Log scopes raised in the UI are written **twice**: the entrypoint reads them out of the state
   file and emits `log.add_output` lines into the generated rc (so they cover rtorrent's own
   startup — the session load and the first announces happen before the web server has
