@@ -101,6 +101,14 @@ test('the file survives a round trip', () => {
   assert.equal(reloaded.preferences().theme, 'dark');
 });
 
+test('log scopes persist and survive a reload', () => {
+  const { store, file } = tempStore();
+  assert.deepEqual(store.logScopes(), []);
+  store.setLogScopes(['debug', 'tracker_debug']);
+  store.flush();
+  assert.deepEqual(new Store(file).logScopes(), ['debug', 'tracker_debug']);
+});
+
 test('a corrupt file starts clean instead of crashing', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-store-'));
   const file = path.join(dir, 'state.json');

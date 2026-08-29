@@ -87,6 +87,44 @@ export interface StateResponse {
 const HISTORY_LENGTH = 180;
 
 /**
+ * The log scopes the UI may attach at runtime, which is also the input
+ * allowlist: rtorrent faults on a name it does not know, and there is no
+ * reason to let arbitrary strings ride to it.
+ *
+ * This is a union across the supported releases, because the subsystem
+ * groups moved — measured against real builds rather than guessed at:
+ * 0.9.8 has connection/dht/peer/tracker_debug and no tracker_events, while
+ * 0.16.20 dropped those four and offers tracker_events instead; the six
+ * severities plus storage_debug, torrent_debug and rpc_events exist in
+ * both. There is no command that lists groups and attaching is the only
+ * probe (and cannot be undone), so the offer is the union and a scope this
+ * build refuses is reported by name rather than sinking the batch.
+ */
+export const LOG_SCOPES = [
+  'critical',
+  'error',
+  'warn',
+  'notice',
+  'info',
+  'debug',
+  'connection_debug',
+  'dht_debug',
+  'peer_debug',
+  'rpc_events',
+  'storage_debug',
+  'torrent_debug',
+  'tracker_debug',
+  'tracker_events',
+] as const;
+
+/** Keep the known scopes of a request, in catalog order, deduplicated. */
+export function sanitizeLogScopes(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const wanted = new Set(input.map(String));
+  return LOG_SCOPES.filter((scope) => wanted.has(scope));
+}
+
+/**
  * Torrents to start again once their hash check finishes.
  *
  * "Recheck & restart" exists for rtorrent's own dead end: "Download
@@ -164,6 +202,10 @@ export class RtorrentService {
   private bootSettingsApplied = false;
   private lastGameUpdate = 0;
   private readonly pendingRestarts = new PendingRestarts();
+  /** Scopes attached to the log during this rtorrent session. Reset when the
+   *  connection drops: a restarted rtorrent has forgotten them. */
+  private attachedScopes = new Set<string>();
+  private logScopesApplied = false;
 
   constructor(private readonly config: Config, private readonly store: Store) {
     this.client = new RtorrentClient(config.scgi);
@@ -187,6 +229,7 @@ export class RtorrentService {
         this.lastError = undefined;
         if (!this.bootSettingsApplied) await this.applyBootSettings();
         if (!this.throttlesApplied) await this.reapplyThrottles();
+        if (!this.logScopesApplied) await this.reapplyLogScopes();
         await this.processPendingRestarts();
         // Keep lifetime counters moving even when no browser is watching.
         if (this.config.gamify && Date.now() - this.lastGameUpdate > 30_000) {
@@ -196,6 +239,8 @@ export class RtorrentService {
         this.connected = false;
         this.throttlesApplied = false;
         this.bootSettingsApplied = false;
+        this.logScopesApplied = false;
+        this.attachedScopes.clear();
         this.capabilities.invalidate();
         this.lastError = (error as Error).message;
       }
@@ -281,6 +326,81 @@ export class RtorrentService {
       await this.client.multicallSettled(entries);
     }
     this.throttlesApplied = true;
+  }
+
+  /** rtorrent forgets runtime log outputs on restart; put ours back. */
+  private async reapplyLogScopes(): Promise<void> {
+    await this.capabilities.ensure();
+    this.logScopesApplied = true;
+    if (!this.capabilities.supports('logScopes')) return;
+    const extra = sanitizeLogScopes(this.store.logScopes());
+    if (extra.length === 0) return;
+    const failed = await this.attachScopes(extra);
+    if (failed.length > 0) {
+      // Kept in the store all the same: a scope this build refuses may be
+      // one the next build accepts, and losing the owner's choice over a
+      // version change would be the quieter, worse failure.
+      console.warn(`[cascade] this rtorrent has no log scope(s): ${failed.join(', ')}`);
+    }
+  }
+
+  /** The log-verbosity state the dialog shows. */
+  logScopes(): { boot: string[]; extra: string[]; available: string[]; supported: boolean } {
+    return {
+      // What RT_LOG_LEVEL baked into rtorrent.rc at container start — shown
+      // as fixed, since the rc reasserts it on every rtorrent start.
+      boot: this.config.logLevel
+        .split(',')
+        .map((scope) => scope.trim())
+        .filter(Boolean),
+      extra: sanitizeLogScopes(this.store.logScopes()),
+      available: [...LOG_SCOPES],
+      supported: this.capabilities.supports('logScopes'),
+    };
+  }
+
+  /**
+   * Set the scopes raised on top of RT_LOG_LEVEL.
+   *
+   * Raising is live: log.add_output attaches a scope to the running log.
+   * Lowering is not — rtorrent has no command to detach one — so a removed
+   * scope keeps writing until rtorrent restarts, and is simply not put back
+   * afterwards. The dialog says as much rather than pretending.
+   */
+  async setLogScopes(requested: unknown): Promise<{ stillActive: string[]; failed: string[] }> {
+    await this.capabilities.ensure();
+    if (!this.capabilities.supports('logScopes')) {
+      throw new HttpError(501, 'this rtorrent build does not expose log.add_output');
+    }
+    const scopes = sanitizeLogScopes(requested);
+    const previous = new Set(this.store.logScopes());
+    // A scope this build refuses must not sink the rest: the subsystem
+    // groups differ between releases (see LOG_SCOPES), so one stale name is
+    // ordinary, not exceptional. What took is kept; what did not is named.
+    const failed = await this.attachScopes(scopes);
+    this.store.setLogScopes(scopes.filter((scope) => !failed.includes(scope)));
+    // What was on and stays on for this rtorrent session despite being
+    // switched off — there is nothing to detach it with.
+    const stillActive = [...previous].filter(
+      (scope) => !scopes.includes(scope) && this.attachedScopes.has(scope),
+    );
+    return { stillActive, failed };
+  }
+
+  /** Attach scopes to the running log; returns the ones this build refused. */
+  private async attachScopes(scopes: string[]): Promise<string[]> {
+    const missing = scopes.filter((scope) => !this.attachedScopes.has(scope));
+    if (missing.length === 0) return [];
+    const results = await this.client.multicallSettled(
+      // "cascade" is the output the entrypoint opened in rtorrent.rc.
+      missing.map((scope) => ({ methodName: 'log.add_output', params: ['', scope, 'cascade'] })),
+    );
+    const failed: string[] = [];
+    missing.forEach((scope, index) => {
+      if (results[index] instanceof Error) failed.push(scope);
+      else this.attachedScopes.add(scope);
+    });
+    return failed;
   }
 
   /* ------------------------------- reads -------------------------------- */

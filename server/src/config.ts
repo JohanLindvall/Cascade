@@ -67,6 +67,8 @@ export interface Config {
   maxUploadBytes: number;
   pollIntervalMs: number;
   logFile: string;
+  /** The scopes RT_LOG_LEVEL baked into rtorrent.rc at container start. */
+  logLevel: string;
   bootSettingsFile: string;
   gamify: boolean;
 }
@@ -89,6 +91,7 @@ export const config: Config = {
   maxUploadBytes: num('CASCADE_MAX_UPLOAD_MB') * 1024 * 1024,
   pollIntervalMs: num('CASCADE_POLL_MS'),
   logFile: str('RT_LOG_FILE'),
+  logLevel: str('RT_LOG_LEVEL'),
   bootSettingsFile: str('CASCADE_BOOT_SETTINGS'),
   gamify: bool('CASCADE_GAMIFY'),
 };

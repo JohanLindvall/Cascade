@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { PendingRestarts } from './service';
+import { LOG_SCOPES, PendingRestarts, sanitizeLogScopes } from './service';
 
 const HASH = 'A'.repeat(40);
 
@@ -57,4 +57,14 @@ test('an unknown hash answers drop and disturbs nothing', () => {
   pending.add(HASH);
   assert.equal(pending.step('B'.repeat(40), 0), 'drop');
   assert.equal(pending.size, 1);
+});
+
+test('log scopes: only the catalog passes, in catalog order, once', () => {
+  assert.deepEqual(
+    sanitizeLogScopes(['tracker_debug', 'debug', 'tracker_debug', 'made_up', 42]),
+    ['debug', 'tracker_debug'],
+  );
+  assert.deepEqual(sanitizeLogScopes('debug'), []); // not an array: nothing
+  assert.deepEqual(sanitizeLogScopes(undefined), []);
+  assert.deepEqual(sanitizeLogScopes([...LOG_SCOPES]), [...LOG_SCOPES]);
 });

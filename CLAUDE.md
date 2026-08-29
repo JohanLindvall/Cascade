@@ -320,6 +320,21 @@ Two other things are easy to get wrong here:
   faults become 502 with rtorrent's own message, prefixed with the command that failed when it
   came out of a multicall).
 - Anything that deletes data must stay inside `config.deleteRoots`.
+- Log scopes raised in the UI are written **twice**: the entrypoint reads them out of the state
+  file and emits `log.add_output` lines into the generated rc (so they cover rtorrent's own
+  startup — the session load and the first announces happen before the web server has
+  connected), and the server re-attaches them on connect (so a mid-run rtorrent restart, which
+  the supervisor performs without regenerating the rc, gets them back too). Attaching a scope
+  twice is a no-op in rtorrent — measured, three attaches still yield one line — so the belt and
+  the braces cannot double anything.
+- Log verbosity is asymmetric on purpose: `log.add_output` attaches a scope to the running log
+  (empty-string target, then scope and output name — the output is the "cascade" file the
+  entrypoint opened), but **no release has a command to detach one**, so lowering only means
+  "stop re-attaching after the next rtorrent restart" and the UI says so. UI-raised scopes
+  persist in the store and are re-applied on reconnect exactly like throttle groups; the boot
+  scopes come back by themselves, being baked into rtorrent.rc from `RT_LOG_LEVEL` (which the
+  entrypoint now exports so the server can show them as fixed). `LOG_SCOPES` in service.ts is
+  both the offer and the input allowlist — rtorrent faults on unknown names.
 - "Recheck & restart" is two halves on purpose: the action stops, clears the stale
   `d.message` (which otherwise outranks everything in the status derivation and hides the
   running check) and queues `d.check_hash`; the poll tick then feeds `d.hashing` readings into

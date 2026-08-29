@@ -134,6 +134,43 @@ textarea {
   font-size: 12.2px;
 }
 
+/* The log dialog's verbosity row: the boot scopes as fixed tags, the rest as
+   toggles. A button styled as the tag it flips keeps the row one line of
+   like things instead of a form. */
+.log-scopes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.log-scopes-label {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-right: 2px;
+}
+.tag.scope-toggle {
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+}
+.tag.scope-toggle:hover {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+.tag.scope-toggle.on {
+  background: var(--accent-soft, rgba(124, 140, 255, 0.16));
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.tag.scope-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* While the detail divider is being dragged: no text selection sweeping the
    page, and the resize cursor everywhere the pointer goes. */
 body.row-resizing {

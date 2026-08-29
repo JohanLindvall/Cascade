@@ -56,6 +56,7 @@ const FEATURE_METHODS: Record<string, string | string[]> = {
   trackerInsert: 'd.tracker.insert',
   trackerToggle: 't.is_enabled.set',
   trackerAnnounce: 'd.tracker_announce',
+  logScopes: 'log.add_output',
 };
 
 /** Candidate field commands, filtered down to those the backend implements. */

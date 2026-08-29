@@ -128,6 +128,11 @@ export const api = {
     json<{ ok: boolean }>(`throttles/${encodeURIComponent(name)}`, 'DELETE'),
 
   log: (lines = 400) => request<{ lines: string[] }>(`log?lines=${lines}`),
+  logScopes: () => request<LogScopes>('log/scopes'),
+  setLogScopes: (scopes: string[]) =>
+    json<LogScopes & { stillActive: string[]; failed: string[] }>('log/scopes', 'POST', {
+      scopes,
+    }),
 
   rpcMethods: () => request<{ methods: string[] }>('rpc/methods'),
   rpc: (method: string, params: unknown[]) =>
@@ -139,5 +144,14 @@ export const api = {
   rpcHelp: (method: string) =>
     json<{ method: string; help: string; signature: unknown }>('rpc/help', 'POST', { method }),
 };
+
+export interface LogScopes {
+  /** Baked into rtorrent.rc by RT_LOG_LEVEL; fixed until the container restarts. */
+  boot: string[];
+  /** Raised from the UI on top of that; live, persisted, reapplied. */
+  extra: string[];
+  available: string[];
+  supported: boolean;
+}
 
 export type { Torrent };

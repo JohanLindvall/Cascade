@@ -177,7 +177,7 @@ Both that output and the tables below are generated from one catalog in the sour
 | `RT_WATCH_ENABLE` | `1` | Set 0 to ignore the watch directory |
 | `RT_WATCH_INTERVAL` | `10` | Watch-directory poll interval, seconds |
 | `RT_LOG_FILE` | `/config/rtorrent.log` | rtorrent's log file, surfaced in the UI |
-| `RT_LOG_LEVEL` | `info` | Log scopes: info, debug, dht_debug, tracker_debug, … |
+| `RT_LOG_LEVEL` | `info` | Log scopes: info, debug, dht_debug, tracker_debug, … (more can be raised live from the log dialog) |
 | `RT_UMASK` | `0022` | umask rtorrent creates files with |
 | `CASCADE_STATE_FILE` | `/config/cascade-state.json` | Preferences, progress, add times and throttle groups |
 | `CASCADE_CHOWN_DOWNLOADS` | `0` | Set 1 to chown the download directory at startup (slow on large libraries) |
@@ -311,6 +311,17 @@ The keyboard works throughout: `/` focuses search, `n` opens the Add dialog, `�
 list, `Ctrl/⌘-A` selects everything visible, `Delete` removes the selection (`Shift-Delete` also
 deletes its data, behind a confirmation), `Esc` clears the selection or closes what is open, and
 the column headers sort from the keyboard too.
+
+The log dialog carries a **Verbosity** row: the scopes `RT_LOG_LEVEL` baked in at container start
+show as fixed tags, and the rest — `debug`, `tracker_debug`, `dht_debug` and friends — toggle live,
+no restart. Raising one takes effect immediately and is remembered (re-attached after every
+rtorrent restart, like throttle groups); switching one off stays live until rtorrent next starts,
+because rtorrent has no command to detach a log scope — the toast says so when it happens. The
+subsystem groups moved between releases (0.9.x has `tracker_debug` and friends, 0.16 replaced
+them with `tracker_events`), so the row offers the union and a scope this build does not have is
+refused by name. A raised scope is remembered in the state file, so it survives a container
+restart as well — written straight into the generated `rtorrent.rc`, which is what lets it cover
+rtorrent's own startup rather than starting once the web server has connected.
 
 A torrent that rtorrent has stopped with an error — most famously *"Download registered as
 completed, but hash check returned unfinished chunks"* — carries a **Recheck & restart** button on
@@ -451,6 +462,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET`/`POST` | `/api/settings` | Read/write rtorrent's live settings |
 | `GET`/`POST`/`DELETE` | `/api/throttles` | Manage throttle groups |
 | `GET` | `/api/log` | Tail of the rtorrent log |
+| `GET`/`POST` | `/api/log/scopes` | Log verbosity: raise scopes live, on top of `RT_LOG_LEVEL` |
 | `GET` | `/api/rpc/methods`, `POST` `/api/rpc` | Every rtorrent command, as JSON |
 | `POST` | `/api/rpc/help` | `system.methodHelp` / `methodSignature` for one command |
 | `POST` | `/RPC2` | Raw XML-RPC passthrough |

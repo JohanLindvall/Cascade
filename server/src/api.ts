@@ -347,6 +347,23 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     }),
   );
 
+  router.get(
+    '/log/scopes',
+    wrap(async (_req, res) => {
+      await service.capabilities.ensure();
+      res.json(service.logScopes());
+    }),
+  );
+
+  router.post(
+    '/log/scopes',
+    wrap(async (req, res) => {
+      const body = req.body as { scopes?: unknown };
+      const result = await service.setLogScopes(body.scopes);
+      res.json({ ...service.logScopes(), ...result });
+    }),
+  );
+
   /* ------------------------- raw rtorrent RPC -------------------------- */
 
   router.get(

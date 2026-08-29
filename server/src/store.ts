@@ -31,6 +31,9 @@ interface StoreData {
   /** Hashes already counted as completed, kept so a re-add is not counted twice. */
   everCompleted: string[];
   prefs: Preferences;
+  /** Log scopes raised from the UI, re-attached after every rtorrent restart
+   *  (which drops runtime outputs) — the same arrangement as throttles. */
+  logScopes: string[];
 }
 
 function emptyData(): StoreData {
@@ -42,6 +45,7 @@ function emptyData(): StoreData {
     achievements: {},
     everCompleted: [],
     prefs: { ...DEFAULT_PREFERENCES },
+    logScopes: [],
   };
 }
 
@@ -67,6 +71,7 @@ export class Store {
         achievements: parsed.achievements ?? {},
         everCompleted: parsed.everCompleted ?? [],
         prefs: sanitizePreferences(DEFAULT_PREFERENCES, parsed.prefs ?? {}),
+        logScopes: Array.isArray(parsed.logScopes) ? parsed.logScopes.map(String) : [],
       };
     } catch {
       // First run, or an unreadable/corrupt file: start clean.
@@ -280,6 +285,15 @@ export class Store {
       changed = true;
     }
     if (changed) this.scheduleFlush();
+  }
+
+  logScopes(): string[] {
+    return [...this.data.logScopes];
+  }
+
+  setLogScopes(scopes: string[]): void {
+    this.data.logScopes = [...scopes];
+    this.scheduleFlush();
   }
 
   throttles(): ThrottleGroup[] {

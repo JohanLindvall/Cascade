@@ -42,7 +42,7 @@ BOOT_SETTINGS="${CASCADE_BOOT_SETTINGS:-/run/cascade/boot-settings.json}"
 RC_FILE="${RT_CONFIG_FILE:-/config/rtorrent.rc}"
 RUN_USER=rtorrent
 
-export TZ RT_LOG_FILE CASCADE_STATE_FILE CASCADE_BOOT_SETTINGS="$BOOT_SETTINGS"
+export TZ RT_LOG_FILE RT_LOG_LEVEL CASCADE_STATE_FILE CASCADE_BOOT_SETTINGS="$BOOT_SETTINGS"
 export CASCADE_SCGI="${CASCADE_SCGI:-$RT_SCGI_SOCKET}"
 
 rtorrent -h >/dev/null 2>&1 || die "the rtorrent binary will not run: $(rtorrent -h 2>&1 | head -n2)"
@@ -133,6 +133,21 @@ fi
 
 quote() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
+# Log scopes the UI raised in an earlier run, read out of the state file the
+# server owns. Anything unreadable — no file yet, corrupt JSON, no node —
+# yields nothing rather than failing the start, and the names are filtered to
+# the shape a scope has so a hand-edited file cannot inject rc lines.
+stored_log_scopes() {
+  [ -f "$CASCADE_STATE_FILE" ] || return 0
+  node -e '
+    try {
+      const data = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+      const scopes = Array.isArray(data.logScopes) ? data.logScopes : [];
+      console.log(scopes.filter((s) => /^[a-z][a-z_]{1,30}$/.test(s)).join(" "));
+    } catch { /* nothing to add */ }
+  ' "$CASCADE_STATE_FILE" 2>/dev/null || true
+}
+
 # Ask this rtorrent whether it knows a command, by feeding it a one-line option
 # file. Used for the few settings that must be in rtorrent.rc — the listening
 # port has to be right before rtorrent binds, and 0.16 renamed the commands
@@ -179,7 +194,14 @@ else
     fi
     echo
     echo "log.open_file = \"cascade\", $(quote "$RT_LOG_FILE")"
-    for scope in $(echo "$RT_LOG_LEVEL" | tr ',' ' '); do
+    # RT_LOG_LEVEL's scopes, plus the ones raised from the log dialog and
+    # remembered in the state file. The server re-attaches those on connect
+    # anyway, but only once it has connected — writing them here as well is
+    # what covers rtorrent's own startup: the session load, the first
+    # announces, anything that goes wrong before the web server is up.
+    # Attaching a scope twice is a no-op in rtorrent (measured), so the two
+    # paths cannot double a line.
+    for scope in $(echo "$RT_LOG_LEVEL" | tr ',' ' ') $(stored_log_scopes); do
       echo "log.add_output = \"$scope\", \"cascade\""
     done
     echo

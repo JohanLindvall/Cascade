@@ -109,7 +109,7 @@ export const OPTIONS: OptionDef[] = [
   {
     name: 'RT_LOG_LEVEL',
     section: 'Paths and identity',
-    summary: 'Log scopes: info, debug, dht_debug, tracker_debug, …',
+    summary: 'Log scopes: info, debug, dht_debug, tracker_debug, … (more can be raised live from the log dialog)',
     default: 'info',
   },
   {
