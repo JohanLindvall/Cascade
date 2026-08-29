@@ -305,8 +305,15 @@ export function App() {
     event.preventDefault();
     dragDepth.current = 0;
     setDropping(false);
-    // Drops inside a dialog belong to that dialog.
-    if (dialog) return;
+    // The Add dialog stages its own drops (its dropzone stops propagation, so
+    // this handler only ever sees the ones that missed it) — say where the
+    // file should land instead of swallowing the drop without a trace, which
+    // read as dragging being broken. Any other dialog has no stake in a
+    // drop: the file is handled exactly as if nothing were open.
+    if (dialog === 'add') {
+      toast.push('info', 'Drop it on the dialog\u2019s dropzone \u2014 or close the dialog to add it straight away.');
+      return;
+    }
 
     const transfer = event.dataTransfer;
     const dropped = Array.from(transfer?.files ?? []);
@@ -461,17 +468,38 @@ export function App() {
   /* ------------------------------- actions ----------------------------- */
 
   const runAction = useCallback(
-    async (action: string, hashes: string[] = targets) => {
-      if (hashes.length === 0) return;
+    async (action: string, hashes: string[] = targets): Promise<boolean> => {
+      if (hashes.length === 0) return false;
       try {
         const result = await api.bulkAction(hashes, action);
         for (const error of result.errors) toast.push('error', error);
         await refresh();
+        return result.errors.length === 0;
       } catch (error) {
         toast.error(error);
+        return false;
       }
     },
     [targets, refresh, toast],
+  );
+
+  /**
+   * Recheck, then start again the moment the check completes — the way out
+   * of "registered as completed, but hash check returned unfinished
+   * chunks", which a plain recheck leaves stopped. The server watches the
+   * check end; the toast says so, or the silence afterwards reads as a
+   * button that did nothing.
+   */
+  const recheckRestart = useCallback(
+    async (hashes: string[] = targets) => {
+      if (hashes.length === 0) return;
+      if (!(await runAction('recheck-restart', hashes))) return; // errors already toasted
+      toast.push(
+        'info',
+        `Rechecking ${hashes.length === 1 ? 'torrent' : `${hashes.length} torrents`} — starting again when the check completes`,
+      );
+    },
+    [targets, runAction, toast],
   );
 
   const removeTorrents = useCallback(
@@ -876,6 +904,14 @@ export function App() {
             onClick={() => {
               setMenu(null);
               void runAction('recheck', menuTargets);
+            }}
+          />
+          <MenuItem
+            icon={<IconRefresh size={13} />}
+            label="Recheck & restart"
+            onClick={() => {
+              setMenu(null);
+              void recheckRestart(menuTargets);
             }}
           />
           <MenuItem

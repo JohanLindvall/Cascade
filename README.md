@@ -312,6 +312,13 @@ list, `Ctrl/⌘-A` selects everything visible, `Delete` removes the selection (`
 deletes its data, behind a confirmation), `Esc` clears the selection or closes what is open, and
 the column headers sort from the keyboard too.
 
+A torrent that rtorrent has stopped with an error — most famously *"Download registered as
+completed, but hash check returned unfinished chunks"* — carries a **Recheck & restart** button on
+the error banner in its details (and in the right-click menu): the data is rechecked and the
+torrent started again the moment the check completes, so the missing chunks are fetched instead of
+the torrent sitting stopped behind a finished progress bar. A plain **Force recheck** still leaves
+the torrent stopped for inspection.
+
 Click a torrent for details — general, files with per-file priority, live peers and trackers. Peer
 and tracker rows expand for everything rtorrent knows: peer id, protocol extensions, direction,
 encryption and the preferred/snubbed/unwanted/banned flags.
@@ -435,7 +442,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET` | `/api/torrents/:hash/files` \| `/peers` \| `/trackers` | Per-torrent detail |
 | `POST` | `/api/torrents/upload` | Multipart: `torrents[]`, `urls`, `start`, `directory`, `label` |
 | `POST` | `/api/torrents/url` | Add one magnet/URL as JSON |
-| `POST` | `/api/torrents/:hash/action/:action` | `start`, `stop`, `pause`, `resume`, `recheck`, `announce` |
+| `POST` | `/api/torrents/:hash/action/:action` | `start`, `stop`, `pause`, `resume`, `recheck`, `recheck-restart`, `announce` |
 | `POST` | `/api/torrents/action/:action` | Same, for a list of hashes |
 | `PATCH` | `/api/torrents/:hash` | `priority`, `label`, `throttle`, `directory`, `maxUploads`, `maxDownloads` |
 | `POST` | `/api/torrents/remove` | Remove hashes, optionally `deleteData` |

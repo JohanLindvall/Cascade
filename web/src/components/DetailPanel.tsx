@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 import { bytes, duration, fileName, percent, rate, relative, timestamp, until } from '../format';
 import type { Peer, Torrent, TorrentFile, Tracker } from '../types';
-import { IconClose, IconFile, IconGlobe, IconInfo, IconUsers } from './icons';
+import { IconClose, IconFile, IconGlobe, IconInfo, IconRefresh, IconUsers } from './icons';
 import { ProgressBar, useToast } from './ui';
 
 type Tab = 'general' | 'files' | 'peers' | 'trackers';
@@ -492,6 +492,20 @@ function TabButton({
 }
 
 function General({ torrent }: { torrent: Torrent }) {
+  const toast = useToast();
+  const [fixing, setFixing] = useState(false);
+  const recheckRestart = async () => {
+    setFixing(true);
+    try {
+      await api.action(torrent.hash, 'recheck-restart');
+      toast.push('info', 'Rechecking — starting again when the check completes');
+    } catch (error) {
+      toast.error(error);
+    } finally {
+      setFixing(false);
+    }
+  };
+
   const rows: Array<[string, React.ReactNode]> = [
     ['Status', torrent.status],
     ['Size', bytes(torrent.size)],
@@ -524,7 +538,18 @@ function General({ torrent }: { torrent: Torrent }) {
     <>
       {torrent.message && (
         <div className="banner" style={{ marginBottom: 12, borderRadius: 9 }}>
-          {torrent.message}
+          <span style={{ flex: 1 }}>{torrent.message}</span>
+          {torrent.status === 'error' && (
+            <button
+              className="btn sm ghost"
+              disabled={fixing}
+              onClick={() => void recheckRestart()}
+              title="Recheck the data and start again once the check completes"
+            >
+              <IconRefresh size={13} />
+              <span>Recheck &amp; restart</span>
+            </button>
+          )}
         </div>
       )}
       <div className="kv-grid">

@@ -86,6 +86,73 @@ export interface StateResponse {
 
 const HISTORY_LENGTH = 180;
 
+/**
+ * Torrents to start again once their hash check finishes.
+ *
+ * "Recheck & restart" exists for rtorrent's own dead end: "Download
+ * registered as completed, but hash check returned unfinished chunks" stops
+ * the torrent, and a plain recheck leaves it stopped when the check ends —
+ * so fixing it by hand is two actions timed around a progress bar. The
+ * check itself can run for however long the disk takes, far past any HTTP
+ * request, so the action only *registers* the wish here and the poll tick
+ * feeds readings in until one of them says start.
+ *
+ * The decision is pure so it can be tested: feed it d.hashing readings and
+ * it answers wait, start or drop. A reading above zero proves the check is
+ * running (rtorrent marks even a queued check); the first zero after that
+ * means it finished. A check so fast every poll missed it entirely is
+ * covered by the zero-reading floor — after a few polls of nothing, the
+ * only explanation left is that it already ran.
+ */
+export class PendingRestarts {
+  private readonly entries = new Map<
+    string,
+    { sawHashing: boolean; zeroReads: number; since: number }
+  >();
+
+  /** How long a pending restart may wait: a full rehash of a huge torrent
+   *  on a slow disk is hours, so the ceiling is generous. */
+  static readonly MAX_AGE_MS = 24 * 60 * 60 * 1000;
+  /** Zero readings that mean "the check came and went between polls". */
+  static readonly ZERO_READS_FLOOR = 3;
+
+  add(hash: string, now = Date.now()): void {
+    this.entries.set(hash, { sawHashing: false, zeroReads: 0, since: now });
+  }
+
+  get size(): number {
+    return this.entries.size;
+  }
+
+  hashes(): string[] {
+    return [...this.entries.keys()];
+  }
+
+  /**
+   * Fold one d.hashing reading in. null means the torrent could not be
+   * asked (erased, or the call faulted): nothing left to restart.
+   */
+  step(hash: string, hashing: number | null, now = Date.now()): 'wait' | 'start' | 'drop' {
+    const entry = this.entries.get(hash);
+    if (!entry) return 'drop';
+    if (hashing === null || now - entry.since > PendingRestarts.MAX_AGE_MS) {
+      this.entries.delete(hash);
+      return 'drop';
+    }
+    if (hashing > 0) {
+      entry.sawHashing = true;
+      entry.zeroReads = 0;
+      return 'wait';
+    }
+    entry.zeroReads += 1;
+    if (entry.sawHashing || entry.zeroReads >= PendingRestarts.ZERO_READS_FLOOR) {
+      this.entries.delete(hash);
+      return 'start';
+    }
+    return 'wait';
+  }
+}
+
 export class RtorrentService {
   readonly client: RtorrentClient;
   readonly capabilities: Capabilities;
@@ -96,6 +163,7 @@ export class RtorrentService {
   private throttlesApplied = false;
   private bootSettingsApplied = false;
   private lastGameUpdate = 0;
+  private readonly pendingRestarts = new PendingRestarts();
 
   constructor(private readonly config: Config, private readonly store: Store) {
     this.client = new RtorrentClient(config.scgi);
@@ -119,6 +187,7 @@ export class RtorrentService {
         this.lastError = undefined;
         if (!this.bootSettingsApplied) await this.applyBootSettings();
         if (!this.throttlesApplied) await this.reapplyThrottles();
+        await this.processPendingRestarts();
         // Keep lifetime counters moving even when no browser is watching.
         if (this.config.gamify && Date.now() - this.lastGameUpdate > 30_000) {
           this.updateGame(await this.torrents());
@@ -543,8 +612,16 @@ export class RtorrentService {
         entries.push({ methodName: 'd.resume', params: [hash] });
         break;
       case 'recheck':
+      case 'recheck-restart':
         entries.push({ methodName: 'd.stop', params: [hash] });
         entries.push({ methodName: 'd.check_hash', params: [hash] });
+        // A stale error ("registered as completed, but hash check returned
+        // unfinished chunks") outranks everything in the status derivation,
+        // so left in place it hides the very check the user just started.
+        // The check writes its own message if it fails again.
+        if (this.capabilities.has('d.message.set')) {
+          entries.push({ methodName: 'd.message.set', params: [hash, ''] });
+        }
         break;
       case 'announce':
         entries.push({ methodName: 'd.tracker_announce', params: [hash] });
@@ -553,6 +630,39 @@ export class RtorrentService {
         throw new HttpError(400, `unknown action "${action}"`);
     }
     await this.client.multicall(entries);
+    // The restart half cannot happen here: the check runs for as long as the
+    // disk takes, far past this request. The poll tick watches for the end.
+    if (action === 'recheck-restart') this.pendingRestarts.add(hash);
+  }
+
+  /**
+   * Start whatever finished its recheck since the last tick — the second
+   * half of "recheck & restart". One read-only multicall for every pending
+   * hash; the starts go out as their own calls, never batched with anything
+   * else (quirk 5: lifecycle mixes in one multicall have segfaulted
+   * rtorrent).
+   */
+  private async processPendingRestarts(): Promise<void> {
+    if (this.pendingRestarts.size === 0) return;
+    const hashes = this.pendingRestarts.hashes();
+    const readings = await this.client.multicallSettled(
+      hashes.map((hash) => ({ methodName: 'd.hashing', params: [hash] })),
+    );
+    for (const [index, hash] of hashes.entries()) {
+      const value = readings[index];
+      const hashing = value instanceof Error ? null : Number(value) || 0;
+      if (this.pendingRestarts.step(hash, hashing) !== 'start') continue;
+      try {
+        await this.client.call('d.open', [hash]);
+        await this.client.call('d.start', [hash]);
+        console.log(`[cascade] recheck finished, restarted ${hash}`);
+      } catch (error) {
+        console.warn(
+          `[cascade] recheck finished but ${hash} would not start:`,
+          (error as Error).message,
+        );
+      }
+    }
   }
 
   async remove(hash: string, deleteData: boolean): Promise<void> {

@@ -320,6 +320,13 @@ Two other things are easy to get wrong here:
   faults become 502 with rtorrent's own message, prefixed with the command that failed when it
   came out of a multicall).
 - Anything that deletes data must stay inside `config.deleteRoots`.
+- "Recheck & restart" is two halves on purpose: the action stops, clears the stale
+  `d.message` (which otherwise outranks everything in the status derivation and hides the
+  running check) and queues `d.check_hash`; the poll tick then feeds `d.hashing` readings into
+  `PendingRestarts` (pure, tested) and issues `d.open`/`d.start` as separate calls when a check
+  ends — never batched with anything, per quirk 5. The check can outlive any HTTP request,
+  which is why the restart cannot live in the handler; pending entries survive only in memory
+  and expire after a day.
 - The UI polls `/api/state` once per interval rather than issuing many calls; rtorrent is single
   threaded and does not enjoy being hammered (`MAX_CONCURRENCY` in `rtorrent.ts` caps it). The
   poll chains timeouts rather than using an interval, so a slow response never stacks requests,
