@@ -18,6 +18,9 @@ import {
   parseRate,
   percent,
   rate,
+  relative,
+  timestamp,
+  until,
 } from './format.ts';
 
 test('bytes picks the unit and the precision', () => {
@@ -124,4 +127,16 @@ test('the rendered time and day are stable strings', () => {
   const at = new Date(1788016396 * 1000);
   assert.match(logTime(at), /^\d{2}:\d{2}:\d{2}$/);
   assert.ok(logDay(at).length > 0);
+});
+
+test('timestamps, countdowns and ages treat zero as unset', () => {
+  assert.equal(timestamp(0), '—');
+  assert.match(timestamp(1788016396), /2026/);
+  assert.equal(until(0), '—');
+  assert.equal(relative(0), '—');
+  const now = Date.now() / 1000;
+  assert.equal(until(now - 5), 'due');
+  assert.match(until(now + 90), /^in 1m/);
+  assert.equal(relative(now - 5), 'just now');
+  assert.match(relative(now - 3 * 3600), /^3h .* ago$/);
 });

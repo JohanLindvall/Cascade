@@ -27,7 +27,12 @@ import {
   type TorrentFile,
   type Tracker,
 } from './model';
-import { RtorrentClient, type MulticallEntry } from './rtorrent';
+import {
+  RtorrentClient,
+  settledNumber,
+  type MulticallEntry,
+  type RpcClient,
+} from './rtorrent';
 import {
   decodeSettingValue,
   readableSettings,
@@ -56,6 +61,8 @@ export interface GlobalStatus {
   listenPort: number;
   /** Free bytes on the download volume; null when it cannot be determined. */
   diskFree: number | null;
+  /** rtorrent's default download directory, shown as the Add dialog's default. */
+  downloadDir: string;
   backend: BackendSummary;
   history: RateSample[];
 }
@@ -84,7 +91,25 @@ export interface StateResponse {
   game: GameState;
 }
 
+/** How a torrent is added: started or not, and where and under what label. */
+export interface LoadOptions {
+  start: boolean;
+  directory?: string;
+  label?: string;
+}
+
+/** The log-verbosity state the dialog shows. */
+export interface LogScopeState {
+  /** Baked into rtorrent.rc by RT_LOG_LEVEL; fixed until the container restarts. */
+  boot: string[];
+  /** Raised from the UI on top of that; live, persisted, re-applied. */
+  extra: string[];
+  available: string[];
+  supported: boolean;
+}
+
 const HISTORY_LENGTH = 180;
+const THROTTLE_NAME_RE = /^[A-Za-z0-9_.-]{1,32}$/;
 
 /**
  * The log scopes the UI may attach at runtime, which is also the input
@@ -192,12 +217,13 @@ export class PendingRestarts {
 }
 
 export class RtorrentService {
-  readonly client: RtorrentClient;
+  readonly client: RpcClient;
   readonly capabilities: Capabilities;
   private readonly history: RateSample[] = [];
   private lastError: string | undefined;
   private connected = false;
   private pollTimer: NodeJS.Timeout | null = null;
+  private polling = false;
   private throttlesApplied = false;
   private bootSettingsApplied = false;
   private lastGameUpdate = 0;
@@ -207,21 +233,31 @@ export class RtorrentService {
   private attachedScopes = new Set<string>();
   private logScopesApplied = false;
 
-  constructor(private readonly config: Config, private readonly store: Store) {
-    this.client = new RtorrentClient(config.scgi);
-    this.capabilities = new Capabilities(
-      this.client,
-      TORRENT_FIELDS,
-      FILE_FIELDS,
-      PEER_FIELDS,
-      TRACKER_FIELDS,
-    );
+  /** The client defaults to the configured SCGI endpoint; tests pass a scripted one. */
+  constructor(
+    private readonly config: Config,
+    private readonly store: Store,
+    client: RpcClient = new RtorrentClient(config.scgi),
+  ) {
+    this.client = client;
+    this.capabilities = new Capabilities(client, {
+      torrent: TORRENT_FIELDS,
+      file: FILE_FIELDS,
+      peer: PEER_FIELDS,
+      tracker: TRACKER_FIELDS,
+    });
   }
 
   /* ----------------------------- lifecycle ------------------------------ */
 
+  /**
+   * Sample rates and run the housekeeping on a timer. Ticks are chained rather
+   * than scheduled on an interval: a slow or hung rtorrent (the SCGI timeout
+   * is 30s) would otherwise stack a tick per second behind the request queue.
+   */
   startPolling(): void {
-    if (this.pollTimer) return;
+    if (this.polling) return;
+    this.polling = true;
     const tick = async () => {
       try {
         await this.sampleRates();
@@ -244,14 +280,16 @@ export class RtorrentService {
         this.capabilities.invalidate();
         this.lastError = (error as Error).message;
       }
+      if (!this.polling) return;
+      this.pollTimer = setTimeout(tick, this.config.pollIntervalMs);
+      this.pollTimer.unref?.();
     };
     void tick();
-    this.pollTimer = setInterval(tick, this.config.pollIntervalMs);
-    this.pollTimer.unref?.();
   }
 
   stopPolling(): void {
-    if (this.pollTimer) clearInterval(this.pollTimer);
+    this.polling = false;
+    if (this.pollTimer) clearTimeout(this.pollTimer);
     this.pollTimer = null;
   }
 
@@ -344,8 +382,7 @@ export class RtorrentService {
     }
   }
 
-  /** The log-verbosity state the dialog shows. */
-  logScopes(): { boot: string[]; extra: string[]; available: string[]; supported: boolean } {
+  logScopes(): LogScopeState {
     return {
       // What RT_LOG_LEVEL baked into rtorrent.rc at container start — shown
       // as fixed, since the rc reasserts it on every rtorrent start.
@@ -461,45 +498,49 @@ export class RtorrentService {
   async status(torrents?: Torrent[]): Promise<GlobalStatus> {
     await this.capabilities.ensure();
     const list = torrents ?? (await this.torrents());
-    const entries: MulticallEntry[] = [
-      { methodName: 'throttle.global_down.rate', params: [] },
-      { methodName: 'throttle.global_up.rate', params: [] },
-      { methodName: 'throttle.global_down.total', params: [] },
-      { methodName: 'throttle.global_up.total', params: [] },
-      { methodName: 'throttle.global_down.max_rate', params: [] },
-      { methodName: 'throttle.global_up.max_rate', params: [] },
-      { methodName: 'network.listen.port', params: [] },
+    const methods = [
+      'throttle.global_down.rate',
+      'throttle.global_up.rate',
+      'throttle.global_down.total',
+      'throttle.global_up.total',
+      'throttle.global_down.max_rate',
+      'throttle.global_up.max_rate',
+      'network.listen.port',
+      'directory.default',
     ];
-    // Remember where the optional entry lands instead of hard-coding its
-    // position: a probe added above it would silently read the wrong slot.
-    let dhtIndex = -1;
-    if (this.capabilities.supports('dhtStatistics')) {
-      dhtIndex = entries.length;
-      entries.push({ methodName: 'dht.statistics', params: [] });
-    }
-    const results = await this.client.multicallSettled(entries);
-    const number = (index: number): number => {
-      const value = results[index];
-      return value instanceof Error ? 0 : Number(value) || 0;
-    };
+    if (this.capabilities.supports('dhtStatistics')) methods.push('dht.statistics');
+    const results = await this.client.multicallSettled(
+      methods.map((methodName) => ({ methodName, params: [] })),
+    );
+    // Answers are looked up by command rather than by position, so an entry
+    // added above another cannot silently shift it into the wrong slot.
+    const answer = (method: string) => results[methods.indexOf(method)];
+    const number = (method: string) => settledNumber(answer(method));
+
     let dhtNodes = 0;
-    const dht = dhtIndex >= 0 ? results[dhtIndex] : undefined;
+    const dht = answer('dht.statistics');
     if (dht && !(dht instanceof Error) && typeof dht === 'object' && !Array.isArray(dht)) {
       dhtNodes = Number((dht as Record<string, XValue>).active_nodes ?? 0) || 0;
     }
+    const directory = answer('directory.default');
 
     return {
       connected: this.connected,
       error: this.lastError,
-      downRate: number(0),
-      upRate: number(1),
-      downTotal: number(2),
-      upTotal: number(3),
-      downLimit: number(4),
-      upLimit: number(5),
-      listenPort: number(6),
+      downRate: number('throttle.global_down.rate'),
+      upRate: number('throttle.global_up.rate'),
+      downTotal: number('throttle.global_down.total'),
+      upTotal: number('throttle.global_up.total'),
+      downLimit: number('throttle.global_down.max_rate'),
+      upLimit: number('throttle.global_up.max_rate'),
+      listenPort: number('network.listen.port'),
       dhtNodes,
       diskFree: await this.freeSpace(),
+      downloadDir: Buffer.isBuffer(directory)
+        ? directory.toString('utf8')
+        : typeof directory === 'string'
+          ? directory
+          : '',
       torrentCount: list.length,
       activeCount: list.filter((item) => item.status === 'downloading' || item.status === 'seeding')
         .length,
@@ -592,10 +633,7 @@ export class RtorrentService {
 
   /* ------------------------------- writes ------------------------------- */
 
-  async addTorrentFile(
-    data: Buffer,
-    options: { start: boolean; directory?: string; label?: string },
-  ): Promise<void> {
+  async addTorrentFile(data: Buffer, options: LoadOptions): Promise<void> {
     await this.capabilities.ensure();
 
     // rtorrent reports success for anything, so reject junk before handing it
@@ -635,10 +673,7 @@ export class RtorrentService {
     }
   }
 
-  async addTorrentUrl(
-    url: string,
-    options: { start: boolean; directory?: string; label?: string },
-  ): Promise<void> {
+  async addTorrentUrl(url: string, options: LoadOptions): Promise<void> {
     await this.capabilities.ensure();
     // load.* silently queues whatever it is given; a link rtorrent cannot fetch
     // would just vanish, so refuse anything that is not fetchable up front.
@@ -704,7 +739,7 @@ export class RtorrentService {
     }
   }
 
-  private loadCommands(options: { directory?: string; label?: string }): string[] {
+  private loadCommands(options: LoadOptions): string[] {
     const commands: string[] = [];
     if (options.directory) commands.push(`d.directory.set="${escapeArg(options.directory)}"`);
     if (options.label && this.capabilities.supports('labels')) {
@@ -744,6 +779,9 @@ export class RtorrentService {
         }
         break;
       case 'announce':
+        if (!this.capabilities.supports('trackerAnnounce')) {
+          throw new HttpError(501, 'this rtorrent build does not expose d.tracker_announce');
+        }
         entries.push({ methodName: 'd.tracker_announce', params: [hash] });
         break;
       default:
@@ -770,7 +808,7 @@ export class RtorrentService {
     );
     for (const [index, hash] of hashes.entries()) {
       const value = readings[index];
-      const hashing = value instanceof Error ? null : Number(value) || 0;
+      const hashing = value instanceof Error ? null : settledNumber(value);
       if (this.pendingRestarts.step(hash, hashing) !== 'start') continue;
       try {
         await this.client.call('d.open', [hash]);
@@ -787,23 +825,21 @@ export class RtorrentService {
 
   async remove(hash: string, deleteData: boolean): Promise<void> {
     await this.capabilities.ensure();
-    let basePath = '';
+    let dataPath: string | undefined;
     if (deleteData) {
       if (!this.config.allowDataDelete) {
         throw new HttpError(403, 'deleting torrent data is disabled (CASCADE_ALLOW_DATA_DELETE=0)');
       }
-      basePath = String(await this.client.call('d.base_path', [hash]));
+      const basePath = String(await this.client.call('d.base_path', [hash]));
       // Refused before the torrent is erased: rejecting the path afterwards
       // left the metadata gone and the data behind — the one combination the
       // user did not ask for. An empty base path (never started) has nothing
       // to check or delete.
-      if (basePath) this.assertDeletable(basePath);
+      if (basePath) dataPath = this.assertDeletable(basePath);
     }
     await this.client.call('d.erase', [hash]);
     this.store.forget(hash);
-    if (deleteData && basePath) {
-      await fs.rm(this.assertDeletable(basePath), { recursive: true, force: true });
-    }
+    if (dataPath) await fs.rm(dataPath, { recursive: true, force: true });
   }
 
   /** Only ever unlink paths that live inside a configured data root. */
@@ -880,6 +916,10 @@ export class RtorrentService {
   }
 
   async setTrackerEnabled(hash: string, index: number, enabled: boolean): Promise<void> {
+    await this.capabilities.ensure();
+    if (!this.capabilities.supports('trackerToggle')) {
+      throw new HttpError(501, 'this rtorrent build does not expose t.is_enabled.set');
+    }
     await this.client.call('t.is_enabled.set', [`${hash}:t${index}`, enabled ? 1 : 0]);
   }
 
@@ -925,7 +965,7 @@ export class RtorrentService {
     if (!this.capabilities.supports('throttleGroups')) {
       throw new HttpError(501, 'this rtorrent build does not support throttle groups');
     }
-    if (!/^[A-Za-z0-9_.-]{1,32}$/.test(group.name)) {
+    if (!THROTTLE_NAME_RE.test(group.name)) {
       throw new HttpError(400, 'throttle name must be 1-32 chars of [A-Za-z0-9_.-]');
     }
     await this.client.multicall([
@@ -937,6 +977,11 @@ export class RtorrentService {
 
   async deleteThrottle(name: string): Promise<void> {
     await this.capabilities.ensure();
+    // throttle.up creates a group it does not know, so unlimiting a name the
+    // store never saved would conjure one up rather than remove anything.
+    if (!this.store.throttles().some((group) => group.name === name)) {
+      throw new HttpError(404, `no throttle group named "${name}"`);
+    }
     if (this.capabilities.supports('throttleGroups')) {
       // rtorrent cannot drop a throttle group at runtime; unlimit it instead so
       // torrents still assigned to it are no longer restricted.
@@ -960,11 +1005,9 @@ export class RtorrentService {
     const results = await this.client.multicallSettled(entries);
     const rates: Record<string, { up: number; down: number }> = {};
     groups.forEach((group, index) => {
-      const up = results[index * 2];
-      const down = results[index * 2 + 1];
       rates[group.name] = {
-        up: up instanceof Error ? 0 : Number(up) || 0,
-        down: down instanceof Error ? 0 : Number(down) || 0,
+        up: settledNumber(results[index * 2]),
+        down: settledNumber(results[index * 2 + 1]),
       };
     });
     return rates;

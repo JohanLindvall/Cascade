@@ -1,7 +1,11 @@
 /**
- * Small JSON-backed store for state rtorrent itself does not keep:
- * when a torrent was added to this UI, and the throttle groups we created
- * (rtorrent forgets throttle groups on restart, so we re-create them).
+ * The one JSON-backed store for everything Cascade remembers that rtorrent
+ * does not: UI preferences, lifetime counters and unlocked badges, when each
+ * torrent was first seen and its last totals, the throttle groups and the log
+ * scopes that have to be re-created after an rtorrent restart.
+ *
+ * Writes are debounced and land through a temp file plus rename, and only a
+ * real change may dirty the file — the list is folded in on every poll.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -201,18 +205,11 @@ export class Store {
       const complete = torrent.progress >= 1;
 
       if (previous) {
-        if (torrent.upTotal > previous.up) {
-          stats.lifetimeUp += torrent.upTotal - previous.up;
-          changed = true;
-        }
-        if (torrent.downTotal > previous.down) {
-          stats.lifetimeDown += torrent.downTotal - previous.down;
-          changed = true;
-        }
-        if (complete && !previous.complete) {
-          this.countCompletion(torrent.hash);
-          changed = true;
-        }
+        // Totals only ever grow, but a recheck can reset one: a shrink is
+        // remembered without being subtracted from the lifetime counters.
+        stats.lifetimeUp += Math.max(0, torrent.upTotal - previous.up);
+        stats.lifetimeDown += Math.max(0, torrent.downTotal - previous.down);
+        if (complete && !previous.complete) this.countCompletion(torrent.hash);
         if (previous.up !== torrent.upTotal || previous.down !== torrent.downTotal ||
             previous.complete !== complete) {
           changed = true;

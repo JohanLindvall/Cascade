@@ -18,9 +18,12 @@ interface ModalProps {
   children: ReactNode;
   footer?: ReactNode;
   wide?: boolean;
+  /** A short dialog (a confirmation, one field): narrower, and a centred card
+   *  rather than a full-screen sheet on phones. */
+  small?: boolean;
 }
 
-export function Modal({ title, onClose, children, footer, wide }: ModalProps) {
+export function Modal({ title, onClose, children, footer, wide, small }: ModalProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -37,9 +40,12 @@ export function Modal({ title, onClose, children, footer, wide }: ModalProps) {
   }, []);
 
   return (
-    <div className="overlay" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div
+      className={small ? 'overlay small' : 'overlay'}
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
       <div
-        className={wide ? 'modal wide' : 'modal'}
+        className={`modal ${wide ? 'wide' : ''} ${small ? 'small' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={typeof title === 'string' ? title : undefined}
@@ -104,6 +110,8 @@ export function Switch({
   );
 }
 
+export type BarVariant = 'default' | 'done' | 'error' | 'idle' | 'checking';
+
 export function ProgressBar({
   value,
   variant = 'default',
@@ -111,7 +119,7 @@ export function ProgressBar({
   live,
 }: {
   value: number;
-  variant?: 'default' | 'done' | 'error' | 'idle' | 'checking';
+  variant?: BarVariant;
   striped?: boolean;
   /** Sweeps a highlight across the filled portion while data is moving. */
   live?: boolean;

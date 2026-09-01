@@ -17,23 +17,15 @@ import { Header } from './components/Header';
 import { LogDialog } from './components/LogDialog';
 import { RpcConsole } from './components/RpcConsole';
 import { SettingsDialog } from './components/SettingsDialog';
-import { Sidebar, matchesStatus, type Filter, type ToolId } from './components/Sidebar';
+import { Sidebar, type ToolId } from './components/Sidebar';
 import { ThrottleDialog } from './components/ThrottleDialog';
-import {
-  SORT_OPTIONS,
-  TorrentTable,
-  sortTorrents,
-  type SelectMods,
-  type SortKey,
-  type SortState,
-} from './components/TorrentTable';
+import { TorrentMenu, type MenuActions } from './components/TorrentMenu';
+import { SORT_OPTIONS, TorrentTable, type SelectMods } from './components/TorrentTable';
+import { useDialogs } from './components/dialogs';
 import {
   IconAlert,
   IconFilter,
-  IconGauge,
-  IconLink,
   IconList,
-  IconMove,
   IconPause,
   IconPlay,
   IconRefresh,
@@ -43,7 +35,9 @@ import {
   IconTrash,
   IconUpload,
 } from './components/icons';
-import { ContextMenu, MenuItem, useToast } from './components/ui';
+import { useToast } from './components/ui';
+import { acceptTorrents } from './files';
+import { filterTorrents, type Filter } from './filter';
 import { grimAchievement, grimGame } from './grim';
 import { COMPACT_QUERY, useMediaQuery } from './useMediaQuery';
 import {
@@ -52,6 +46,7 @@ import {
   savePreferences,
   type Preferences,
 } from './prefs';
+import { defaultSortDir, sortTorrents, type SortKey, type SortState } from './sort';
 import { applyTheme, fxFlavor, resolveTheme, type ResolvedTheme, type ThemeMode } from './theme';
 import type { GameState, GlobalStatus, ThrottleGroup, Torrent } from './types';
 
@@ -77,7 +72,7 @@ export function App() {
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortState>(() => {
     const cached = readCache();
-    return { key: cached.sortKey as SortKey, dir: cached.sortDir };
+    return { key: cached.sortKey, dir: cached.sortDir };
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [focused, setFocused] = useState<string | null>(null);
@@ -92,10 +87,15 @@ export function App() {
   // Seeded from the cache so the first paint is already themed, then replaced
   // by whatever the server's preferences file says.
   const [prefs, setPrefs] = useState<Preferences>(() => readCache());
-  const [resolvedTheme, setResolvedTheme] = useState<string>(() => resolveTheme(readCache().theme));
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() =>
+    resolveTheme(readCache().theme),
+  );
   const themeMode = prefs.theme;
+  const grim = resolvedTheme === 'blackmetal';
+  const flavor = fxFlavor(resolvedTheme);
 
   const toast = useToast();
+  const dialogs = useDialogs();
   const compact = useMediaQuery(COMPACT_QUERY);
   const searchRef = useRef<HTMLInputElement>(null);
   const lastAnchor = useRef<string | null>(null);
@@ -103,16 +103,15 @@ export function App() {
   const completedRef = useRef<Set<string> | null>(null);
   const seenBadgesRef = useRef<string[] | null>(null);
   // Read by badge toasts without re-subscribing the poll to theme changes.
-  const grimRef = useRef(resolvedTheme === 'blackmetal');
-  grimRef.current = resolvedTheme === 'blackmetal';
+  const grimRef = useRef(grim);
+  grimRef.current = grim;
+  // Any modal — the app's own dialogs or a confirm/prompt — takes the keyboard.
+  const modalOpen = dialog !== null || dialogs.open;
 
   // The black metal theme re-carves the gamification copy; the server's ids
   // and progress stay canonical, so switching themes never changes what is
   // earned.
-  const displayGame = useMemo(
-    () => (game && resolvedTheme === 'blackmetal' ? grimGame(game) : game),
-    [game, resolvedTheme],
-  );
+  const displayGame = useMemo(() => (game && grim ? grimGame(game) : game), [game, grim]);
 
   const clearBurst = useCallback(() => setBurst(null), []);
   const clearCelebration = useCallback(() => setCelebration(0), []);
@@ -130,7 +129,7 @@ export function App() {
       .then((stored) => {
         setPrefs(stored);
         seenBadgesRef.current = stored.seenBadges;
-        setSort({ key: stored.sortKey as SortKey, dir: stored.sortDir });
+        setSort({ key: stored.sortKey, dir: stored.sortDir });
         setDetailHeight(stored.detailHeight);
       })
       .catch(() => {
@@ -258,12 +257,6 @@ export function App() {
 
   /* --------------------------- drag and drop ---------------------------- */
 
-  const acceptTorrents = (files: File[]): File[] =>
-    files.filter(
-      (file) =>
-        file.name.toLowerCase().endsWith('.torrent') || file.type === 'application/x-bittorrent',
-    );
-
   /**
    * Whether a drag is carrying something droppable: files, or a link — which
    * is how a magnet arrives when dragged out of another tab. Some sources
@@ -301,6 +294,39 @@ export function App() {
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
   };
 
+  const submitDrop = useCallback(
+    async (form: FormData) => {
+      try {
+        const result = await api.upload(form);
+        for (const error of result.errors) toast.push('error', error);
+        if (result.added > 0) await refresh();
+      } catch (error) {
+        toast.error(error);
+      }
+    },
+    [refresh, toast],
+  );
+
+  const addDropped = useCallback(
+    async (files: File[]) => {
+      const form = new FormData();
+      for (const file of files) form.append('torrents', file);
+      form.append('start', '1');
+      await submitDrop(form);
+    },
+    [submitDrop],
+  );
+
+  const addDroppedLinks = useCallback(
+    async (links: string[]) => {
+      const form = new FormData();
+      form.append('urls', links.join('\n'));
+      form.append('start', '1');
+      await submitDrop(form);
+    },
+    [submitDrop],
+  );
+
   const onDropFiles = (event: DragEvent) => {
     event.preventDefault();
     dragDepth.current = 0;
@@ -311,28 +337,21 @@ export function App() {
     // read as dragging being broken. Any other dialog has no stake in a
     // drop: the file is handled exactly as if nothing were open.
     if (dialog === 'add') {
-      toast.push('info', 'Drop it on the dialog\u2019s dropzone \u2014 or close the dialog to add it straight away.');
+      toast.push('info', 'Drop it on the dialog’s dropzone — or close the dialog to add it straight away.');
       return;
     }
 
     const transfer = event.dataTransfer;
     const dropped = Array.from(transfer?.files ?? []);
-    const torrents = acceptTorrents(dropped);
+    const { accepted, ignored } = acceptTorrents(dropped);
+    if (ignored) toast.push('info', ignored);
 
-    if (torrents.length > 0) {
-      const ignored = dropped.length - torrents.length;
-      if (ignored > 0) {
-        toast.push('info', `${ignored} file(s) ignored — only .torrent files are accepted`);
-      }
-      setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count: torrents.length });
-      void addDropped(torrents);
+    if (accepted.length > 0) {
+      setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count: accepted.length });
+      void addDropped(accepted);
       return;
     }
-
-    if (dropped.length > 0) {
-      toast.push('info', `${dropped.length} file(s) ignored — only .torrent files are accepted`);
-      return;
-    }
+    if (dropped.length > 0) return; // Only non-torrents: already said so.
 
     // No file payload: a link may still be droppable, which is how magnets
     // arrive when dragged out of a browser.
@@ -368,53 +387,12 @@ export function App() {
     );
   };
 
-  const submitDrop = useCallback(
-    async (form: FormData) => {
-      try {
-        const result = await api.upload(form);
-        for (const error of result.errors) toast.push('error', error);
-        if (result.added > 0) await refresh();
-      } catch (error) {
-        toast.error(error);
-      }
-    },
-    [refresh, toast],
-  );
-
-  const addDropped = useCallback(
-    async (files: File[]) => {
-      const form = new FormData();
-      for (const file of files) form.append('torrents', file);
-      form.append('start', '1');
-      await submitDrop(form);
-    },
-    [submitDrop],
-  );
-
-  const addDroppedLinks = useCallback(
-    async (links: string[]) => {
-      const form = new FormData();
-      form.append('urls', links.join('\n'));
-      form.append('start', '1');
-      await submitDrop(form);
-    },
-    [submitDrop],
-  );
-
   /* ------------------------------ filtering ---------------------------- */
 
-  const visible = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    const filtered = torrents.filter((torrent) => {
-      if (filter.kind === 'status' && !matchesStatus(torrent, filter.value)) return false;
-      if (filter.kind === 'label' && torrent.label !== filter.value) return false;
-      if (filter.kind === 'tracker' && trackerHosts[torrent.hash] !== filter.value) return false;
-      if (needle && !torrent.name.toLowerCase().includes(needle) && !torrent.hash.toLowerCase().includes(needle))
-        return false;
-      return true;
-    });
-    return sortTorrents(filtered, sort);
-  }, [torrents, filter, search, sort, trackerHosts]);
+  const visible = useMemo(
+    () => sortTorrents(filterTorrents(torrents, filter, search, trackerHosts), sort),
+    [torrents, filter, search, sort, trackerHosts],
+  );
 
   const byHash = useMemo(() => {
     const map = new Map<string, Torrent>();
@@ -428,6 +406,11 @@ export function App() {
     [selected, byHash],
   );
   const targets = selectedHashes.length > 0 ? selectedHashes : focused ? [focused] : [];
+
+  const labels = useMemo(
+    () => [...new Set(torrents.map((torrent) => torrent.label).filter(Boolean))].sort(),
+    [torrents],
+  );
 
   /* ------------------------------ selection ---------------------------- */
 
@@ -505,20 +488,22 @@ export function App() {
   const removeTorrents = useCallback(
     async (deleteData: boolean, hashes: string[] = targets) => {
       if (hashes.length === 0) return;
-      const names = hashes
-        .map((hash) => byHash.get(hash)?.name ?? hash)
-        .slice(0, 5)
-        .join('\n  ');
-      const suffix = hashes.length > 5 ? `\n  …and ${hashes.length - 5} more` : '';
-      const question = deleteData
-        ? `Remove ${hashes.length} torrent(s) AND delete their downloaded data?\n\n  ${names}${suffix}\n\nThis cannot be undone.`
-        : `Remove ${hashes.length} torrent(s) from rtorrent? Downloaded data is kept.\n\n  ${names}${suffix}`;
-      if (!window.confirm(question)) return;
+      const count = hashes.length === 1 ? 'this torrent' : `these ${hashes.length} torrents`;
+      const ok = await dialogs.confirm({
+        title: deleteData ? 'Remove and delete data' : 'Remove torrent',
+        message: deleteData
+          ? `Remove ${count} from rtorrent and delete the downloaded data? This cannot be undone.`
+          : `Remove ${count} from rtorrent? The downloaded data is kept.`,
+        items: hashes.map((hash) => byHash.get(hash)?.name ?? hash),
+        confirmLabel: deleteData ? 'Remove and delete' : 'Remove',
+        danger: deleteData,
+      });
+      if (!ok) return;
       try {
         const result = await api.remove(hashes, deleteData);
         for (const error of result.errors) toast.push('error', error);
         if (result.errors.length === 0) {
-          toast.push('success', `Removed ${hashes.length} torrent(s)`);
+          toast.push('success', `Removed ${hashes.length} torrent${hashes.length === 1 ? '' : 's'}`);
         }
         setSelected(new Set());
         setFocused(null);
@@ -527,7 +512,7 @@ export function App() {
         toast.error(error);
       }
     },
-    [targets, byHash, refresh, toast],
+    [targets, byHash, dialogs, refresh, toast],
   );
 
   const patchTorrents = useCallback(
@@ -542,22 +527,33 @@ export function App() {
     [targets, refresh, toast],
   );
 
-  const promptLabel = useCallback(() => {
-    const current = focusedTorrent?.label ?? '';
-    const label = window.prompt('Label (empty to clear):', current);
+  const promptLabel = useCallback(async () => {
+    const label = await dialogs.prompt({
+      title: 'Set label',
+      label: 'Label',
+      message: 'Leave it empty to clear the label.',
+      initial: focusedTorrent?.label ?? '',
+      placeholder: 'none',
+      suggestions: labels,
+      confirmLabel: 'Apply',
+    });
     if (label === null) return;
-    void patchTorrents({ label });
-  }, [focusedTorrent, patchTorrents]);
+    void patchTorrents({ label: label.trim() });
+  }, [dialogs, focusedTorrent, labels, patchTorrents]);
 
-  const promptDirectory = useCallback(() => {
-    const current = focusedTorrent?.directory ?? '';
-    const directory = window.prompt(
-      'Move to directory (rtorrent updates the session; move the files yourself if already downloaded):',
-      current,
-    );
-    if (!directory) return;
-    void patchTorrents({ directory });
-  }, [focusedTorrent, patchTorrents]);
+  const promptDirectory = useCallback(async () => {
+    const directory = await dialogs.prompt({
+      title: 'Change directory',
+      label: 'Directory',
+      message:
+        'rtorrent updates its session only — move the files yourself if they are already downloaded, or recheck afterwards.',
+      initial: focusedTorrent?.directory ?? '',
+      placeholder: status?.downloadDir || '/downloads',
+      confirmLabel: 'Move',
+    });
+    if (!directory?.trim()) return;
+    void patchTorrents({ directory: directory.trim() });
+  }, [dialogs, focusedTorrent, status?.downloadDir, patchTorrents]);
 
   const copyMagnets = useCallback(
     async (hashes: string[]) => {
@@ -574,6 +570,16 @@ export function App() {
     },
     [byHash, toast],
   );
+
+  const menuActions: MenuActions = {
+    run: (action, hashes) => void runAction(action, hashes),
+    recheckRestart: (hashes) => void recheckRestart(hashes),
+    patch: (patch, hashes) => void patchTorrents(patch, hashes),
+    setLabel: () => void promptLabel(),
+    changeDirectory: () => void promptDirectory(),
+    copyMagnets: (hashes) => void copyMagnets(hashes),
+    remove: (deleteData, hashes) => void removeTorrents(deleteData, hashes),
+  };
 
   /* ----------------------------- keyboard ------------------------------ */
 
@@ -602,13 +608,17 @@ export function App() {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      // With anything modal open the keyboard is its: Escape closes it (the
+      // modal listens for itself) and must not also clear the selection
+      // behind it, and Delete must not stack a second confirmation.
+      if (modalOpen) return;
       if (event.key === 'Delete') {
         void removeTorrents(event.shiftKey);
       } else if (event.key.toLowerCase() === 'a' && (event.ctrlKey || event.metaKey)) {
         event.preventDefault();
         onSelectAll(true);
       } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-        if (visible.length === 0 || dialog !== null) return;
+        if (visible.length === 0) return;
         event.preventDefault();
         const index = focused ? visible.findIndex((t) => t.hash === focused) : -1;
         const next =
@@ -622,29 +632,21 @@ export function App() {
         document
           .querySelector(`[data-hash="${hash}"]`)
           ?.scrollIntoView({ block: 'nearest' });
-      } else if (event.key === '/' && dialog === null) {
+      } else if (event.key === '/') {
         event.preventDefault();
         searchRef.current?.focus();
       } else if (event.key === 'Escape') {
-        // With a dialog open, Escape belongs to the dialog — closing it must
-        // not also clear the selection behind it.
-        if (dialog !== null) return;
         setSelected(new Set());
         setFocused(null);
         setMenu(null);
         setDrawerOpen(false);
-      } else if (
-        event.key.toLowerCase() === 'n' &&
-        !event.ctrlKey &&
-        !event.metaKey &&
-        dialog === null
-      ) {
+      } else if (event.key.toLowerCase() === 'n' && !event.ctrlKey && !event.metaKey) {
         setDialog('add');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [removeTorrents, onSelectAll, visible, focused, dialog]);
+  }, [removeTorrents, onSelectAll, visible, focused, modalOpen]);
 
   /* ------------------------------- render ------------------------------ */
 
@@ -653,15 +655,15 @@ export function App() {
     setSort(next);
   };
 
+  /** A header click: flip the direction on the sorted column, open another with its default. */
   const onSort = (key: SortKey) =>
     applySort(
-      sort.key === key
-        ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' }
-        : { key, dir: key === 'name' || key === 'label' ? 'asc' : 'desc' },
+      sort.key === key ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: defaultSortDir(key) },
     );
 
+  /** The compact layout's dropdown: pick a column, keeping the direction if it is the same one. */
   const onSortKey = (key: SortKey) =>
-    applySort({ key, dir: sort.key === key ? sort.dir : key === 'name' || key === 'label' ? 'asc' : 'desc' });
+    applySort({ key, dir: sort.key === key ? sort.dir : defaultSortDir(key) });
 
   const onDetailHeight = (height: number) => {
     setDetailHeight(height);
@@ -682,11 +684,6 @@ export function App() {
     setDrawerOpen(false);
     setDialog(tool);
   };
-
-  const labels = useMemo(
-    () => [...new Set(torrents.map((torrent) => torrent.label).filter(Boolean))].sort(),
-    [torrents],
-  );
 
   const menuTargets = menu ? (selected.has(menu.hash) ? selectedHashes : [menu.hash]) : [];
 
@@ -734,7 +731,7 @@ export function App() {
             <span>{connectionError}</span>
             <button className="btn sm ghost" onClick={() => void refresh()}>
               <IconRefresh size={13} />
-              Retry
+              <span>Retry</span>
             </button>
           </div>
         )}
@@ -775,7 +772,7 @@ export function App() {
             <IconRefresh size={13} />
             <span>Recheck</span>
           </button>
-          <button className="btn sm" onClick={promptLabel} disabled={targets.length === 0}>
+          <button className="btn sm" onClick={() => void promptLabel()} disabled={targets.length === 0}>
             <IconTag size={13} />
             <span>Label</span>
           </button>
@@ -808,11 +805,7 @@ export function App() {
           {targets.length > 0 && (
             <span className="selection-pill">
               {targets.length} selected
-              <button
-                className="btn sm ghost"
-                style={{ height: 18, padding: '0 4px' }}
-                onClick={() => setSelected(new Set())}
-              >
+              <button className="btn sm ghost pill-clear" onClick={() => setSelected(new Set())}>
                 clear
               </button>
             </span>
@@ -865,145 +858,14 @@ export function App() {
       </main>
 
       {menu && (
-        <ContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
-          <MenuItem
-            icon={<IconPlay size={13} />}
-            label="Start"
-            onClick={() => {
-              setMenu(null);
-              void runAction('start', menuTargets);
-            }}
-          />
-          <MenuItem
-            icon={<IconPause size={13} />}
-            label="Pause"
-            onClick={() => {
-              setMenu(null);
-              void runAction('pause', menuTargets);
-            }}
-          />
-          <MenuItem
-            icon={<IconPlay size={13} />}
-            label="Resume"
-            onClick={() => {
-              setMenu(null);
-              void runAction('resume', menuTargets);
-            }}
-          />
-          <MenuItem
-            icon={<IconStop size={12} />}
-            label="Stop"
-            onClick={() => {
-              setMenu(null);
-              void runAction('stop', menuTargets);
-            }}
-          />
-          <MenuItem
-            icon={<IconRefresh size={13} />}
-            label="Force recheck"
-            onClick={() => {
-              setMenu(null);
-              void runAction('recheck', menuTargets);
-            }}
-          />
-          <MenuItem
-            icon={<IconRefresh size={13} />}
-            label="Recheck & restart"
-            onClick={() => {
-              setMenu(null);
-              void recheckRestart(menuTargets);
-            }}
-          />
-          <MenuItem
-            icon={<IconRefresh size={13} />}
-            label="Announce to trackers"
-            onClick={() => {
-              setMenu(null);
-              void runAction('announce', menuTargets);
-            }}
-          />
-          <hr />
-          <div className="heading">Priority</div>
-          {[
-            [3, 'High'],
-            [2, 'Normal'],
-            [1, 'Low'],
-            [0, 'Off'],
-          ].map(([value, label]) => (
-            <MenuItem
-              key={String(value)}
-              label={label as string}
-              onClick={() => {
-                setMenu(null);
-                void patchTorrents({ priority: value }, menuTargets);
-              }}
-            />
-          ))}
-          <hr />
-          <div className="heading">Throttle group</div>
-          <MenuItem
-            icon={<IconGauge size={13} />}
-            label="Global (none)"
-            onClick={() => {
-              setMenu(null);
-              void patchTorrents({ throttle: '' }, menuTargets);
-            }}
-          />
-          {throttles.map((group) => (
-            <MenuItem
-              key={group.name}
-              icon={<IconGauge size={13} />}
-              label={group.name}
-              onClick={() => {
-                setMenu(null);
-                void patchTorrents({ throttle: group.name }, menuTargets);
-              }}
-            />
-          ))}
-          <hr />
-          <MenuItem
-            icon={<IconTag size={13} />}
-            label="Set label…"
-            onClick={() => {
-              setMenu(null);
-              promptLabel();
-            }}
-          />
-          <MenuItem
-            icon={<IconMove size={13} />}
-            label="Change directory…"
-            onClick={() => {
-              setMenu(null);
-              promptDirectory();
-            }}
-          />
-          <MenuItem
-            icon={<IconLink size={13} />}
-            label="Copy magnet link"
-            onClick={() => {
-              setMenu(null);
-              void copyMagnets(menuTargets);
-            }}
-          />
-          <hr />
-          <MenuItem
-            icon={<IconTrash size={13} />}
-            label="Remove torrent"
-            onClick={() => {
-              setMenu(null);
-              void removeTorrents(false, menuTargets);
-            }}
-          />
-          <MenuItem
-            icon={<IconTrash size={13} />}
-            label="Remove + delete data"
-            danger
-            onClick={() => {
-              setMenu(null);
-              void removeTorrents(true, menuTargets);
-            }}
-          />
-        </ContextMenu>
+        <TorrentMenu
+          x={menu.x}
+          y={menu.y}
+          targets={menuTargets}
+          throttles={throttles}
+          actions={menuActions}
+          onClose={() => setMenu(null)}
+        />
       )}
 
       {dropping && (
@@ -1016,23 +878,19 @@ export function App() {
         </div>
       )}
 
-      <Celebrate trigger={celebration} flavor={fxFlavor(resolvedTheme as ResolvedTheme)} onDone={clearCelebration} />
-      <DropBurst burst={burst} flavor={fxFlavor(resolvedTheme as ResolvedTheme)} onDone={clearBurst} />
+      <Celebrate trigger={celebration} flavor={flavor} onDone={clearCelebration} />
+      <DropBurst burst={burst} flavor={flavor} onDone={clearBurst} />
 
       {dialog === 'add' && (
         <AddDialog
           onClose={() => setDialog(null)}
           onAdded={() => void refresh()}
-          defaultDirectory={''}
+          defaultDirectory={status?.downloadDir ?? ''}
           labels={labels}
         />
       )}
       {dialog === 'progress' && displayGame && (
-        <AchievementsDialog
-          game={displayGame}
-          grim={resolvedTheme === 'blackmetal'}
-          onClose={() => setDialog(null)}
-        />
+        <AchievementsDialog game={displayGame} grim={grim} onClose={() => setDialog(null)} />
       )}
       {dialog === 'settings' && (
         <SettingsDialog onClose={() => setDialog(null)} backend={status?.backend ?? null} />

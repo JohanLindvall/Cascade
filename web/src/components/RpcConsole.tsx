@@ -92,8 +92,8 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
         </>
       }
     >
-      <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 16 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 0 }}>
+      <div className="console-layout">
+        <div className="console-methods">
           <input
             className="input"
             placeholder="Filter commands…"
@@ -113,7 +113,7 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 0 }}>
+        <div className="console-main">
           <Field label="Command" hint={help || undefined}>
             <input
               className="input"

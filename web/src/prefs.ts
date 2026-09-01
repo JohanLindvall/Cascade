@@ -7,12 +7,13 @@
  * file is the source of truth and overwrites the cache once it arrives.
  */
 import { API_BASE } from './api';
-import type { ThemeMode } from './theme';
+import { isSortKey, type SortDir, type SortKey } from './sort';
+import { isThemeMode, type ThemeMode } from './theme';
 
 export interface Preferences {
   theme: ThemeMode;
-  sortKey: string;
-  sortDir: 'asc' | 'desc';
+  sortKey: SortKey;
+  sortDir: SortDir;
   detailHeight: number;
   seenBadges: string[];
 }
@@ -28,11 +29,26 @@ export const DEFAULT_PREFERENCES: Preferences = {
 // Also read by the inline pre-paint script in index.html — keep them in step.
 const CACHE_KEY = 'cascade.prefs';
 
+/**
+ * Fill a possibly partial or hand-edited record out to a full Preferences.
+ * The server sanitises what it stores, but the cache is a browser's
+ * localStorage and the enum-valued fields are the ones a stray value breaks.
+ */
+function complete(partial: Partial<Preferences>): Preferences {
+  const merged = { ...DEFAULT_PREFERENCES, ...partial };
+  return {
+    ...merged,
+    theme: isThemeMode(merged.theme) ? merged.theme : DEFAULT_PREFERENCES.theme,
+    sortKey: isSortKey(merged.sortKey) ? merged.sortKey : DEFAULT_PREFERENCES.sortKey,
+    sortDir: merged.sortDir === 'asc' ? 'asc' : 'desc',
+    seenBadges: Array.isArray(merged.seenBadges) ? merged.seenBadges.map(String) : [],
+  };
+}
+
 export function readCache(): Preferences {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return { ...DEFAULT_PREFERENCES };
-    return { ...DEFAULT_PREFERENCES, ...(JSON.parse(raw) as Partial<Preferences>) };
+    return complete(raw ? (JSON.parse(raw) as Partial<Preferences>) : {});
   } catch {
     return { ...DEFAULT_PREFERENCES };
   }
@@ -49,7 +65,7 @@ function writeCache(prefs: Preferences): void {
 export async function fetchPreferences(): Promise<Preferences> {
   const response = await fetch(`${API_BASE}prefs`, { credentials: 'same-origin' });
   if (!response.ok) throw new Error(`could not load preferences (${response.status})`);
-  const prefs = { ...DEFAULT_PREFERENCES, ...((await response.json()) as Partial<Preferences>) };
+  const prefs = complete((await response.json()) as Partial<Preferences>);
   writeCache(prefs);
   return prefs;
 }

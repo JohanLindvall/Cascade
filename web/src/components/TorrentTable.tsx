@@ -2,12 +2,8 @@ import { useMemo, useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } 
 import { bytes, duration, percent, rate, relative } from '../format';
 import type { SortKey, SortState } from '../sort';
 import type { Torrent } from '../types';
-import { EmptyState, ProgressBar } from './ui';
+import { EmptyState, ProgressBar, type BarVariant } from './ui';
 import { IconDown } from './icons';
-
-// The ordering itself lives in sort.ts, where the test runner can reach it;
-// callers keep importing it from here.
-export { sortTorrents, type SortKey, type SortState } from '../sort';
 
 /** Modifier keys that drive multi-select, decoupled from the DOM event type. */
 export interface SelectMods {
@@ -55,12 +51,38 @@ function ratioTier(ratio: number): string {
   return 'poor';
 }
 
-function barVariant(torrent: Torrent) {
-  if (torrent.status === 'error') return 'error' as const;
-  if (torrent.status === 'checking') return 'checking' as const;
-  if (torrent.progress >= 1) return 'done' as const;
-  if (torrent.status === 'stopped' || torrent.status === 'paused') return 'idle' as const;
-  return 'default' as const;
+function barVariant(torrent: Torrent): BarVariant {
+  if (torrent.status === 'error') return 'error';
+  if (torrent.status === 'checking') return 'checking';
+  if (torrent.progress >= 1) return 'done';
+  if (torrent.status === 'stopped' || torrent.status === 'paused') return 'idle';
+  return 'default';
+}
+
+/** The bar and its percentage, shared by the table row and the card. */
+function TorrentProgress({ torrent }: { torrent: Torrent }) {
+  return (
+    <div className="progress-cell">
+      <ProgressBar
+        value={torrent.progress}
+        variant={barVariant(torrent)}
+        striped={torrent.status === 'checking'}
+        live={torrent.status === 'downloading' && torrent.progress < 1}
+      />
+      <span className="num">{percent(torrent.progress, torrent.progress >= 1 ? 0 : 1)}</span>
+    </div>
+  );
+}
+
+/** Label and throttle chips; the row adds the private flag, the card has no room. */
+function TorrentTags({ torrent, showPrivate }: { torrent: Torrent; showPrivate?: boolean }) {
+  return (
+    <>
+      {torrent.label && <span className="tag accent">{torrent.label}</span>}
+      {torrent.throttle && <span className="tag">⇅ {torrent.throttle}</span>}
+      {showPrivate && torrent.isPrivate && <span className="tag">private</span>}
+    </>
+  );
 }
 
 interface TorrentTableProps {
@@ -124,9 +146,7 @@ export function TorrentTable({
                   <span className="name-text" title={torrent.name}>
                     {torrent.name || torrent.hash}
                   </span>
-                  {torrent.label && <span className="tag accent">{torrent.label}</span>}
-                  {torrent.throttle && <span className="tag">⇅ {torrent.throttle}</span>}
-                  {torrent.isPrivate && <span className="tag">private</span>}
+                  <TorrentTags torrent={torrent} showPrivate />
                 </div>
                 {torrent.message && (
                   <div className="name-meta" style={{ color: 'var(--warn)' }} title={torrent.message}>
@@ -139,15 +159,7 @@ export function TorrentTable({
               {bytes(torrent.size)}
             </td>
             <td>
-              <div className="progress-cell">
-                <ProgressBar
-                  value={torrent.progress}
-                  variant={barVariant(torrent)}
-                  striped={torrent.status === 'checking'}
-                  live={torrent.status === 'downloading' && torrent.progress < 1}
-                />
-                <span className="num">{percent(torrent.progress, torrent.progress >= 1 ? 0 : 1)}</span>
-              </div>
+              <TorrentProgress torrent={torrent} />
             </td>
             <td>
               <StatusPill torrent={torrent} />
@@ -347,15 +359,7 @@ function TorrentCard({
         <StatusPill torrent={torrent} />
       </div>
 
-      <div className="progress-cell">
-        <ProgressBar
-          value={torrent.progress}
-          variant={barVariant(torrent)}
-          striped={torrent.status === 'checking'}
-          live={torrent.status === 'downloading' && torrent.progress < 1}
-        />
-        <span className="num">{percent(torrent.progress, torrent.progress >= 1 ? 0 : 1)}</span>
-      </div>
+      <TorrentProgress torrent={torrent} />
 
       <div className="card-stats num">
         <span>{bytes(torrent.size)}</span>
@@ -372,8 +376,7 @@ function TorrentCard({
 
       {(torrent.label || torrent.throttle || torrent.message) && (
         <div className="card-tags">
-          {torrent.label && <span className="tag accent">{torrent.label}</span>}
-          {torrent.throttle && <span className="tag">⇅ {torrent.throttle}</span>}
+          <TorrentTags torrent={torrent} />
           {torrent.message && (
             <span className="card-message" title={torrent.message}>
               {torrent.message}

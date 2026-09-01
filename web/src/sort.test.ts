@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { sortTorrents } from './sort.ts';
+import { SORT_KEYS, defaultSortDir, isSortKey, sortTorrents } from './sort.ts';
 import type { Torrent } from './types.ts';
 
 let seq = 0;
@@ -88,4 +88,14 @@ test('numeric keys sort numerically and the input is left untouched', () => {
   const sorted = sortTorrents(list, { key: 'size', dir: 'desc' });
   assert.deepEqual(sorted.map((t) => t.size), [200, 30, 9]);
   assert.deepEqual(list.map((t) => t.size), [30, 200, 9]); // no mutation
+});
+
+test('a column opens in its natural direction; only known keys pass the guard', () => {
+  assert.equal(defaultSortDir('name'), 'asc');
+  assert.equal(defaultSortDir('label'), 'asc');
+  assert.equal(defaultSortDir('size'), 'desc');
+  assert.equal(defaultSortDir('addedAt'), 'desc');
+  for (const key of SORT_KEYS) assert.ok(isSortKey(key), key);
+  assert.ok(!isSortKey('hash'));
+  assert.ok(!isSortKey(undefined));
 });

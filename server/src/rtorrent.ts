@@ -20,13 +20,39 @@ export interface MulticallEntry {
   params: XValue[];
 }
 
-const MAX_CONCURRENCY = 4;
+/** One request/response exchange with rtorrent; the SCGI socket by default. */
+export type Transport = (body: Buffer) => Promise<Buffer>;
 
-export class RtorrentClient {
+/**
+ * What the layers above need from a client — kept narrow so a test can hand
+ * the service or the capability probe a scripted stand-in instead of a socket.
+ */
+export interface RpcClient {
+  readonly endpoint: string;
+  raw(body: Buffer): Promise<Buffer>;
+  call<T extends XValue = XValue>(method: string, params?: XValue[]): Promise<T>;
+  multicall(entries: MulticallEntry[]): Promise<XValue[]>;
+  multicallSettled(entries: MulticallEntry[]): Promise<Array<XValue | XmlRpcFault>>;
+  fieldMulticall<T extends Record<string, XValue>>(
+    method: string,
+    leadingParams: XValue[],
+    fields: readonly string[],
+  ): Promise<T[]>;
+}
+
+export const MAX_CONCURRENCY = 4;
+
+export class RtorrentClient implements RpcClient {
   private active = 0;
   private readonly queue: Array<() => void> = [];
+  private readonly transport: Transport;
 
-  constructor(private readonly target: ScgiTarget) {}
+  constructor(
+    private readonly target: ScgiTarget,
+    transport?: Transport,
+  ) {
+    this.transport = transport ?? ((body) => scgiRequest(target, body));
+  }
 
   get endpoint(): string {
     return describeTarget(this.target);
@@ -51,7 +77,7 @@ export class RtorrentClient {
 
   /** Send a raw XML-RPC body and return the raw response (used by the /RPC2 proxy). */
   raw(body: Buffer): Promise<Buffer> {
-    return this.withSlot(() => scgiRequest(this.target, body));
+    return this.withSlot(() => this.transport(body));
   }
 
   async call<T extends XValue = XValue>(method: string, params: XValue[] = []): Promise<T> {
@@ -111,6 +137,15 @@ export class RtorrentClient {
       return record as T;
     });
   }
+}
+
+/**
+ * A settled multicall slot as a number: faults and non-numeric answers read as
+ * zero, which is what every gauge in the UI wants from a probe that failed.
+ */
+export function settledNumber(value: XValue | XmlRpcFault | undefined): number {
+  if (value === undefined || value instanceof Error) return 0;
+  return Number(value) || 0;
 }
 
 export { XmlRpcFault };

@@ -125,7 +125,7 @@ fi
 # --------------------------------------------------------------------------
 # rtorrent.rc
 #
-# Only commands that exist in every rtorrent from 0.9.x through 0.15.x go in
+# Only commands that exist in every supported rtorrent (0.9.x to 0.16.x) go in
 # here — rtorrent aborts on an unknown command in its config file. Everything
 # version-dependent is applied afterwards over XML-RPC by the web server, which
 # probes the command table first and skips what this build does not have.

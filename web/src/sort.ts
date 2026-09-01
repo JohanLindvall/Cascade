@@ -6,22 +6,36 @@
  */
 import type { Torrent } from './types';
 
-export type SortKey =
-  | 'name'
-  | 'size'
-  | 'progress'
-  | 'status'
-  | 'downRate'
-  | 'upRate'
-  | 'ratio'
-  | 'eta'
-  | 'peers'
-  | 'addedAt'
-  | 'label';
+/** Keep in step with SORT_KEYS in the server's prefs.ts, which validates the stored preference. */
+export const SORT_KEYS = [
+  'name',
+  'size',
+  'progress',
+  'status',
+  'downRate',
+  'upRate',
+  'ratio',
+  'eta',
+  'peers',
+  'addedAt',
+  'label',
+] as const;
+
+export type SortKey = (typeof SORT_KEYS)[number];
+export type SortDir = 'asc' | 'desc';
 
 export interface SortState {
   key: SortKey;
-  dir: 'asc' | 'desc';
+  dir: SortDir;
+}
+
+export function isSortKey(value: unknown): value is SortKey {
+  return (SORT_KEYS as readonly unknown[]).includes(value);
+}
+
+/** Text columns open A→Z; everything numeric opens with the largest first. */
+export function defaultSortDir(key: SortKey): SortDir {
+  return key === 'name' || key === 'label' ? 'asc' : 'desc';
 }
 
 /** Sorting by status should follow the lifecycle, not the alphabet. */
@@ -47,7 +61,7 @@ function sortValue(torrent: Torrent, key: SortKey): number | string {
     case 'eta':
       return torrent.eta === null ? Number.MAX_SAFE_INTEGER : torrent.eta;
     default:
-      return torrent[key] as number;
+      return torrent[key];
   }
 }
 

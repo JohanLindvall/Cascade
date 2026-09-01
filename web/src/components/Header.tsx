@@ -2,7 +2,7 @@ import { bytes, rate } from '../format';
 import type { GameState, GlobalStatus } from '../types';
 import { LevelChip } from './Achievements';
 import { ThemePicker } from './ThemePicker';
-import type { ThemeMode } from '../theme';
+import type { ResolvedTheme, ThemeMode } from '../theme';
 import { IconDown, IconGauge, IconPlus, IconSettings, IconTerminal, IconUp } from './icons';
 import { Sparkline } from './ui';
 
@@ -10,7 +10,7 @@ interface HeaderProps {
   status: GlobalStatus | null;
   game: GameState | null;
   themeMode: ThemeMode;
-  resolvedTheme: string;
+  resolvedTheme: ResolvedTheme;
   onThemeChange: (mode: ThemeMode) => void;
   onAdd: () => void;
   onSettings: () => void;

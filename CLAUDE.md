@@ -12,13 +12,14 @@ served by that same backend.
 server/src/
   xmlrpc.ts       XML-RPC encode/decode, hand-written (no dependency)
   scgi.ts         SCGI framing over a unix socket or TCP
-  rtorrent.ts     request queue + multicall helpers
+  rtorrent.ts     request queue + multicall helpers; RpcClient, the interface
+                  everything above it depends on (a Transport can be injected)
   capabilities.ts probes system.listMethods, picks a command dialect
   model.ts        rtorrent fields -> Torrent/File/Peer/Tracker
   settings.ts     every rtorrent global setting as one declarative table
   options.ts      every environment variable as one catalog; renders --help
   optionsdoc.ts   dev/CI only: checks that catalog against the container + README
-  config.ts       env -> Config, defaults taken from options.ts
+  config.ts       loadConfig(env) -> Config, defaults taken from options.ts
   service.ts      all application behaviour
   store.ts        the one JSON state file
   achievements.ts badge definitions, XP and level curve
@@ -26,11 +27,15 @@ server/src/
   prefs.ts        UI preference shape and validation
   auth.ts         optional HTTP Basic
   errors.ts       HttpError
-  api.ts          REST routes + /RPC2 passthrough
-  index.ts        express wiring, static SPA, auth, error mapping, --help
+  api.ts          REST routes + /RPC2 passthrough, input validation
+  app.ts          express wiring: auth, API, static SPA, error mapping
+  index.ts        --help, then config + store + service + app + poller
+  testing/        test doubles (FakeClient, testConfig, tempStore); not built
 web/src/          React UI: components/, one styles.css of design tokens,
                   theme.ts (themes + effect flavors), grim.ts (black metal
-                  copy), assets/ (the retro and black metal wordmarks)
+                  copy), assets/ (the retro and black metal wordmarks);
+                  sort.ts, filter.ts, files.ts and format.ts are the pure
+                  logic the node runner can reach
 docker/entrypoint.sh      renders rtorrent.rc, supervises rtorrent + node
 .github/workflows/ci.yml  typecheck, options check, Docker build + API smoke
 .github/workflows/release.yml  multi-arch GHCR publish, tags every main push
@@ -55,8 +60,20 @@ The server suite compiles through `tsconfig.test.json` into `dist-test/` and run
 load `index.js`, which starts the server and hangs the run. The web suite runs the `.ts` files
 directly under `--experimental-strip-types`; those files are excluded from each side's build
 tsconfig, which is why the runtime `dist/` stays clean and the DOM-flavoured web typecheck does
-not need node types. Pure logic belongs where the runner can reach it — `sortTorrents` lives in
-`web/src/sort.ts` (re-exported by `TorrentTable`) for exactly that reason.
+not need node types. Pure logic belongs where the runner can reach it — sorting, filtering and
+the `.torrent` file check live in `web/src/sort.ts`, `filter.ts` and `files.ts` rather than in
+the components for exactly that reason, and `grim.test.ts` imports the server's achievement
+table directly to check every badge and title has a black metal entry.
+
+The server suite reaches everything above the socket without one: `RtorrentClient` takes an
+optional `Transport`, and `RtorrentService` and `Capabilities` depend on the `RpcClient`
+interface rather than the class, so `src/testing/fakes.ts` hands them a `FakeClient` that
+answers from a table and records every call. A command the fake lists in `system.listMethods`
+but has no answer for returns `0`, as rtorrent's setters do; an unlisted one faults. Most
+service tests assert on what did *not* reach rtorrent — an erase before the data path was
+checked, a load of something unfetchable — which is the property that matters. `createApp`
+(`app.ts`) mounts on port 0 in `api.test.ts` with a stub service, so the HTTP contract
+(validation, bulk error collection, auth, JSON 404s) is tested end to end with `fetch`.
 
 Run it and exercise the API:
 
@@ -351,9 +368,29 @@ Two other things are easy to get wrong here:
   which is why the restart cannot live in the handler; pending entries survive only in memory
   and expire after a day.
 - The UI polls `/api/state` once per interval rather than issuing many calls; rtorrent is single
-  threaded and does not enjoy being hammered (`MAX_CONCURRENCY` in `rtorrent.ts` caps it). The
-  poll chains timeouts rather than using an interval, so a slow response never stacks requests,
-  and it pauses entirely while the tab is hidden.
+  threaded and does not enjoy being hammered (`MAX_CONCURRENCY` in `rtorrent.ts` caps it). Both
+  pollers — the browser's and the server's rate sampler — chain timeouts rather than using an
+  interval, so a slow response never stacks requests (the SCGI timeout is 30s; an interval at
+  1s would have queued thirty ticks behind a hung rtorrent), and the browser's pauses entirely
+  while the tab is hidden.
+- `status()` looks its multicall answers up by command name, not position, so adding a probe
+  cannot shift another into the wrong slot. Optional probes (`dht.statistics`) are only asked
+  for when `supports()` says so; the same goes for actions — `announce` and the tracker toggle
+  are refused with a 501 on a backend without the command, which is what the `trackerAnnounce`
+  and `trackerToggle` entries in `FEATURE_METHODS` exist for.
+- Input is validated at the API edge (`requireInt`, `requireHash`, `requireIndex` in `api.ts`)
+  and answered with a 400 that names the field. An unchecked `NaN` priority or index used to
+  reach rtorrent and come back as an opaque 502 fault. Bulk routes go through `bulk()`, which
+  applies the action per hash and collects failures by hash instead of stopping at the first.
+- `DELETE /api/throttles/:name` is a 404 for a group the store never saved: `throttle.up` on an
+  unknown name would *create* that group in rtorrent rather than remove anything.
+- Confirmations and text prompts are in-app (`components/dialogs.tsx`, promise-shaped:
+  `await dialogs.confirm(...)` / `await dialogs.prompt(...)`), not `window.confirm`/`prompt`:
+  they follow the theme, list the torrents an action applies to, offer existing labels, and do
+  not block the poll. While one is open `dialogs.open` is true and the app's global shortcuts
+  stand down, so Escape closes it without also clearing the selection and Delete cannot stack a
+  second confirmation. The right-click menu is `components/TorrentMenu.tsx`; every item closes
+  the menu before acting.
 - `/healthz` is deliberately outside Basic auth (container healthchecks and orchestrator probes
   must work with `WEB_USER`/`WEB_PASS` set) and reveals nothing but liveness.
 - Static caching is split by what can change: Vite's content-hashed `assets/` are served

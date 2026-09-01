@@ -767,6 +767,11 @@ button:focus-visible,
   font-size: 12px;
 }
 
+.selection-pill .pill-clear {
+  height: 18px;
+  padding: 0 4px;
+}
+
 /* =============================== table ================================= */
 
 .table-wrap {
@@ -1496,6 +1501,10 @@ table.grid tr.detail-row > td {
   width: min(980px, 100%);
 }
 
+.modal.small {
+  width: min(460px, 100%);
+}
+
 @keyframes rise {
   from {
     opacity: 0;
@@ -1672,6 +1681,27 @@ table.grid tr.detail-row > td {
 
 /* ============================= rpc console ============================= */
 
+.console-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 16px;
+}
+
+.console-methods,
+.console-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.console-methods {
+  gap: 8px;
+}
+
+.console-main {
+  gap: 12px;
+}
+
 .console-output {
   font-family: var(--mono);
   font-size: 12px;
@@ -1782,6 +1812,38 @@ table.grid tr.detail-row > td {
   font-size: 10px;
   letter-spacing: 0.07em;
   text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* ======================== confirm / prompt dialogs ===================== */
+
+.confirm-message {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* The names an action applies to: monospace, one per line, never wrapping
+   so a long release name cannot push the buttons off the sheet. */
+.confirm-list {
+  margin: 0;
+  padding-left: 18px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+.confirm-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.confirm-list .confirm-more {
+  list-style: none;
+  margin-left: -18px;
   color: var(--text-faint);
 }
 
@@ -2074,6 +2136,19 @@ body {
     border: none;
   }
 
+  /* A confirmation or a single field is not worth a whole sheet: it stays a
+     card, so the buttons sit under the question rather than mid-screen. */
+  .overlay.small {
+    padding: 16px;
+  }
+
+  .modal.small {
+    height: auto;
+    max-height: 88vh;
+    border-radius: var(--radius);
+    border: 1px solid var(--border-strong);
+  }
+
   .modal-body {
     padding: 12px;
   }
@@ -2097,8 +2172,8 @@ body {
   }
 
   /* The API console's two panes stack. */
-  .modal-body > div[style*='grid-template-columns'] {
-    display: flex !important;
+  .console-layout {
+    display: flex;
     flex-direction: column;
   }
 

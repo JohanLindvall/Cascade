@@ -117,3 +117,57 @@ test('a corrupt file starts clean instead of crashing', () => {
   assert.equal(store.stats.lifetimeUp, 0);
   assert.deepEqual(store.throttles(), []);
 });
+
+test('a total that shrinks (a recheck) is remembered but never subtracted', () => {
+  const { store } = tempStore();
+  store.recordTorrents([torrent({ upTotal: 100, downTotal: 100 })]);
+  store.recordTorrents([torrent({ upTotal: 40, downTotal: 100 })]);
+  assert.equal(store.stats.lifetimeUp, 100);
+  // Growth from the lower baseline counts again from there.
+  store.recordTorrents([torrent({ upTotal: 50, downTotal: 100 })]);
+  assert.equal(store.stats.lifetimeUp, 110);
+});
+
+test('peak rates only ever rise, and only a rise dirties the file', () => {
+  const { store, file } = tempStore();
+  store.recordRates(500, 200);
+  store.flush();
+  fs.rmSync(file);
+  store.recordRates(400, 100);
+  store.flush();
+  assert.ok(!fs.existsSync(file), 'a lower sample rewrote the file');
+  store.recordRates(600, 100);
+  store.flush();
+  assert.ok(fs.existsSync(file));
+  assert.equal(store.stats.peakDownRate, 600);
+  assert.equal(store.stats.peakUpRate, 200);
+});
+
+test('throttle groups upsert by name and can be removed', () => {
+  const { store } = tempStore();
+  store.upsertThrottle({ name: 'slow', up: 1, down: 2 });
+  store.upsertThrottle({ name: 'slow', up: 3, down: 4 });
+  store.upsertThrottle({ name: 'fast', up: 0, down: 0 });
+  assert.deepEqual(store.throttles(), [
+    { name: 'slow', up: 3, down: 4 },
+    { name: 'fast', up: 0, down: 0 },
+  ]);
+  store.removeThrottle('slow');
+  assert.deepEqual(store.throttles().map((group) => group.name), ['fast']);
+});
+
+test('preferences are sanitised on the way in and copied on the way out', () => {
+  const { store } = tempStore();
+  const saved = store.updatePreferences({ theme: 'chrome-vomit', detailHeight: 5 } as never);
+  assert.equal(saved.theme, 'system');
+  assert.equal(saved.detailHeight, 140);
+  saved.seenBadges.push('tampered');
+  assert.deepEqual(store.preferences().seenBadges, []);
+});
+
+test('an unlocked badge keeps its first timestamp', () => {
+  const { store } = tempStore();
+  store.unlock('touchdown', 10);
+  store.unlock('touchdown', 20);
+  assert.equal(store.unlockedAchievements.touchdown, 10);
+});

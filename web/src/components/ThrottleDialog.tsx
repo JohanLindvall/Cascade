@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
 import { formatRateInput, parseRate, rate } from '../format';
 import type { BackendSummary, ThrottleGroup } from '../types';
@@ -25,7 +25,7 @@ export function ThrottleDialog({
   const toast = useToast();
   const supported = backend?.supports?.throttleGroups !== false;
 
-  const load = async () => {
+  const load = useCallback(async () => {
     try {
       const result = await api.throttles();
       setGroups(result.groups);
@@ -33,14 +33,13 @@ export function ThrottleDialog({
     } catch (error) {
       toast.error(error);
     }
-  };
+  }, [toast]);
 
   useEffect(() => {
     void load();
     const timer = window.setInterval(() => void load(), 3000);
     return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
   const create = async () => {
     if (!name.trim()) {
@@ -63,9 +62,12 @@ export function ThrottleDialog({
     }
   };
 
+  /** Save one limit on blur — but tabbing through an unchanged field is not a change. */
   const update = async (group: ThrottleGroup, patch: Partial<ThrottleGroup>) => {
+    const next = { ...group, ...patch };
+    if (next.up === group.up && next.down === group.down) return;
     try {
-      await api.saveThrottle({ ...group, ...patch });
+      await api.saveThrottle(next);
       await load();
     } catch (error) {
       toast.error(error);

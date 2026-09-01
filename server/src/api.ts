@@ -2,7 +2,7 @@ import { Router, type Request, type Response, type NextFunction } from 'express'
 import multer from 'multer';
 import type { Config } from './config';
 import { HttpError } from './errors';
-import type { RtorrentService } from './service';
+import type { LoadOptions, RtorrentService } from './service';
 import type { Store } from './store';
 import { XmlRpcFault, serializeCall, type XValue } from './xmlrpc';
 
@@ -27,21 +27,62 @@ function asBool(value: unknown, fallback = false): boolean {
 
 const HASH_RE = /^[0-9A-Fa-f]{40}$/;
 
-/** A file/tracker index from the path: a small whole number, or a 400 — an
- *  unchecked NaN used to reach rtorrent as "<hash>:fNaN" and come back as an
- *  opaque 502 fault. */
-function requireIndex(value: unknown): number {
-  const index = Number(value);
-  if (!Number.isInteger(index) || index < 0 || index > 100_000) {
-    throw new HttpError(400, 'invalid index');
+/** A whole number within [min, max], or a 400 that names the field — an
+ *  unchecked NaN used to reach rtorrent (as "<hash>:fNaN", or as a priority)
+ *  and come back as an opaque 502 fault. */
+function requireInt(value: unknown, field: string, min: number, max: number): number {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < min || number > max) {
+    throw new HttpError(400, `"${field}" must be a whole number from ${min} to ${max}`);
   }
-  return index;
+  return number;
+}
+
+/** A file/tracker index from the path. */
+function requireIndex(value: unknown): number {
+  return requireInt(value, 'index', 0, 100_000);
 }
 
 function requireHash(req: Request): string {
   const hash = String(req.params.hash ?? '');
   if (!HASH_RE.test(hash)) throw new HttpError(400, 'invalid info hash');
   return hash.toUpperCase();
+}
+
+/** The hashes of a bulk request body, with anything that is not one dropped. */
+function bodyHashes(body: unknown): string[] {
+  const hashes = (body as { hashes?: unknown })?.hashes;
+  return Array.isArray(hashes) ? hashes.map(String).filter((hash) => HASH_RE.test(hash)) : [];
+}
+
+/**
+ * Apply an action to each hash, collecting failures by hash instead of
+ * stopping at the first: one torrent rtorrent refuses must not leave the
+ * rest of a selection untouched.
+ */
+async function bulk(
+  hashes: string[],
+  action: (hash: string) => Promise<void>,
+): Promise<{ ok: boolean; errors: string[] }> {
+  const errors: string[] = [];
+  for (const hash of hashes) {
+    try {
+      await action(hash);
+    } catch (error) {
+      errors.push(`${hash}: ${(error as Error).message}`);
+    }
+  }
+  return { ok: errors.length === 0, errors };
+}
+
+/** Add options as both the multipart form and the JSON body carry them. */
+function loadOptionsFrom(body: Record<string, unknown>): LoadOptions {
+  const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
+  return {
+    start: asBool(body.start, true),
+    directory: text(body.directory) || undefined,
+    label: text(body.label) || undefined,
+  };
 }
 
 export function createApi(service: RtorrentService, config: Config, store: Store): Router {
@@ -133,12 +174,9 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     upload.array('torrents'),
     wrap(async (req, res) => {
       const files = (req.files as Express.Multer.File[] | undefined) ?? [];
-      const body = req.body as Record<string, string>;
-      const start = asBool(body.start, true);
-      const directory = body.directory?.trim() || undefined;
-      const label = body.label?.trim() || undefined;
-
-      const urls = (body.urls ?? '')
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const options = loadOptionsFrom(body);
+      const urls = String(body.urls ?? '')
         .split(/[\r\n]+/)
         .map((line) => line.trim())
         .filter(Boolean);
@@ -150,14 +188,14 @@ export function createApi(service: RtorrentService, config: Config, store: Store
       const errors: string[] = [];
       for (const file of files) {
         try {
-          await service.addTorrentFile(file.buffer, { start, directory, label });
+          await service.addTorrentFile(file.buffer, options);
         } catch (error) {
           errors.push(`${file.originalname}: ${(error as Error).message}`);
         }
       }
       for (const url of urls) {
         try {
-          await service.addTorrentUrl(url, { start, directory, label });
+          await service.addTorrentUrl(url, options);
         } catch (error) {
           errors.push(`${url}: ${(error as Error).message}`);
         }
@@ -169,13 +207,8 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/torrents/url',
     wrap(async (req, res) => {
-      const body = req.body as Record<string, unknown>;
-      const url = requireString(body.url, 'url');
-      await service.addTorrentUrl(url, {
-        start: asBool(body.start, true),
-        directory: typeof body.directory === 'string' ? body.directory : undefined,
-        label: typeof body.label === 'string' ? body.label : undefined,
-      });
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      await service.addTorrentUrl(requireString(body.url, 'url'), loadOptionsFrom(body));
       res.json({ ok: true });
     }),
   );
@@ -193,19 +226,8 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/torrents/action/:action',
     wrap(async (req, res) => {
-      const body = req.body as { hashes?: unknown };
-      const hashes = Array.isArray(body.hashes) ? body.hashes.map(String) : [];
       const action = String(req.params.action);
-      const errors: string[] = [];
-      for (const hash of hashes) {
-        if (!HASH_RE.test(hash)) continue;
-        try {
-          await service.action(hash, action);
-        } catch (error) {
-          errors.push(`${hash}: ${(error as Error).message}`);
-        }
-      }
-      res.json({ ok: errors.length === 0, errors });
+      res.json(await bulk(bodyHashes(req.body), (hash) => service.action(hash, action)));
     }),
   );
 
@@ -220,19 +242,8 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/torrents/remove',
     wrap(async (req, res) => {
-      const body = req.body as { hashes?: unknown; deleteData?: unknown };
-      const hashes = Array.isArray(body.hashes) ? body.hashes.map(String) : [];
-      const deleteData = asBool(body.deleteData);
-      const errors: string[] = [];
-      for (const hash of hashes) {
-        if (!HASH_RE.test(hash)) continue;
-        try {
-          await service.remove(hash, deleteData);
-        } catch (error) {
-          errors.push(`${hash}: ${(error as Error).message}`);
-        }
-      }
-      res.json({ ok: errors.length === 0, errors });
+      const deleteData = asBool((req.body as { deleteData?: unknown })?.deleteData);
+      res.json(await bulk(bodyHashes(req.body), (hash) => service.remove(hash, deleteData)));
     }),
   );
 
@@ -240,9 +251,10 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     '/torrents/:hash',
     wrap(async (req, res) => {
       const hash = requireHash(req);
-      const body = req.body as Record<string, unknown>;
+      const body = (req.body ?? {}) as Record<string, unknown>;
       if (body.priority !== undefined) {
-        await service.setPriority(hash, Number(body.priority));
+        // d.priority: 0 off, 1 low, 2 normal, 3 high.
+        await service.setPriority(hash, requireInt(body.priority, 'priority', 0, 3));
       }
       if (body.label !== undefined) {
         await service.setLabel(hash, String(body.label));
@@ -254,10 +266,12 @@ export function createApi(service: RtorrentService, config: Config, store: Store
         await service.moveDirectory(hash, String(body.directory));
       }
       if (body.maxUploads !== undefined || body.maxDownloads !== undefined) {
+        const slots = (value: unknown, field: string) =>
+          value === undefined ? undefined : requireInt(value, field, 0, 100_000);
         await service.setTorrentSlots(
           hash,
-          body.maxUploads === undefined ? undefined : Number(body.maxUploads),
-          body.maxDownloads === undefined ? undefined : Number(body.maxDownloads),
+          slots(body.maxUploads, 'maxUploads'),
+          slots(body.maxDownloads, 'maxDownloads'),
         );
       }
       res.json({ ok: true });
@@ -267,8 +281,8 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/torrents/:hash/files/:index/priority',
     wrap(async (req, res) => {
-      const priority = Number((req.body as { priority?: unknown }).priority);
-      if (![0, 1, 2].includes(priority)) throw new HttpError(400, 'priority must be 0, 1 or 2');
+      // f.priority: 0 skip, 1 normal, 2 high.
+      const priority = requireInt((req.body as { priority?: unknown })?.priority, 'priority', 0, 2);
       await service.setFilePriority(requireHash(req), requireIndex(req.params.index), priority);
       res.json({ ok: true });
     }),
@@ -277,7 +291,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/torrents/:hash/trackers/:index/enabled',
     wrap(async (req, res) => {
-      const enabled = asBool((req.body as { enabled?: unknown }).enabled);
+      const enabled = asBool((req.body as { enabled?: unknown })?.enabled);
       await service.setTrackerEnabled(requireHash(req), requireIndex(req.params.index), enabled);
       res.json({ ok: true });
     }),
@@ -286,8 +300,12 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/torrents/:hash/trackers',
     wrap(async (req, res) => {
-      const body = req.body as Record<string, unknown>;
-      await service.addTracker(requireHash(req), requireString(body.url, 'url'), requireIndex(body.group ?? 0));
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      await service.addTracker(
+        requireHash(req),
+        requireString(body.url, 'url'),
+        requireInt(body.group ?? 0, 'group', 0, 100_000),
+      );
       res.json({ ok: true });
     }),
   );
@@ -319,7 +337,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/throttles',
     wrap(async (req, res) => {
-      const body = req.body as Record<string, unknown>;
+      const body = (req.body ?? {}) as Record<string, unknown>;
       await service.saveThrottle({
         name: requireString(body.name, 'name'),
         up: Math.max(0, Number(body.up) || 0),
@@ -358,8 +376,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/log/scopes',
     wrap(async (req, res) => {
-      const body = req.body as { scopes?: unknown };
-      const result = await service.setLogScopes(body.scopes);
+      const result = await service.setLogScopes((req.body as { scopes?: unknown })?.scopes);
       res.json({ ...service.logScopes(), ...result });
     }),
   );
@@ -379,7 +396,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     '/rpc',
     wrap(async (req, res) => {
       if (!config.allowRawRpc) throw new HttpError(403, 'raw RPC access is disabled');
-      const body = req.body as { method?: unknown; params?: unknown };
+      const body = (req.body ?? {}) as { method?: unknown; params?: unknown };
       const method = requireString(body.method, 'method');
       const params = Array.isArray(body.params) ? (body.params as XValue[]) : [];
       try {
@@ -402,7 +419,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     '/rpc/help',
     wrap(async (req, res) => {
       if (!config.allowRawRpc) throw new HttpError(403, 'raw RPC access is disabled');
-      const method = requireString((req.body as { method?: unknown }).method, 'method');
+      const method = requireString((req.body as { method?: unknown })?.method, 'method');
       const results = await service.client.multicallSettled([
         { methodName: 'system.methodHelp', params: [method] },
         { methodName: 'system.methodSignature', params: [method] },

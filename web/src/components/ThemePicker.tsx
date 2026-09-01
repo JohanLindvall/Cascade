@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { THEME_MODES, type ThemeMode } from '../theme';
+import { THEME_MODES, type ResolvedTheme, type ThemeMode } from '../theme';
 import { IconCheck, IconMoon, IconSkull, IconSun, IconTerminal } from './icons';
 
 const GLYPHS: Record<ThemeMode, (props: { size?: number }) => JSX.Element> = {
@@ -16,7 +16,7 @@ export function ThemePicker({
   onChange,
 }: {
   mode: ThemeMode;
-  resolved: string;
+  resolved: ResolvedTheme;
   onChange: (mode: ThemeMode) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -37,7 +37,7 @@ export function ThemePicker({
   }, [open]);
 
   // The button shows what is actually on screen, not the abstract "system".
-  const Glyph = GLYPHS[resolved as ThemeMode] ?? IconMoon;
+  const Glyph = GLYPHS[resolved];
 
   return (
     <div className="theme-picker" ref={ref}>

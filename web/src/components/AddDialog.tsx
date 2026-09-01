@@ -1,5 +1,6 @@
 import { useRef, useState, type DragEvent } from 'react';
 import { api } from '../api';
+import { acceptTorrents } from '../files';
 import { bytes } from '../format';
 import { IconClose, IconFile, IconUpload } from './icons';
 import { Field, Modal, Switch, useToast } from './ui';
@@ -24,11 +25,8 @@ export function AddDialog({ onClose, onAdded, defaultDirectory, labels }: AddDia
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
-    const accepted = [...list].filter(
-      (file) => file.name.toLowerCase().endsWith('.torrent') || file.type === 'application/x-bittorrent',
-    );
-    const rejected = list.length - accepted.length;
-    if (rejected > 0) toast.push('info', `${rejected} file(s) ignored — only .torrent files are accepted`);
+    const { accepted, ignored } = acceptTorrents(list);
+    if (ignored) toast.push('info', ignored);
     setFiles((current) => [...current, ...accepted]);
   };
 
@@ -153,7 +151,7 @@ export function AddDialog({ onClose, onAdded, defaultDirectory, labels }: AddDia
       </Field>
 
       <div className="form-grid">
-        <Field label="Destination directory" hint={`Default: ${defaultDirectory || 'rtorrent default'}`}>
+        <Field label="Destination directory" hint={defaultDirectory ? `Default: ${defaultDirectory}` : 'Default: rtorrent’s own'}>
           <input
             className="input"
             placeholder={defaultDirectory}

@@ -309,8 +309,9 @@ Settings given as environment variables are applied over XML-RPC at startup rath
 
 The keyboard works throughout: `/` focuses search, `n` opens the Add dialog, `↑`/`↓` walk the
 list, `Ctrl/⌘-A` selects everything visible, `Delete` removes the selection (`Shift-Delete` also
-deletes its data, behind a confirmation), `Esc` clears the selection or closes what is open, and
-the column headers sort from the keyboard too.
+deletes its data), `Esc` clears the selection or closes what is open, and the column headers sort
+from the keyboard too. Removing asks first, in a dialog that lists what is about to go; setting a
+label offers the labels already in use.
 
 The log reads as a log: rtorrent's raw epoch seconds become clock times in your own timezone,
 with the level shown as colour (warnings amber, errors red) and a separator wherever the log
@@ -459,7 +460,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `POST` | `/api/torrents/url` | Add one magnet/URL as JSON |
 | `POST` | `/api/torrents/:hash/action/:action` | `start`, `stop`, `pause`, `resume`, `recheck`, `recheck-restart`, `announce` |
 | `POST` | `/api/torrents/action/:action` | Same, for a list of hashes |
-| `PATCH` | `/api/torrents/:hash` | `priority`, `label`, `throttle`, `directory`, `maxUploads`, `maxDownloads` |
+| `PATCH` | `/api/torrents/:hash` | `priority` (0 off … 3 high), `label`, `throttle`, `directory`, `maxUploads`, `maxDownloads` |
 | `POST` | `/api/torrents/remove` | Remove hashes, optionally `deleteData` |
 | `POST` | `/api/torrents/:hash/files/:index/priority` | `0` skip, `1` normal, `2` high |
 | `POST` | `/api/torrents/:hash/trackers/:index/enabled` | Enable/disable a tracker |
@@ -470,6 +471,11 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET` | `/api/rpc/methods`, `POST` `/api/rpc` | Every rtorrent command, as JSON |
 | `POST` | `/api/rpc/help` | `system.methodHelp` / `methodSignature` for one command |
 | `POST` | `/RPC2` | Raw XML-RPC passthrough |
+
+Malformed input — a hash that is not forty hex digits, a priority outside its range, a file
+index that is not a number — is answered with a `400` naming the field rather than forwarded to
+rtorrent; the bulk routes apply their action per hash and return the failures by hash in
+`errors` instead of stopping at the first.
 
 `/RPC2` lets existing tooling drive rtorrent over HTTP:
 
@@ -526,12 +532,17 @@ make logs / shell / stop
 ```
 
 Both halves carry unit tests beside their sources (`server/src/*.test.ts`, `web/src/*.test.ts`),
-written for node's built-in test runner — no frameworks, no new dependencies. They run inside
-every image build, so a red suite fails the build exactly as a type error does; to run them alone:
+written for node's built-in test runner — no frameworks, no new dependencies. The server suite
+covers everything from the XML-RPC codec up to the HTTP routes: the client and the capability
+probe run against a scripted transport, the service against a fake client that records what
+would have reached rtorrent, and the express app is mounted on a spare port and driven with
+`fetch`. They run inside every image build, so a red suite fails the build exactly as a type
+error does; to run them alone (the repo root is mounted because the options check reads the
+entrypoint and the README):
 
 ```bash
-docker run --rm -v "$PWD/server":/s -w /s node:22-alpine sh -c 'npm install && npm test'
-docker run --rm -v "$PWD/web":/w -w /w node:22-alpine sh -c 'npm install && npm test'
+docker run --rm -v "$PWD":/r -w /r/server node:22-alpine sh -c 'npm install && npm test && npm run options:check'
+docker run --rm -v "$PWD":/r -w /r/web node:22-alpine sh -c 'npm install && npm test'
 ```
 
 CI (GitHub Actions) runs the same checks: a fast typecheck and the unit tests of both TypeScript

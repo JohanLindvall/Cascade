@@ -74,7 +74,6 @@ export interface TorrentFileInfo {
   size: number;
 }
 
-/** Throws when the data is not a usable .torrent. */
 /**
  * The info hash out of a magnet's xt=urn:btih:, hex or base32, so a magnet
  * load can be confirmed the same way an uploaded file is.
@@ -102,6 +101,7 @@ function base32ToHex(value: string): string | undefined {
   return bytes.map((byte) => parseInt(byte, 2).toString(16).padStart(2, '0')).join('').toUpperCase();
 }
 
+/** Validate a .torrent and derive its info hash; throws with the reason when it is not one. */
 export function parseTorrentFile(data: Buffer): TorrentFileInfo {
   let root: Bencode;
   try {

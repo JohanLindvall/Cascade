@@ -22,6 +22,12 @@ const PRELOAD_TYPES = [
   { value: 2, label: 'Direct paging' },
 ];
 
+/** The keys of Settings whose value has a given type, so a number field cannot be pointed at a switch. */
+type KeysOfType<V> = { [K in keyof Settings]-?: NonNullable<Settings[K]> extends V ? K : never }[keyof Settings];
+type NumberKey = KeysOfType<number>;
+type TextKey = KeysOfType<string>;
+type BoolKey = KeysOfType<boolean>;
+
 /**
  * Live rtorrent settings, grouped by domain: bandwidth, peers, network,
  * trackers & DHT, storage & disk, resource limits. Every field name doubles as
@@ -73,11 +79,7 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
     }
   };
 
-  const numberField = (
-    key: keyof Settings,
-    label: string,
-    opts: { hint?: string; min?: number } = {},
-  ) => (
+  const numberField = (key: NumberKey, label: string, opts: { hint?: string; min?: number } = {}) => (
     <Field label={label} hint={opts.hint}>
       <input
         className="input"
@@ -85,34 +87,25 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
         min={opts.min ?? 0}
         disabled={!supports(key)}
         value={String(draft[key] ?? '')}
-        onChange={(event) => set(key, Number(event.target.value) as never)}
+        onChange={(event) => set(key, Number(event.target.value))}
       />
     </Field>
   );
 
-  const textField = (
-    key: keyof Settings,
-    label: string,
-    opts: { hint?: string; placeholder?: string } = {},
-  ) => (
+  const textField = (key: TextKey, label: string, opts: { hint?: string; placeholder?: string } = {}) => (
     <Field label={label} hint={opts.hint}>
       <input
         className="input"
         placeholder={opts.placeholder}
         disabled={!supports(key)}
         value={String(draft[key] ?? '')}
-        onChange={(event) => set(key, event.target.value as never)}
+        onChange={(event) => set(key, event.target.value)}
       />
     </Field>
   );
 
-  const switchField = (key: keyof Settings, label: string) => (
-    <Switch
-      checked={!!draft[key]}
-      disabled={!supports(key)}
-      onChange={(value) => set(key, value as never)}
-      label={label}
-    />
+  const switchField = (key: BoolKey, label: string) => (
+    <Switch checked={!!draft[key]} disabled={!supports(key)} onChange={(value) => set(key, value)} label={label} />
   );
 
   if (!settings) {

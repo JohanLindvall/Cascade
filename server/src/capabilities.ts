@@ -10,8 +10,11 @@
  * supports via system.listMethods and pick command names from what is actually
  * there. Unsupported settings are reported to the UI so it can hide them.
  */
-import type { RtorrentClient } from './rtorrent';
+import type { RpcClient } from './rtorrent';
 import { SETTING_KEYS, SETTING_SPECS } from './settings';
+
+/** The slice of the client the probe needs: one call and one settled batch. */
+export type ProbeClient = Pick<RpcClient, 'call' | 'multicallSettled'>;
 
 export interface Dialect {
   /** Multicall over the download list, plus the params that precede the fields. */
@@ -40,6 +43,14 @@ export interface BackendInfo {
   supports: Record<string, boolean>;
 }
 
+/** The candidate field commands for each multicall, before the probe filters them. */
+export interface FieldLists {
+  torrent: readonly string[];
+  file: readonly string[];
+  peer: readonly string[];
+  tracker: readonly string[];
+}
+
 /**
  * Feature -> command that implements it, for capabilities that are not global
  * settings. Every key of SETTING_SPECS additionally becomes a feature of its
@@ -59,6 +70,9 @@ const FEATURE_METHODS: Record<string, string | string[]> = {
   logScopes: 'log.add_output',
 };
 
+/** How long a probe is trusted before the command table is read again. */
+const PROBE_TTL_MS = 5 * 60_000;
+
 /** Candidate field commands, filtered down to those the backend implements. */
 function pickAvailable(available: Set<string>, candidates: readonly string[]): string[] {
   return candidates.filter((name) => available.has(name));
@@ -66,6 +80,10 @@ function pickAvailable(available: Set<string>, candidates: readonly string[]): s
 
 function firstAvailable(available: Set<string>, candidates: readonly string[], fallback: string): string {
   return candidates.find((name) => available.has(name)) ?? fallback;
+}
+
+function asList(value: string | string[] | undefined): string[] {
+  return value === undefined ? [] : Array.isArray(value) ? value : [value];
 }
 
 export class Capabilities {
@@ -86,11 +104,8 @@ export class Capabilities {
   ready = false;
 
   constructor(
-    private readonly client: RtorrentClient,
-    private readonly torrentFields: readonly string[],
-    private readonly fileFields: readonly string[],
-    private readonly peerFields: readonly string[],
-    private readonly trackerFields: readonly string[],
+    private readonly client: ProbeClient,
+    private readonly fields: FieldLists,
   ) {}
 
   has(method: string): boolean {
@@ -103,7 +118,7 @@ export class Capabilities {
 
   /** Probe once; concurrent callers share the in-flight probe. */
   async ensure(): Promise<void> {
-    if (this.ready && Date.now() - this.probedAt < 5 * 60_000) return;
+    if (this.ready && Date.now() - this.probedAt < PROBE_TTL_MS) return;
     if (this.probing) return this.probing;
     this.probing = this.probe().finally(() => {
       this.probing = null;
@@ -137,7 +152,6 @@ export class Capabilities {
       return item instanceof Error ? 'unknown' : String(item ?? 'unknown');
     };
 
-    const clientVersion = value(0);
     this.dialect = {
       downloadMulticall: methods.has('d.multicall2') ? 'd.multicall2' : 'd.multicall',
       downloadMulticallPrefix: methods.has('d.multicall2')
@@ -151,27 +165,24 @@ export class Capabilities {
       ),
       loadUrl: firstAvailable(methods, ['load.verbose', 'load.normal'], 'load.normal'),
       loadUrlStart: firstAvailable(methods, ['load.start_verbose', 'load.start'], 'load.start'),
-      torrentFields: pickAvailable(methods, this.torrentFields),
-      fileFields: pickAvailable(methods, this.fileFields),
-      peerFields: pickAvailable(methods, this.peerFields),
-      trackerFields: pickAvailable(methods, this.trackerFields),
+      torrentFields: pickAvailable(methods, this.fields.torrent),
+      fileFields: pickAvailable(methods, this.fields.file),
+      peerFields: pickAvailable(methods, this.fields.peer),
+      trackerFields: pickAvailable(methods, this.fields.tracker),
     };
 
     // A backend that answers listMethods but exposes none of our fields is not
     // something we can drive; fall back to the full list and let calls fault.
     if (this.dialect.torrentFields.length === 0) {
-      this.dialect.torrentFields = [...this.torrentFields];
+      this.dialect.torrentFields = [...this.fields.torrent];
     }
 
     const supports: Record<string, boolean> = {};
     for (const [feature, method] of Object.entries(FEATURE_METHODS)) {
-      const candidates = Array.isArray(method) ? method : [method];
-      supports[feature] = candidates.some((name) => methods.has(name));
+      supports[feature] = asList(method).some((name) => methods.has(name));
     }
     for (const key of SETTING_KEYS) {
-      const setter = SETTING_SPECS[key].set;
-      const candidates = setter === undefined ? [] : Array.isArray(setter) ? setter : [setter];
-      supports[key] = candidates.some((name) => methods.has(name));
+      supports[key] = asList(SETTING_SPECS[key].set).some((name) => methods.has(name));
     }
 
     let rpcFacility = '';
@@ -186,11 +197,11 @@ export class Capabilities {
     }
 
     this.info = {
-      clientVersion,
+      clientVersion: value(0),
       libraryVersion: value(1),
       apiVersion: value(2),
       methodCount: methods.size,
-      flavor: detectFlavor(clientVersion, methods),
+      flavor: detectFlavor(methods),
       rpcFacility,
       supports,
     };
@@ -208,7 +219,7 @@ export class Capabilities {
  * report indistinguishable version strings, and naming the wrong upstream is
  * worse than naming none.
  */
-function detectFlavor(_clientVersion: string, methods: Set<string>): string {
+function detectFlavor(methods: Set<string>): string {
   if (!methods.has('d.multicall2')) return 'legacy dialect (pre-0.9.7)';
   if (methods.has('load.raw_start_verbose')) return 'modern dialect (0.9.7+)';
   return 'modern dialect';

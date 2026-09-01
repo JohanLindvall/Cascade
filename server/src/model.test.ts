@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { TORRENT_FIELDS, mapTorrent, trackerHost } from './model';
+import { TORRENT_FIELDS, mapFile, mapPeer, mapTorrent, mapTracker, trackerHost } from './model';
 import type { XValue } from './xmlrpc';
 
 function row(over: Record<string, XValue> = {}): Record<string, XValue> {
@@ -72,4 +72,30 @@ test('trackerHost reads hostnames from tracker URLs of any scheme', () => {
   assert.equal(trackerHost('http://t.example.net:6969/announce'), 't.example.net');
   assert.equal(trackerHost('udp://t.example.net:6969'), 't.example.net');
   assert.equal(trackerHost('not a url'), 'unknown');
+});
+
+test('files, peers and trackers map their booleans and scaled numbers', () => {
+  const file = mapFile({ 'f.path': 'dir/a.bin', 'f.size_bytes': 10, 'f.completed_chunks': 1, 'f.size_chunks': 4, 'f.priority': 2, 'f.is_created': 1 }, 3);
+  assert.equal(file.index, 3);
+  assert.equal(file.progress, 0.25);
+  assert.equal(file.created, true);
+  assert.equal(mapFile({ 'f.size_chunks': 0 }, 0).progress, 0);
+
+  const peer = mapPeer({ 'p.address': '10.0.0.1', 'p.port': 6881, 'p.completed_percent': 50, 'p.is_encrypted': 1, 'p.is_incoming': 0 });
+  assert.equal(peer.progress, 0.5);
+  assert.equal(peer.encrypted, true);
+  assert.equal(peer.incoming, false);
+  assert.equal(peer.client, '');
+
+  const tracker = mapTracker({ 't.url': 'udp://t/x', 't.is_enabled': 1, 't.scrape_complete': 7, 't.type': 2 }, 1);
+  assert.equal(tracker.index, 1);
+  assert.equal(tracker.enabled, true);
+  assert.equal(tracker.seeders, 7);
+  assert.equal(tracker.type, 2);
+});
+
+test('8-bit strings arrive as Buffers and read as text; junk numbers read as zero', () => {
+  const torrent = mapTorrent(row({ 'd.name': Buffer.from('nämn', 'utf8'), 'd.size_bytes': 'lots' }), 0);
+  assert.equal(torrent.name, 'nämn');
+  assert.equal(torrent.size, 0);
 });

@@ -1,15 +1,9 @@
-import express, { type NextFunction, type Request, type Response } from 'express';
-import fs from 'node:fs';
-import path from 'node:path';
-import { createApi, createRpcProxy } from './api';
-import { basicAuth } from './auth';
-import { config } from './config';
-import { HttpError } from './errors';
+import { createApp } from './app';
+import { loadConfig } from './config';
 import { renderHelp } from './options';
+import { describeTarget } from './scgi';
 import { RtorrentService } from './service';
 import { Store } from './store';
-import { XmlRpcFault } from './xmlrpc';
-import { describeTarget } from './scgi';
 
 // Before anything is opened or read: `docker run --rm cascade --help` should
 // print and exit whatever the environment looks like.
@@ -18,81 +12,10 @@ if (process.argv.slice(2).some((arg) => arg === '--help' || arg === '-h' || arg 
   process.exit(0);
 }
 
+const config = loadConfig();
 const store = new Store(config.stateFile);
 const service = new RtorrentService(config, store);
-
-const app = express();
-app.disable('x-powered-by');
-app.set('trust proxy', true);
-
-const router = express.Router();
-
-// Health stays outside Basic auth so container healthchecks and orchestrator
-// probes work when WEB_USER/WEB_PASS are set. It reveals nothing but liveness.
-router.get('/healthz', (_req, res) => {
-  res.json({ ok: true, rtorrent: service.capabilities.ready });
-});
-
-router.use(basicAuth(config));
-
-// The XML-RPC proxy needs the untouched body; mount it before the JSON parser.
-router.post(
-  '/RPC2',
-  express.raw({ type: ['text/xml', 'application/xml', 'application/octet-stream'], limit: '16mb' }),
-  express.json({ limit: '1mb' }),
-  createRpcProxy(service, config),
-);
-
-router.use(express.json({ limit: '4mb' }));
-router.use('/api', createApi(service, config, store));
-
-// Static SPA assets, with a history fallback for client-side routing.
-//
-// Vite writes content-hashed files under assets/, so those are immutable: a
-// rebuild changes their names, never their bytes. Everything else — above all
-// the shell that names those hashes — must revalidate on every load, or a
-// browser that cached yesterday's index.html asks for hashed files that no
-// longer exist after a redeploy and shows a blank page until a hard reload.
-// no-cache still gives 304s (the files carry real mtimes), so it costs a
-// conditional request, not a re-download.
-const indexHtml = path.join(config.webRoot, 'index.html');
-router.use(
-  express.static(config.webRoot, {
-    index: false,
-    setHeaders: (res, filePath) => {
-      const hashed = filePath.startsWith(path.join(config.webRoot, 'assets') + path.sep);
-      res.setHeader('Cache-Control', hashed ? 'public, max-age=31536000, immutable' : 'no-cache');
-    },
-  }),
-);
-router.get('*', (_req, res) => {
-  if (!fs.existsSync(indexHtml)) {
-    res.status(500).type('text/plain').send(`web assets not found at ${config.webRoot}`);
-    return;
-  }
-  res.setHeader('Cache-Control', 'no-cache');
-  res.sendFile(indexHtml);
-});
-
-app.use(config.basePath === '/' ? '/' : config.basePath, router);
-
-app.use((error: Error, _req: Request, res: Response, _next: NextFunction) => {
-  if (error instanceof HttpError) {
-    res.status(error.status).json({ error: error.message });
-    return;
-  }
-  if (error instanceof XmlRpcFault) {
-    res.status(502).json({ error: error.faultString, faultCode: error.faultCode });
-    return;
-  }
-  const multerCode = (error as { code?: string }).code;
-  if (multerCode === 'LIMIT_FILE_SIZE') {
-    res.status(413).json({ error: 'torrent file exceeds the upload size limit' });
-    return;
-  }
-  console.error('[cascade]', error);
-  res.status(500).json({ error: error.message || 'internal error' });
-});
+const app = createApp(service, config, store);
 
 const server = app.listen(config.port, config.host, () => {
   console.log(`[cascade] listening on http://${config.host}:${config.port}${config.basePath}`);

@@ -1,11 +1,8 @@
+import { useMemo } from 'react';
+import { countByStatus, type Filter, type StatusFilter } from '../filter';
 import { bytes, rate } from '../format';
-import type { GlobalStatus, Torrent, TorrentStatus } from '../types';
+import type { GlobalStatus, Torrent } from '../types';
 import { IconGauge, IconGlobe, IconList, IconSettings, IconTag, IconTerminal, IconTrophy } from './icons';
-
-export interface Filter {
-  kind: 'status' | 'label' | 'tracker';
-  value: string;
-}
 
 /** Dialogs reachable from the drawer on compact layouts, where the header has
  *  no room for their buttons. */
@@ -25,7 +22,7 @@ interface SidebarProps {
   showProgress?: boolean;
 }
 
-const STATUS_ORDER: Array<{ value: string; label: string; color?: string }> = [
+const STATUS_ORDER: Array<{ value: StatusFilter; label: string; color?: string }> = [
   { value: 'all', label: 'All torrents' },
   { value: 'downloading', label: 'Downloading', color: 'var(--down)' },
   { value: 'seeding', label: 'Seeding', color: 'var(--ok)' },
@@ -38,10 +35,11 @@ const STATUS_ORDER: Array<{ value: string; label: string; color?: string }> = [
 
 const MAX_TRACKER_ROWS = 14;
 
-export function matchesStatus(torrent: Torrent, value: string): boolean {
-  if (value === 'all') return true;
-  if (value === 'active') return torrent.downRate > 0 || torrent.upRate > 0;
-  return torrent.status === (value as TorrentStatus);
+/** Occurrences of each key, sorted by the given comparator. */
+function tally(keys: Iterable<string>, order: (a: [string, number], b: [string, number]) => number) {
+  const counts = new Map<string, number>();
+  for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
+  return [...counts.entries()].sort(order);
 }
 
 export function Sidebar({
@@ -55,28 +53,29 @@ export function Sidebar({
   onTool,
   showProgress,
 }: SidebarProps) {
-  const countFor = (value: string) => torrents.filter((t) => matchesStatus(t, value)).length;
-
-  const labels = new Map<string, number>();
-  for (const torrent of torrents) {
-    const label = torrent.label || '';
-    if (!label) continue;
-    labels.set(label, (labels.get(label) ?? 0) + 1);
-  }
-
-  const trackers = new Map<string, number>();
-  for (const torrent of torrents) {
-    const host = trackerHosts[torrent.hash];
-    if (!host) continue;
-    trackers.set(host, (trackers.get(host) ?? 0) + 1);
-  }
+  // One pass per poll for everything the panel counts, rather than a filter
+  // per status row and a reduce per total.
+  const counts = useMemo(() => countByStatus(torrents), [torrents]);
+  const totals = useMemo(() => {
+    const sum = { size: 0, down: 0, up: 0 };
+    for (const torrent of torrents) {
+      sum.size += torrent.size;
+      sum.down += torrent.downTotal;
+      sum.up += torrent.upTotal;
+    }
+    return sum;
+  }, [torrents]);
+  const labels = useMemo(
+    () => tally(torrents.map((torrent) => torrent.label).filter(Boolean), (a, b) => a[0].localeCompare(b[0])),
+    [torrents],
+  );
+  const trackers = useMemo(
+    () => tally(torrents.map((torrent) => trackerHosts[torrent.hash]).filter(Boolean), (a, b) => b[1] - a[1]),
+    [torrents, trackerHosts],
+  );
 
   const isActive = (kind: Filter['kind'], value: string) =>
     filter.kind === kind && filter.value === value;
-
-  const totalDown = torrents.reduce((sum, t) => sum + t.downTotal, 0);
-  const totalUp = torrents.reduce((sum, t) => sum + t.upTotal, 0);
-  const totalSize = torrents.reduce((sum, t) => sum + t.size, 0);
 
   return (
     <nav className={`sidebar ${className}`}>
@@ -94,17 +93,15 @@ export function Sidebar({
               <IconList size={14} />
             )}
             <span className="label">{item.label}</span>
-            <span className="count">{countFor(item.value)}</span>
+            <span className="count">{counts[item.value]}</span>
           </button>
         ))}
       </div>
 
-      {labels.size > 0 && (
+      {labels.length > 0 && (
         <div className="side-group">
           <h4>Labels</h4>
-          {[...labels.entries()]
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([label, count]) => (
+          {labels.map(([label, count]) => (
               <button
                 key={label}
                 className={`side-item ${isActive('label', label) ? 'active' : ''}`}
@@ -118,13 +115,10 @@ export function Sidebar({
         </div>
       )}
 
-      {trackers.size > 0 && (
+      {trackers.length > 0 && (
         <div className="side-group">
           <h4>Trackers</h4>
-          {[...trackers.entries()]
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, MAX_TRACKER_ROWS)
-            .map(([host, count]) => (
+          {trackers.slice(0, MAX_TRACKER_ROWS).map(([host, count]) => (
               <button
                 key={host}
                 className={`side-item ${isActive('tracker', host) ? 'active' : ''}`}
@@ -136,8 +130,8 @@ export function Sidebar({
                 <span className="count">{count}</span>
               </button>
             ))}
-          {trackers.size > MAX_TRACKER_ROWS && (
-            <div className="side-more">…and {trackers.size - MAX_TRACKER_ROWS} more</div>
+          {trackers.length > MAX_TRACKER_ROWS && (
+            <div className="side-more">…and {trackers.length - MAX_TRACKER_ROWS} more</div>
           )}
         </div>
       )}
@@ -173,15 +167,15 @@ export function Sidebar({
         </div>
         <div>
           <span>Total size</span>
-          <b>{bytes(totalSize)}</b>
+          <b>{bytes(totals.size)}</b>
         </div>
         <div>
           <span>Downloaded</span>
-          <b>{bytes(totalDown)}</b>
+          <b>{bytes(totals.down)}</b>
         </div>
         <div>
           <span>Uploaded</span>
-          <b>{bytes(totalUp)}</b>
+          <b>{bytes(totals.up)}</b>
         </div>
         <div>
           <span>Down rate</span>

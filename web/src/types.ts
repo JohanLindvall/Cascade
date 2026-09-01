@@ -76,6 +76,8 @@ export interface GlobalStatus {
   listenPort: number;
   /** Free bytes on the download volume; null when the server cannot tell. */
   diskFree: number | null;
+  /** rtorrent's default download directory — what an add lands in unless told otherwise. */
+  downloadDir: string;
   backend: BackendSummary;
   history: RateSample[];
 }
@@ -199,8 +201,12 @@ export interface Tracker {
   nextActivity: number;
 }
 
-/** Mirrors the server's GlobalSettings; everything is optional because the
- *  backend only reports what this rtorrent build implements. */
+/**
+ * Mirrors the server's GlobalSettings; everything is optional because the
+ * backend only reports what this rtorrent build implements. (The two halves
+ * are separate packages, so these shapes are copied from server/src rather
+ * than imported — a field added there needs adding here.)
+ */
 export interface Settings {
   downloadRate?: number;
   uploadRate?: number;
