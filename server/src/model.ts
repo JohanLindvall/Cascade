@@ -186,6 +186,7 @@ export function mapTorrent(row: Row, addedAt: number): Torrent {
 
 export const FILE_FIELDS = [
   'f.path',
+  'f.frozen_path',
   'f.size_bytes',
   'f.completed_chunks',
   'f.size_chunks',
@@ -196,7 +197,12 @@ export const FILE_FIELDS = [
 
 export interface TorrentFile {
   index: number;
+  /** The path inside the torrent, as the torrent names it. */
   path: string;
+  /** The file's name on disk when it differs from the torrent's: the image's
+   *  libtorrent shortens names longer than Linux allows (CLAUDE.md quirk 12).
+   *  Empty when they agree, or before the torrent has ever been opened. */
+  onDisk: string;
   size: number;
   completedChunks: number;
   sizeChunks: number;
@@ -205,12 +211,23 @@ export interface TorrentFile {
   created: boolean;
 }
 
+function baseName(path: string): string {
+  return path.slice(path.lastIndexOf('/') + 1);
+}
+
 export function mapFile(row: Row, index: number): TorrentFile {
   const sizeChunks = int(row, 'f.size_chunks');
   const done = int(row, 'f.completed_chunks');
+  const path = text(row, 'f.path');
+  // f.frozen_path is the absolute path the file was opened under; only its
+  // last component is compared, since the directories above it are the
+  // torrent's base path and already shown as such.
+  const frozen = text(row, 'f.frozen_path');
+  const onDisk = frozen && baseName(frozen) !== baseName(path) ? baseName(frozen) : '';
   return {
     index,
-    path: text(row, 'f.path'),
+    path,
+    onDisk,
     size: int(row, 'f.size_bytes'),
     completedChunks: done,
     sizeChunks,

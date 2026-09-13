@@ -80,6 +80,14 @@ test('files, peers and trackers map their booleans and scaled numbers', () => {
   assert.equal(file.progress, 0.25);
   assert.equal(file.created, true);
   assert.equal(mapFile({ 'f.size_chunks': 0 }, 0).progress, 0);
+  assert.equal(file.onDisk, '');
+
+  // The on-disk name is reported only when libtorrent shortened it.
+  const same = mapFile({ 'f.path': 'dir/a.bin', 'f.frozen_path': '/downloads/rel/dir/a.bin' }, 0);
+  assert.equal(same.onDisk, '');
+  const cut = mapFile({ 'f.path': 'dir/' + 'x'.repeat(300) + '.bin', 'f.frozen_path': '/downloads/rel/dir/xxx~1a2b3c4d.bin' }, 0);
+  assert.equal(cut.onDisk, 'xxx~1a2b3c4d.bin');
+  assert.equal(mapFile({ 'f.path': 'a.bin', 'f.frozen_path': '' }, 0).onDisk, ''); // never opened
 
   const peer = mapPeer({ 'p.address': '10.0.0.1', 'p.port': 6881, 'p.completed_percent': 50, 'p.is_encrypted': 1, 'p.is_incoming': 0 });
   assert.equal(peer.progress, 0.5);

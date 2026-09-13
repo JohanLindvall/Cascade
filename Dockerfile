@@ -6,7 +6,7 @@
 # is exactly the one you asked for rather than whatever a distro happens to
 # package:
 #
-#     docker build -t cascade .                                  # 0.16.20
+#     docker build -t cascade .                                  # 0.16.22
 #     docker build --build-arg RTORRENT_VERSION=0.15.2 -t cascade:0.15.2 .
 #     docker build --build-arg RTORRENT_VERSION=0.9.8  -t cascade:0.9.8 .
 #
@@ -46,13 +46,18 @@ RUN cd server && npm run build && npm test && npm prune --omit=dev
 # 2. compile libtorrent and rtorrent from upstream tags
 # --------------------------------------------------------------------------
 FROM alpine:${ALPINE_VERSION} AS rtorrent
-ARG RTORRENT_VERSION=0.16.20
+ARG RTORRENT_VERSION=0.16.22
 ARG LIBTORRENT_VERSION=
 ARG RTORRENT_REPO=https://github.com/rakshasa/rtorrent
 ARG LIBTORRENT_REPO=https://github.com/rakshasa/libtorrent
 
 RUN apk add --no-cache \
       libstdc++ libcurl ncurses-libs zlib openssl xmlrpc-c
+
+# Source patches, applied per repository before configure (apply-<repo>.sh).
+# libtorrent's shortens path components that are longer than Linux allows;
+# see docker/patches/path_fit.h for the why.
+COPY docker/patches /tmp/patches
 
 RUN set -eux; \
     apk add --no-cache --virtual .build \
@@ -75,6 +80,9 @@ RUN set -eux; \
       mkdir -p /tmp/src && cd /tmp/src; \
       git clone --depth 1 --branch "v${tag}" "${repo}" "$(basename "${repo}")"; \
       cd "$(basename "${repo}")"; \
+      if [ -f "/tmp/patches/apply-$(basename "${repo}").sh" ]; then \
+        sh "/tmp/patches/apply-$(basename "${repo}").sh"; \
+      fi; \
       # 0.9.x/0.13.x ship autogen.sh; 0.15+ expects autoreconf directly.
       if [ -f autogen.sh ]; then ./autogen.sh; else autoreconf -fiv; fi; \
       # Releases before 0.16 relied on headers that newer libstdc++ no longer
@@ -91,7 +99,7 @@ RUN set -eux; \
       build "${RTORRENT_REPO}" "${RTORRENT_VERSION}" --with-xmlrpc-c; \
     \
     strip /usr/local/bin/rtorrent || true; \
-    rm -rf /tmp/src; \
+    rm -rf /tmp/src /tmp/patches /tmp/path_fit_test; \
     apk del .build
 ENV LD_LIBRARY_PATH=/usr/local/lib
 

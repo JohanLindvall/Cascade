@@ -17,7 +17,7 @@ URL               = http://localhost:$(PORT)
 
 # rtorrent is always compiled from an upstream tag.
 ALPINE_VERSION   ?= 3.22
-RTORRENT_VERSION ?= 0.16.20
+RTORRENT_VERSION ?= 0.16.22
 LIBTORRENT_VERSION ?=
 
 BUILD_ARGS = --build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
@@ -43,11 +43,11 @@ build: ## Build the image (also typechecks both TypeScript halves)
 	docker build $(BUILD_ARGS) -t $(REF) .
 
 matrix: ## Build the rtorrent versions the UI is tested against
-	@for v in 0.9.8 0.15.2 0.16.20; do \
+	@for v in 0.9.8 0.15.2 0.16.22; do \
 	  echo "==> rtorrent $$v"; \
 	  docker build --build-arg RTORRENT_VERSION=$$v -t $(IMAGE):$$v . || exit 1; \
 	done
-	@echo "==> built: $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.20"
+	@echo "==> built: $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.22"
 
 ##@ Run
 
@@ -139,4 +139,4 @@ clean: stop ## Remove containers built from this image
 	@docker rm -f cascade-smoke >/dev/null 2>&1 || true
 
 distclean: clean ## Also remove the images
-	docker rmi -f $(REF) $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.20 >/dev/null 2>&1 || true
+	docker rmi -f $(REF) $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.22 >/dev/null 2>&1 || true

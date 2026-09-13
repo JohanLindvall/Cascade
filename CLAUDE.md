@@ -85,7 +85,7 @@ curl -s localhost:18080/api/state               # what the UI polls
 
 rtorrent is always compiled from an upstream tag; there is no distro-package path. To test against
 a different one, rebuild with `--build-arg RTORRENT_VERSION=0.9.8` (or `make matrix`, which builds
-0.9.8, 0.15.2 and 0.16.20). **Changes to the backend should be checked against at least the oldest
+0.9.8, 0.15.2 and 0.16.22). **Changes to the backend should be checked against at least the oldest
 and newest**, because the command set genuinely differs.
 
 Old tags need `-include algorithm -include cstdint` to compile against a current libstdc++; the
@@ -160,6 +160,26 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
 
 11. **Labels live in `d.custom1`**, URL-encoded (the ruTorrent convention), which is why
    `mapTorrent` decodes and `setLabel` encodes.
+
+12. **libtorrent opens files under the exact name in the torrent, and Linux caps a path
+   component at 255 bytes** — so a Thai or CJK title of ~85 characters fails every open with
+   `ENAMETOOLONG`, which reaches the UI as "Hash check I/O error at chunk 0: Filename too long"
+   and a torrent that can never start. The image patches libtorrent at build time
+   (`docker/patches/`): `path_fit.h` shortens an over-long component to fit — stem cut at a
+   UTF-8 boundary, `~` plus an 8-hex FNV-1a tag of the original so two names differing past the
+   cut cannot collide, extension kept — and `apply-libtorrent.sh` wires it into the three
+   places that turn names into filesystem paths: `Path::as_string` (the file), 
+   `FileList::make_directory` (each directory), and `FileList::set_root_dir` (the root rtorrent
+   composes from the download directory and the torrent's *name* — for a multi-file torrent
+   that name is a directory and never passes through `Path`, which is how the first cut of the
+   patch still failed multi-file torrents). It is pattern-based rather than a diff per release,
+   knows the spellings of 0.13.x/0.15.x/0.16.x, and fails the build if a spelling is missing; it
+   also compiles and runs `path_fit_test.cc` with the same toolchain first. What reports what:
+   `d.name` and `f.path` keep the torrent's own names (rtorrent joins `f.path` from the
+   components itself, deliberately left alone); `frozen_path`, `d.base_path` and `d.directory`
+   are the on-disk truth, so delete-data is right. The Files tab fetches `f.frozen_path` and
+   shows "on disk as …" when the two differ (`mapFile.onDisk`). `docker/patches/apply-<repo>.sh`
+   is the general hook — one per repository, run after clone and before configure.
 
 ## Adding support for a new backend command
 
@@ -338,10 +358,13 @@ Two other things are easy to get wrong here:
   came out of a multicall).
 - Anything that deletes data must stay inside `config.deleteRoots`.
 - Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes
-  `<epoch seconds> <level letter> <text>` — the same shape on 0.9.8 and 0.16.20, checked — and
-  the dialog renders the time in the viewer's timezone. Anything that does not match is shown
-  verbatim rather than mangled to fit, which is what keeps a crash dump or a future format
-  readable. The day separator exists because the row shows only a clock: without it, a log
+  `<epoch seconds> <level letter> <text>` for the severity scopes and `<epoch seconds> <text>`
+  (no level) for the subsystem scopes such as `tracker_events` — the same two shapes on 0.9.8,
+  0.16.20 and 0.16.22, checked — and the dialog renders the time in the viewer's timezone.
+  Anything that does not match is shown verbatim rather than mangled to fit, which is what
+  keeps a crash dump or a future format readable. Note that rtorrent buffers the log: right
+  after boot the file is empty on every release, so read it after some activity before
+  concluding a build does not log. The day separator exists because the row shows only a clock: without it, a log
   spanning midnight is ambiguous — and being sticky, it must be painted in `--bg` rather than
   one of the `--panel-*` washes: those are transparent overlays meant to sit on a solid
   surface, and one used here let every scrolled row show straight through the heading.

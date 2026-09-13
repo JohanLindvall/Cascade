@@ -208,6 +208,14 @@ export function DetailPanel({ torrent, onClose, onHeightChange, height }: Detail
                     {file.path.includes('/') && (
                       <div style={{ color: 'var(--text-faint)', fontSize: 11 }}>{file.path}</div>
                     )}
+                    {file.onDisk && (
+                      <div
+                        style={{ color: 'var(--warn)', fontSize: 11 }}
+                        title="The name was longer than the filesystem allows, so it was shortened to fit"
+                      >
+                        on disk as {file.onDisk}
+                      </div>
+                    )}
                   </td>
                   <td className="num" style={{ textAlign: 'right' }}>
                     {bytes(file.size)}

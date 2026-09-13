@@ -139,6 +139,8 @@ export interface StateResponse {
 export interface TorrentFile {
   index: number;
   path: string;
+  /** The name on disk when libtorrent had to shorten it; empty otherwise. */
+  onDisk: string;
   size: number;
   completedChunks: number;
   sizeChunks: number;

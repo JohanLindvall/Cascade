@@ -96,10 +96,26 @@ test('a message keeps everything after the level, colons and all', () => {
   assert.equal(line.text, 'ABC123->tracker_list: added tracker (group:0 url:http://t/announce)');
 });
 
+test('a subsystem line has a timestamp but no level', () => {
+  // What tracker_events and the *_debug scopes write (0.16.22, checked).
+  const line = parseLogLine('1789314611 tracker-manager: added controller: info_hash:7848BD5C');
+  assert.equal(line.at?.getTime(), 1789314611 * 1000);
+  assert.equal(line.level, '');
+  assert.equal(line.text, 'tracker-manager: added controller: info_hash:7848BD5C');
+  // A capital that is a word, not a level letter, stays in the text.
+  const word = parseLogLine('1789314611 I/O error on chunk 3');
+  assert.equal(word.level, '');
+  assert.equal(word.text, 'I/O error on chunk 3');
+  // An unknown single letter is text as well, not a level.
+  const unknown = parseLogLine('1788015928 X unknown level letter');
+  assert.equal(unknown.level, '');
+  assert.equal(unknown.text, 'X unknown level letter');
+  assert.ok(unknown.at);
+});
+
 test('anything that is not a log line is handed back whole', () => {
   for (const raw of [
     'a bare sentence',
-    '1788015928 X unknown level letter',
     '1788015928I missing the space',
     '12345 I timestamp too short to be epoch seconds',
     '',

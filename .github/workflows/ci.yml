@@ -90,6 +90,40 @@ jobs:
             --data '<?xml version="1.0"?><methodCall><methodName>system.client_version</methodName></methodCall>' \
             | grep -o '<string>[^<]*</string>'
           curl -fsS http://127.0.0.1:18080/ | grep -o '<title>[^<]*</title>'
+      # The libtorrent patch in docker/patches: a torrent whose file name is
+      # longer than Linux allows must start (and create a shortened file)
+      # rather than stop with "Filename too long".
+      - name: A file name over 255 bytes is shortened, not refused
+        run: |
+          python3 - <<'EOF'
+          import hashlib, json, time, urllib.request
+          def ben(v):
+              if isinstance(v, int): return b'i%de' % v
+              if isinstance(v, bytes): return b'%d:' % len(v) + v
+              if isinstance(v, str): return ben(v.encode())
+              if isinstance(v, list): return b'l' + b''.join(map(ben, v)) + b'e'
+              return b'd' + b''.join(ben(k) + ben(v[k]) for k in sorted(v)) + b'e'
+          name = 'หลวงพ่อ' * 20 + '.mp4'  # 20 x 7 Thai chars = 420 bytes
+          assert len(name.encode()) > 255
+          data = b'7' * (256 * 1024)
+          info = {'name': name, 'length': len(data), 'piece length': 262144, 'pieces': hashlib.sha1(data).digest()}
+          body = ben({'announce': 'http://tracker.invalid/announce', 'info': info})
+          boundary = 'cascadeci'
+          form = (f'--{boundary}\r\nContent-Disposition: form-data; name="torrents"; filename="long.torrent"\r\n'
+                  f'Content-Type: application/x-bittorrent\r\n\r\n').encode() + body + f'\r\n--{boundary}--\r\n'.encode()
+          req = urllib.request.Request('http://127.0.0.1:18080/api/torrents/upload', data=form,
+                                       headers={'content-type': f'multipart/form-data; boundary={boundary}'})
+          print(urllib.request.urlopen(req).read().decode())
+          for _ in range(30):
+              state = json.load(urllib.request.urlopen('http://127.0.0.1:18080/api/state'))
+              torrent = next((t for t in state['torrents'] if t['name'] == name), None)
+              if torrent and torrent['status'] != 'checking':
+                  break
+              time.sleep(1)
+          print(torrent['status'], torrent['message'])
+          assert torrent['status'] != 'error', torrent['message']
+          EOF
+          docker exec cascade-ci sh -c 'ls -b /downloads | grep -c "~"'
       - name: Container log on failure
         if: failure()
         run: docker logs cascade-ci 2>&1 | tail -50 || true

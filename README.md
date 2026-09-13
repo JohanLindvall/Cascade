@@ -10,7 +10,7 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
 
 - **One container, batteries included** — rtorrent, its config, and the UI. Nothing else to run,
   published for amd64 and arm64, and buildable from source in one command.
-- **rtorrent 0.16.20, compiled from source** — the version in the image is exactly the upstream
+- **rtorrent 0.16.22, compiled from source** — the version in the image is exactly the upstream
   tag you asked for, not whatever a distro packaged. Any other tag builds with one build arg.
 - **Works across backend versions** — the server probes `system.listMethods` on connect and picks
   command names from what the running rtorrent actually implements, hiding unsupported controls
@@ -79,14 +79,14 @@ Every push to `main` is published, so tags are cheap and specific:
 | --- | --- |
 | `latest` | The newest published build |
 | `v0.1.42` | One exact release, built against the default rtorrent |
-| `v0.1.42-0.16.20` | The same release, naming the rtorrent version explicitly |
+| `v0.1.42-0.16.22` | The same release, naming the rtorrent version explicitly |
 
 The `-<rtorrent-version>` suffix is always present so that builds against other rtorrent releases
 can be published under the same scheme later. Pin `vX.Y.Z-<rtorrent>` for anything you care about
 keeping still; `latest` moves with `main`.
 
 ```bash
-docker pull ghcr.io/johanlindvall/cascade:v0.1.42-0.16.20   # pin a release
+docker pull ghcr.io/johanlindvall/cascade:v0.1.42-0.16.22   # pin a release
 docker pull ghcr.io/johanlindvall/cascade:latest            # follow main
 ```
 
@@ -114,13 +114,13 @@ make build && make run     # build, run against ./data, open a browser
 ## Choosing the rtorrent version
 
 The published images carry the default rtorrent; for any other version, build it yourself.
-rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.20**:
+rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.22**:
 
 ```bash
-docker build -t cascade .                                       # 0.16.20
+docker build -t cascade .                                       # 0.16.22
 docker build --build-arg RTORRENT_VERSION=0.15.2 -t cascade:0.15.2 .
 docker build --build-arg RTORRENT_VERSION=0.9.8  -t cascade:0.9.8 .
-make matrix                                                     # 0.9.8, 0.15.2, 0.16.20
+make matrix                                                     # 0.9.8, 0.15.2, 0.16.22
 ```
 
 libtorrent is pinned to the matching release automatically — rtorrent 0.9.x pairs with libtorrent
@@ -129,7 +129,7 @@ that, and `RTORRENT_REPO`/`LIBTORRENT_REPO` point at forks. `ALPINE_VERSION` (de
 the base image.
 
 The UI adapts at runtime, so one build of the frontend drives any of them — 0.9.8, 0.15.2 and
-0.16.20 are all exercised by the same API suite. Which backend you got is shown under the logo and
+0.16.22 are all exercised by the same API suite. Which backend you got is shown under the logo and
 in **Settings → Backend**.
 
 ### What changed in 0.16
@@ -498,6 +498,14 @@ private network, or prefer `/RPC2`, which sits behind Basic auth.
 
 ## Notes and limitations
 
+- File names longer than Linux allows are shortened to fit. A path component is capped at 255
+  bytes on ext4/xfs/btrfs and libtorrent opens files under the exact name from the torrent, so a
+  Thai, CJK or emoji-heavy title of ~85 characters used to fail with *"Hash check I/O error at
+  chunk 0: Filename too long"* and never start. The rtorrent in the image is built with a small
+  libtorrent patch (`docker/patches/`) that cuts such a name at a character boundary, keeps the
+  extension, and appends `~` plus a short tag of the original so two long names cannot collide;
+  the torrent keeps its own names in the list and the Files tab, which notes *on disk as …*
+  where the two differ.
 - Global settings changed in the UI are not persisted to `rtorrent.rc`; the environment is the
   source of truth on restart.
 - "Change directory" updates rtorrent's session only. Move already-downloaded files yourself, or
@@ -525,7 +533,7 @@ make run PORT=8080          # run it, mounting ./data, then open it in a browser
 make run OPEN=0             # ...without launching a browser
 make open                   # wait for it to answer, then open it
 make smoke                  # build, boot, exercise the API, tear down
-make matrix                 # build against 0.9.8, 0.15.2 and 0.16.20
+make matrix                 # build against 0.9.8, 0.15.2 and 0.16.22
 make build RTORRENT_VERSION=0.9.8
 make attach                 # attach to rtorrent's curses UI
 make logs / shell / stop
