@@ -36,7 +36,7 @@ import {
   IconUpload,
 } from './components/icons';
 import { useToast } from './components/ui';
-import { acceptTorrents } from './files';
+import { acceptTorrents, droppedFiles } from './files';
 import { filterTorrents, type Filter } from './filter';
 import { grimAchievement, grimGame } from './grim';
 import { COMPACT_QUERY, useMediaQuery } from './useMediaQuery';
@@ -342,7 +342,10 @@ export function App() {
     }
 
     const transfer = event.dataTransfer;
-    const dropped = Array.from(transfer?.files ?? []);
+    // Read files from both .files and .items, synchronously — a browser that
+    // exposed the drop only through .items would otherwise look like a bare
+    // path drop and be turned away (see droppedFiles).
+    const dropped = droppedFiles(transfer);
     const { accepted, ignored } = acceptTorrents(dropped);
     if (ignored) toast.push('info', ignored);
 

@@ -6,3 +6,6 @@ data/
 dist-test/
 package-lock.json
 *.tsbuildinfo
+
+# Test torrents dropped into the working tree during debugging
+*.torrent
