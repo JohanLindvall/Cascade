@@ -66,4 +66,37 @@ substitute src/torrent/data/file_list.cc "FileList::set_root_dir" path_fit_path 
   's|^\(  *m_rootDir = \)path\.substr(0, last + 1);$|\1path_fit_path(path.substr(0, last + 1));|' \
   's|^\(  *m_root_dir = \)path\.substr(0, last + 1);$|\1path_fit_path(path.substr(0, last + 1));|'
 
+# PEER_NAME: the prefix of the peer id every peer and tracker sees.
+#
+# libtorrent bakes it into configure.ac as an Azureus-style "-ltXXXX-", where
+# XXXX encodes the release (0.16.20 is -lt1014-, 0.16.22 -lt1016-, 0.16.23
+# -lt1017-). It is the other half of the client's identity: changing only
+# rtorrent's HTTP User-Agent leaves a peer id that still names the real
+# version, which a tracker checking both would see straight through.
+#
+# Unset means untouched. The two AC_DEFINE spellings (0.13.x bare, 0.15+
+# double-bracketed) both carry the value as a quoted "-lt....-", so the edit
+# targets that string on the PEER_NAME line rather than either spelling.
+if [ -n "${PEER_NAME:-}" ]; then
+  # Azureus-style and safe as a C string: -XXdddd- with nothing exotic in it.
+  case "$PEER_NAME" in
+    -[A-Za-z][A-Za-z][0-9A-Za-z][0-9A-Za-z][0-9A-Za-z][0-9A-Za-z]-) ;;
+    *)
+      echo "apply-libtorrent: PEER_NAME must look like -lt1014- (8 chars, -XXnnnn-)" >&2
+      exit 1
+      ;;
+  esac
+
+  grep -q 'PEER_NAME' configure.ac || {
+    echo "apply-libtorrent: configure.ac has no PEER_NAME — libtorrent changed shape" >&2
+    exit 1
+  }
+  sed -i "/PEER_NAME/ s|\"-[0-9A-Za-z]*-\"|\"${PEER_NAME}\"|" configure.ac
+  grep -q "\"${PEER_NAME}\"" configure.ac || {
+    echo "apply-libtorrent: the PEER_NAME edit did not take" >&2
+    exit 1
+  }
+  echo "apply-libtorrent: peer id prefix is \"${PEER_NAME}\""
+fi
+
 echo "apply-libtorrent: long path components will be shortened to fit (path_fit.h)"

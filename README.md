@@ -10,7 +10,7 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
 
 - **One container, batteries included** — rtorrent, its config, and the UI. Nothing else to run,
   published for amd64 and arm64, and buildable from source in one command.
-- **rtorrent 0.16.22, compiled from source** — the version in the image is exactly the upstream
+- **rtorrent 0.16.23, compiled from source** — the version in the image is exactly the upstream
   tag you asked for, not whatever a distro packaged. Any other tag builds with one build arg.
 - **Works across backend versions** — the server probes `system.listMethods` on connect and picks
   command names from what the running rtorrent actually implements, hiding unsupported controls
@@ -79,14 +79,14 @@ Every push to `main` is published, so tags are cheap and specific:
 | --- | --- |
 | `latest` | The newest published build |
 | `v0.1.42` | One exact release, built against the default rtorrent |
-| `v0.1.42-0.16.22` | The same release, naming the rtorrent version explicitly |
+| `v0.1.42-0.16.23` | The same release, naming the rtorrent version explicitly |
 
 The `-<rtorrent-version>` suffix is always present so that builds against other rtorrent releases
 can be published under the same scheme later. Pin `vX.Y.Z-<rtorrent>` for anything you care about
 keeping still; `latest` moves with `main`.
 
 ```bash
-docker pull ghcr.io/johanlindvall/cascade:v0.1.42-0.16.22   # pin a release
+docker pull ghcr.io/johanlindvall/cascade:v0.1.42-0.16.23   # pin a release
 docker pull ghcr.io/johanlindvall/cascade:latest            # follow main
 ```
 
@@ -114,13 +114,13 @@ make build && make run     # build, run against ./data, open a browser
 ## Choosing the rtorrent version
 
 The published images carry the default rtorrent; for any other version, build it yourself.
-rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.22**:
+rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.23**:
 
 ```bash
-docker build -t cascade .                                       # 0.16.22
+docker build -t cascade .                                       # 0.16.23
 docker build --build-arg RTORRENT_VERSION=0.15.2 -t cascade:0.15.2 .
 docker build --build-arg RTORRENT_VERSION=0.9.8  -t cascade:0.9.8 .
-make matrix                                                     # 0.9.8, 0.15.2, 0.16.22
+make matrix                                                     # 0.9.8, 0.15.2, 0.16.23
 ```
 
 libtorrent is pinned to the matching release automatically — rtorrent 0.9.x pairs with libtorrent
@@ -128,8 +128,29 @@ libtorrent is pinned to the matching release automatically — rtorrent 0.9.x pa
 that, and `RTORRENT_REPO`/`LIBTORRENT_REPO` point at forks. `ALPINE_VERSION` (default 3.22) picks
 the base image.
 
+### The version presented to trackers
+
+A client identifies itself twice: the HTTP `User-Agent` rtorrent sends to a tracker, and the peer
+id prefix libtorrent gives every peer and tracker. Private trackers whitelist client versions and
+refuse anything newer than their list, which rtorrent surfaces only as a failed announce — so
+0.16.23, being too new for some of them, **presents itself as 0.16.20 by default**
+(`USER_AGENT=rtorrent/0.16.20`, `PEER_NAME=-lt1014-`). Every other version presents itself as what
+it is. Both are build arguments, because rtorrent and libtorrent bake them in at compile time and
+expose no command to change them while running:
+
+```bash
+make build USER_AGENT=rtorrent/0.16.23 PEER_NAME=-lt1017-   # be 0.16.23 outright
+make build USER_AGENT=rtorrent/0.9.8   PEER_NAME=-lt0D80-
+docker build --build-arg USER_AGENT=rtorrent/0.9.8 --build-arg PEER_NAME=-lt0D80- -t cascade .
+make version                                                # what the image presents
+```
+
+Set the two together: a tracker that checks both sees a mismatch if only one moves. The peer id
+prefix per release is `-lt0D80-` (0.13.8, with rtorrent 0.9.8), `-lt0F02-` (0.15.2), `-lt1014-`
+(0.16.20), `-lt1016-` (0.16.22) and `-lt1017-` (0.16.23).
+
 The UI adapts at runtime, so one build of the frontend drives any of them — 0.9.8, 0.15.2 and
-0.16.22 are all exercised by the same API suite. Which backend you got is shown under the logo and
+0.16.23 are all exercised by the same API suite. Which backend you got is shown under the logo and
 in **Settings → Backend**.
 
 ### What changed in 0.16
@@ -533,7 +554,7 @@ make run PORT=8080          # run it, mounting ./data, then open it in a browser
 make run OPEN=0             # ...without launching a browser
 make open                   # wait for it to answer, then open it
 make smoke                  # build, boot, exercise the API, tear down
-make matrix                 # build against 0.9.8, 0.15.2 and 0.16.22
+make matrix                 # build against 0.9.8, 0.15.2 and 0.16.23
 make build RTORRENT_VERSION=0.9.8
 make attach                 # attach to rtorrent's curses UI
 make logs / shell / stop

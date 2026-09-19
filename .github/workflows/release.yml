@@ -6,7 +6,7 @@
 # runners — arm64 under QEMU would spend an hour emulating a C++ compile — and
 # joined into one manifest per rtorrent version.
 #
-# Image tags are <version>-<rtorrent-version>, e.g. v1.2.0-0.16.22. The build
+# Image tags are <version>-<rtorrent-version>, e.g. v1.2.0-0.16.23. The build
 # of DEFAULT_RTORRENT additionally answers to the bare <version> and :latest.
 #
 # The tag this workflow pushes does not re-trigger it: GitHub deliberately does
@@ -23,7 +23,7 @@ on:
 env:
   REGISTRY: ghcr.io
   # The rtorrent build that also carries the bare <version> and :latest tags.
-  DEFAULT_RTORRENT: 0.16.22
+  DEFAULT_RTORRENT: 0.16.23
 
 concurrency:
   group: release-${{ github.ref }}
@@ -85,7 +85,7 @@ jobs:
       fail-fast: false
       matrix:
         # Adding a version here publishes another -<rtorrent-version> tag.
-        rtorrent: ['0.16.22']
+        rtorrent: ['0.16.23']
         platform: [linux/amd64, linux/arm64]
     steps:
       - uses: actions/checkout@v7
@@ -170,7 +170,7 @@ jobs:
     strategy:
       matrix:
         # Keep in step with the build matrix above (Actions has no anchors).
-        rtorrent: ['0.16.22']
+        rtorrent: ['0.16.23']
     steps:
       - uses: actions/download-artifact@v8
         with:

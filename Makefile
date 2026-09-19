@@ -17,12 +17,28 @@ URL               = http://localhost:$(PORT)
 
 # rtorrent is always compiled from an upstream tag.
 ALPINE_VERSION   ?= 3.22
-RTORRENT_VERSION ?= 0.16.22
+RTORRENT_VERSION ?= 0.16.23
 LIBTORRENT_VERSION ?=
+
+# What the client calls itself: USER_AGENT is the HTTP header trackers read,
+# PEER_NAME the peer id prefix peers and trackers see. Left empty the
+# Dockerfile decides: 0.16.23 presents itself as 0.16.20 (USER_AGENT
+# rtorrent/0.16.20, PEER_NAME -lt1014-), because some private trackers have
+# not whitelisted 0.16.23 and refuse the announce outright; every other
+# version presents itself as what it is. Set them together — a tracker that
+# checks both sees a mismatch:
+#   make build USER_AGENT=rtorrent/0.16.23 PEER_NAME=-lt1017-   # be 0.16.23
+#   make build USER_AGENT=rtorrent/0.9.8   PEER_NAME=-lt0D80-
+# The prefix per release: 0.13.8 -lt0D80-, 0.15.2 -lt0F02-, 0.16.20 -lt1014-,
+# 0.16.22 -lt1016-, 0.16.23 -lt1017-.
+USER_AGENT       ?=
+PEER_NAME        ?=
 
 BUILD_ARGS = --build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
              --build-arg RTORRENT_VERSION=$(RTORRENT_VERSION) \
-             $(if $(LIBTORRENT_VERSION),--build-arg LIBTORRENT_VERSION=$(LIBTORRENT_VERSION),)
+             $(if $(LIBTORRENT_VERSION),--build-arg LIBTORRENT_VERSION=$(LIBTORRENT_VERSION),) \
+             $(if $(USER_AGENT),--build-arg USER_AGENT=$(USER_AGENT),) \
+             $(if $(PEER_NAME),--build-arg PEER_NAME=$(PEER_NAME),)
 
 REF = $(IMAGE):$(TAG)
 
@@ -34,8 +50,10 @@ help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nCascade\n\nUsage: make \033[36m<target>\033[0m [VAR=value]\n\nTargets:\n"} \
 	  /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2 } \
 	  /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
-	@printf "\nVariables: IMAGE=%s TAG=%s PORT=%s RTORRENT_VERSION=%s ALPINE_VERSION=%s OPEN=%s\n\n" \
+	@printf "\nVariables: IMAGE=%s TAG=%s PORT=%s RTORRENT_VERSION=%s ALPINE_VERSION=%s OPEN=%s\n" \
 	  "$(IMAGE)" "$(TAG)" "$(PORT)" "$(RTORRENT_VERSION)" "$(ALPINE_VERSION)" "$(OPEN)"
+	@printf "           USER_AGENT=%s PEER_NAME=%s\n\n" \
+	  "$(if $(USER_AGENT),$(USER_AGENT),(0.16.23 presents as 0.16.20))" "$(if $(PEER_NAME),$(PEER_NAME),(likewise))"
 
 ##@ Build
 
@@ -43,11 +61,11 @@ build: ## Build the image (also typechecks both TypeScript halves)
 	docker build $(BUILD_ARGS) -t $(REF) .
 
 matrix: ## Build the rtorrent versions the UI is tested against
-	@for v in 0.9.8 0.15.2 0.16.22; do \
+	@for v in 0.9.8 0.15.2 0.16.23; do \
 	  echo "==> rtorrent $$v"; \
 	  docker build --build-arg RTORRENT_VERSION=$$v -t $(IMAGE):$$v . || exit 1; \
 	done
-	@echo "==> built: $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.22"
+	@echo "==> built: $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.23"
 
 ##@ Run
 
@@ -110,8 +128,12 @@ attach: ## Attach to rtorrent's curses UI (detach with ctrl-a d)
 dev: ## Run the Vite dev server against a running container
 	cd web && npm install && npm run dev
 
-version: ## Report which rtorrent the built image contains
+version: ## Report which rtorrent the built image contains, and how it presents itself
 	@docker run --rm --entrypoint rtorrent $(REF) -h 2>&1 | head -n1
+	@printf 'announces as : '; docker run --rm --entrypoint sh $(REF) -c \
+	  'strings /usr/local/bin/rtorrent | grep -oE "^rtorrent/[0-9][0-9.]*" | head -n1'
+	@printf 'peer id      : '; docker run --rm --entrypoint sh $(REF) -c \
+	  'strings /usr/local/lib/libtorrent.so 2>/dev/null | grep -oE "^-[A-Za-z]{2}[0-9A-Za-z]{4}-" | head -n1'
 
 smoke: ## Build, boot, exercise the API, then tear down
 	@$(MAKE) --no-print-directory build
@@ -139,4 +161,4 @@ clean: stop ## Remove containers built from this image
 	@docker rm -f cascade-smoke >/dev/null 2>&1 || true
 
 distclean: clean ## Also remove the images
-	docker rmi -f $(REF) $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.22 >/dev/null 2>&1 || true
+	docker rmi -f $(REF) $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.23 >/dev/null 2>&1 || true

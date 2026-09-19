@@ -85,7 +85,7 @@ curl -s localhost:18080/api/state               # what the UI polls
 
 rtorrent is always compiled from an upstream tag; there is no distro-package path. To test against
 a different one, rebuild with `--build-arg RTORRENT_VERSION=0.9.8` (or `make matrix`, which builds
-0.9.8, 0.15.2 and 0.16.22). **Changes to the backend should be checked against at least the oldest
+0.9.8, 0.15.2 and 0.16.23). **Changes to the backend should be checked against at least the oldest
 and newest**, because the command set genuinely differs.
 
 Old tags need `-include algorithm -include cstdint` to compile against a current libstdc++; the
@@ -180,6 +180,18 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    are the on-disk truth, so delete-data is right. The Files tab fetches `f.frozen_path` and
    shows "on disk as …" when the two differ (`mapFile.onDisk`). `docker/patches/apply-<repo>.sh`
    is the general hook — one per repository, run after clone and before configure.
+
+13. **What the client calls itself is compile-time, in two places.** The HTTP `User-Agent`
+   (`USER_AGENT`, patched into rtorrent's `set_user_agent(USER_AGENT)` call by
+   `apply-rtorrent.sh`) and the peer id prefix (`PEER_NAME`, patched into libtorrent's
+   `configure.ac` by `apply-libtorrent.sh`). Both are build args, not environment variables —
+   neither project exposes a command for them. The Dockerfile defaults 0.16.23 to presenting
+   itself as 0.16.20 (`rtorrent/0.16.20` + `-lt1014-`), because private trackers whitelist
+   client versions and refuse anything newer, which reaches the UI only as a failed announce
+   (and, on 0.16.22, only as `v6 : Could not resolve hostname`, since libtorrent prefers a
+   failed AAAA lookup over the real reply). Move the two together: a tracker checking both sees
+   a mismatch otherwise. Prefixes: 0.13.8 `-lt0D80-`, 0.15.2 `-lt0F02-`, 0.16.20 `-lt1014-`,
+   0.16.22 `-lt1016-`, 0.16.23 `-lt1017-`.
 
 ## Adding support for a new backend command
 
