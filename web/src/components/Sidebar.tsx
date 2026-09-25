@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { countByStatus, type Filter, type StatusFilter } from '../filter';
+import { STATUS_FILTERS, countByStatus, type Filter, type StatusFilter } from '../filter';
 import { bytes, rate } from '../format';
 import type { GlobalStatus, Torrent } from '../types';
 import { IconGauge, IconGlobe, IconList, IconSettings, IconTag, IconTerminal, IconTrophy } from './icons';
@@ -20,18 +20,21 @@ interface SidebarProps {
   compact?: boolean;
   onTool?: (tool: ToolId) => void;
   showProgress?: boolean;
+  /** Whether the API console may be offered (CASCADE_ALLOW_RAW_RPC). */
+  showConsole?: boolean;
 }
 
-const STATUS_ORDER: Array<{ value: StatusFilter; label: string; color?: string }> = [
-  { value: 'all', label: 'All torrents' },
-  { value: 'downloading', label: 'Downloading', color: 'var(--down)' },
-  { value: 'seeding', label: 'Seeding', color: 'var(--ok)' },
-  { value: 'active', label: 'Active', color: 'var(--accent)' },
-  { value: 'paused', label: 'Paused', color: 'var(--warn)' },
-  { value: 'stopped', label: 'Stopped', color: 'var(--text-faint)' },
-  { value: 'checking', label: 'Checking', color: 'var(--accent-2)' },
-  { value: 'error', label: 'Error', color: 'var(--danger)' },
-];
+/** How each status filter is shown; the order is STATUS_FILTERS' own. */
+const STATUS_LOOK: Record<StatusFilter, { label: string; color?: string }> = {
+  all: { label: 'All torrents' },
+  downloading: { label: 'Downloading', color: 'var(--down)' },
+  seeding: { label: 'Seeding', color: 'var(--ok)' },
+  active: { label: 'Active', color: 'var(--accent)' },
+  paused: { label: 'Paused', color: 'var(--warn)' },
+  stopped: { label: 'Stopped', color: 'var(--text-faint)' },
+  checking: { label: 'Checking', color: 'var(--accent-2)' },
+  error: { label: 'Error', color: 'var(--danger)' },
+};
 
 const MAX_TRACKER_ROWS = 14;
 
@@ -52,6 +55,7 @@ export function Sidebar({
   compact,
   onTool,
   showProgress,
+  showConsole = true,
 }: SidebarProps) {
   // One pass per poll for everything the panel counts, rather than a filter
   // per status row and a reduce per total.
@@ -78,40 +82,41 @@ export function Sidebar({
     filter.kind === kind && filter.value === value;
 
   return (
-    <nav className={`sidebar ${className}`}>
+    <nav className={`sidebar ${className}`} aria-label="Filters">
       <div className="side-group">
         <h4>Status</h4>
-        {STATUS_ORDER.map((item) => (
-          <button
-            key={item.value}
-            className={`side-item ${isActive('status', item.value) ? 'active' : ''}`}
-            onClick={() => onFilter({ kind: 'status', value: item.value })}
-          >
-            {item.color ? (
-              <span className="side-dot" style={{ background: item.color }} />
-            ) : (
-              <IconList size={14} />
-            )}
-            <span className="label">{item.label}</span>
-            <span className="count">{counts[item.value]}</span>
-          </button>
-        ))}
+        {STATUS_FILTERS.map((value) => {
+          const { label, color } = STATUS_LOOK[value];
+          return (
+            <button
+              key={value}
+              className={`side-item ${isActive('status', value) ? 'active' : ''}`}
+              aria-pressed={isActive('status', value)}
+              onClick={() => onFilter({ kind: 'status', value })}
+            >
+              {color ? <span className="side-dot" style={{ background: color }} /> : <IconList size={14} />}
+              <span className="label">{label}</span>
+              <span className="count">{counts[value]}</span>
+            </button>
+          );
+        })}
       </div>
 
       {labels.length > 0 && (
         <div className="side-group">
           <h4>Labels</h4>
           {labels.map(([label, count]) => (
-              <button
-                key={label}
-                className={`side-item ${isActive('label', label) ? 'active' : ''}`}
-                onClick={() => onFilter({ kind: 'label', value: label })}
-              >
-                <IconTag size={14} />
-                <span className="label">{label}</span>
-                <span className="count">{count}</span>
-              </button>
-            ))}
+            <button
+              key={label}
+              className={`side-item ${isActive('label', label) ? 'active' : ''}`}
+              aria-pressed={isActive('label', label)}
+              onClick={() => onFilter({ kind: 'label', value: label })}
+            >
+              <IconTag size={14} />
+              <span className="label">{label}</span>
+              <span className="count">{count}</span>
+            </button>
+          ))}
         </div>
       )}
 
@@ -119,17 +124,18 @@ export function Sidebar({
         <div className="side-group">
           <h4>Trackers</h4>
           {trackers.slice(0, MAX_TRACKER_ROWS).map(([host, count]) => (
-              <button
-                key={host}
-                className={`side-item ${isActive('tracker', host) ? 'active' : ''}`}
-                onClick={() => onFilter({ kind: 'tracker', value: host })}
-                title={host}
-              >
-                <IconGlobe size={14} />
-                <span className="label">{host}</span>
-                <span className="count">{count}</span>
-              </button>
-            ))}
+            <button
+              key={host}
+              className={`side-item ${isActive('tracker', host) ? 'active' : ''}`}
+              aria-pressed={isActive('tracker', host)}
+              onClick={() => onFilter({ kind: 'tracker', value: host })}
+              title={host}
+            >
+              <IconGlobe size={14} />
+              <span className="label">{host}</span>
+              <span className="count">{count}</span>
+            </button>
+          ))}
           {trackers.length > MAX_TRACKER_ROWS && (
             <div className="side-more">…and {trackers.length - MAX_TRACKER_ROWS} more</div>
           )}
@@ -149,10 +155,12 @@ export function Sidebar({
             <IconGauge size={14} />
             <span className="label">Throttle groups</span>
           </button>
-          <button className="side-item" onClick={() => onTool('console')}>
-            <IconTerminal size={14} />
-            <span className="label">API console</span>
-          </button>
+          {showConsole && (
+            <button className="side-item" onClick={() => onTool('console')}>
+              <IconTerminal size={14} />
+              <span className="label">API console</span>
+            </button>
+          )}
           <button className="side-item" onClick={() => onTool('settings')}>
             <IconSettings size={14} />
             <span className="label">rtorrent settings</span>

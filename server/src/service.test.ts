@@ -127,6 +127,12 @@ test('status reads the gauges by command and the download directory', async () =
   assert.equal(result.dhtNodes, 0); // no dht.statistics on this backend
   assert.equal(result.backend.clientVersion, '0.16.20');
   assert.equal(result.backend.supports.labels, true);
+  assert.deepEqual(result.policy, { rawRpc: true, deleteData: true });
+});
+
+test('status reports the policy the server enforces, so the UI can stop offering it', async () => {
+  const { service: svc } = service(backend(), { allowRawRpc: false, allowDataDelete: false });
+  assert.deepEqual((await svc.status([])).policy, { rawRpc: false, deleteData: false });
 });
 
 test('dht.statistics is only asked for when the backend has it', async () => {

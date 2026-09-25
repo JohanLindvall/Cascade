@@ -10,6 +10,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -17,25 +18,25 @@ import {
 } from 'react';
 import { Field, Modal } from './ui';
 
-export interface ConfirmOptions {
+interface DialogOptions {
   title: string;
   message?: ReactNode;
   /** Things the action applies to, shown as a list (trimmed past a few). */
   items?: string[];
   confirmLabel?: string;
+}
+
+export interface ConfirmOptions extends DialogOptions {
   /** Style the confirm button as destructive. */
   danger?: boolean;
 }
 
-export interface PromptOptions {
-  title: string;
-  message?: ReactNode;
+export interface PromptOptions extends DialogOptions {
   label?: string;
   initial?: string;
   placeholder?: string;
   /** Offered as a datalist under the input. */
   suggestions?: string[];
-  confirmLabel?: string;
 }
 
 export interface Dialogs {
@@ -61,25 +62,43 @@ export function useDialogs(): Dialogs {
 
 const MAX_LISTED = 5;
 
+/** Answer a pending request as cancelled. */
+function cancel(pending: Pending): void {
+  if (pending.kind === 'confirm') pending.resolve(false);
+  else pending.resolve(null);
+}
+
 export function DialogProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<Pending | null>(null);
+  // The request on screen, readable from the stable open functions below.
+  const current = useRef<Pending | null>(null);
+
+  const show = useCallback((next: Pending | null) => {
+    // A request that arrives while another is showing replaces it, and the
+    // replaced one is answered as cancelled — left unanswered, whatever was
+    // awaiting it would wait forever.
+    if (current.current && current.current !== next) cancel(current.current);
+    current.current = next;
+    setPending(next);
+  }, []);
 
   const confirm = useCallback(
-    (options: ConfirmOptions) =>
-      new Promise<boolean>((resolve) => setPending({ kind: 'confirm', options, resolve })),
-    [],
+    (options: ConfirmOptions) => new Promise<boolean>((resolve) => show({ kind: 'confirm', options, resolve })),
+    [show],
   );
   const prompt = useCallback(
     (options: PromptOptions) =>
-      new Promise<string | null>((resolve) => setPending({ kind: 'prompt', options, resolve })),
-    [],
+      new Promise<string | null>((resolve) => show({ kind: 'prompt', options, resolve })),
+    [show],
   );
 
-  const settle = (value: boolean | string | null) => {
-    if (!pending) return;
+  const settle = (answer: boolean | string | null) => {
+    const request = current.current;
+    if (!request) return;
+    current.current = null;
     setPending(null);
-    if (pending.kind === 'confirm') pending.resolve(value === true);
-    else pending.resolve(typeof value === 'string' ? value : null);
+    if (request.kind === 'confirm') request.resolve(answer === true);
+    else request.resolve(typeof answer === 'string' ? answer : null);
   };
 
   const api = useMemo<Dialogs>(() => ({ confirm, prompt, open: pending !== null }), [confirm, prompt, pending]);
@@ -87,17 +106,14 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   return (
     <DialogContext.Provider value={api}>
       {children}
-      {pending?.kind === 'confirm' && (
-        <ConfirmDialog options={pending.options} onSettle={(ok) => settle(ok)} />
-      )}
-      {pending?.kind === 'prompt' && (
-        <PromptDialog options={pending.options} onSettle={(text) => settle(text)} />
-      )}
+      {pending?.kind === 'confirm' && <ConfirmDialog options={pending.options} onSettle={settle} />}
+      {pending?.kind === 'prompt' && <PromptDialog options={pending.options} onSettle={settle} />}
     </DialogContext.Provider>
   );
 }
 
-function ItemList({ items }: { items: string[] }) {
+function ItemList({ items }: { items?: string[] }) {
+  if (!items?.length) return null;
   const shown = items.slice(0, MAX_LISTED);
   const more = items.length - shown.length;
   return (
@@ -145,7 +161,7 @@ function ConfirmDialog({
       }
     >
       {options.message && <p className="confirm-message">{options.message}</p>}
-      {options.items && options.items.length > 0 && <ItemList items={options.items} />}
+      <ItemList items={options.items} />
     </Modal>
   );
 }
@@ -159,11 +175,12 @@ function PromptDialog({
 }) {
   const [value, setValue] = useState(options.initial ?? '');
   const input = useRef<HTMLInputElement>(null);
+  const listId = useId();
   useEffect(() => {
     input.current?.focus();
     input.current?.select();
   }, []);
-  const listId = options.suggestions?.length ? 'cascade-prompt-suggestions' : undefined;
+  const suggest = !!options.suggestions?.length;
   return (
     <Modal
       title={options.title}
@@ -182,22 +199,24 @@ function PromptDialog({
       }
     >
       <form
+        className="prompt-form"
         onSubmit={(event) => {
           event.preventDefault();
           onSettle(value);
         }}
       >
         {options.message && <p className="confirm-message">{options.message}</p>}
+        <ItemList items={options.items} />
         <Field label={options.label ?? options.title}>
           <input
             ref={input}
             className="input"
-            list={listId}
+            list={suggest ? listId : undefined}
             placeholder={options.placeholder}
             value={value}
             onChange={(event) => setValue(event.target.value)}
           />
-          {listId && (
+          {suggest && (
             <datalist id={listId}>
               {options.suggestions?.map((item) => (
                 <option key={item} value={item} />

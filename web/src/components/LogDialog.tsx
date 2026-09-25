@@ -1,6 +1,9 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { api, type LogScopes } from '../api';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { api } from '../api';
 import { logDay, logTime, parseLogLine } from '../format';
+import { usePolling } from '../hooks';
+import { redactSecrets } from '../redact';
+import type { LogScopes } from '../types';
 import { Modal, useToast } from './ui';
 
 export function LogDialog({ onClose }: { onClose: () => void }) {
@@ -50,21 +53,19 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => {
-      api
-        .log(500)
-        .then((result) => !cancelled && setLines(result.lines))
-        .catch((error) => !cancelled && toast.error(error));
-    };
-    load();
-    const timer = window.setInterval(load, 4000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [toast]);
+  const load = useCallback(
+    async (isCurrent: () => boolean) => {
+      try {
+        const result = await api.log();
+        // rtorrent echoes tracker URLs, passkeys and all, into its log.
+        if (isCurrent()) setLines(result.lines.map(redactSecrets));
+      } catch (error) {
+        if (isCurrent()) toast.error(error);
+      }
+    },
+    [toast],
+  );
+  usePolling(load, 4000);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -112,9 +113,7 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       footer={
         <>
-          <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>
-            Refreshes every few seconds; scroll up to pause following.
-          </span>
+          <span className="foot-note">Refreshes every few seconds; scroll up to pause following.</span>
           <div className="spacer" />
           <button className="btn" onClick={onClose}>
             Close
@@ -158,7 +157,6 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
       )}
       <pre
         className="console-output log-view"
-        style={{ maxHeight: '60vh' }}
         ref={viewRef}
         onScroll={(event) => {
           const view = event.currentTarget;

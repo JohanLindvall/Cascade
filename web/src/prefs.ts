@@ -4,53 +4,23 @@
  *
  * A localStorage copy is kept purely as a cache: it lets the theme apply on the
  * first paint instead of flashing the default while the fetch is in flight. The
- * file is the source of truth and overwrites the cache once it arrives.
+ * file is the source of truth and overwrites the cache once it arrives. The
+ * shape and its repair live in preferences.ts, where the tests can reach them.
  */
-import { API_BASE } from './api';
-import { isSortKey, type SortDir, type SortKey } from './sort';
-import { isThemeMode, type ThemeMode } from './theme';
+import { request } from './api';
+import { normalizePreferences, type Preferences } from './preferences';
 
-export interface Preferences {
-  theme: ThemeMode;
-  sortKey: SortKey;
-  sortDir: SortDir;
-  detailHeight: number;
-  seenBadges: string[];
-}
-
-export const DEFAULT_PREFERENCES: Preferences = {
-  theme: 'system',
-  sortKey: 'addedAt',
-  sortDir: 'desc',
-  detailHeight: 280,
-  seenBadges: [],
-};
+export { DEFAULT_PREFERENCES, type Preferences } from './preferences';
 
 // Also read by the inline pre-paint script in index.html — keep them in step.
 const CACHE_KEY = 'cascade.prefs';
 
-/**
- * Fill a possibly partial or hand-edited record out to a full Preferences.
- * The server sanitises what it stores, but the cache is a browser's
- * localStorage and the enum-valued fields are the ones a stray value breaks.
- */
-function complete(partial: Partial<Preferences>): Preferences {
-  const merged = { ...DEFAULT_PREFERENCES, ...partial };
-  return {
-    ...merged,
-    theme: isThemeMode(merged.theme) ? merged.theme : DEFAULT_PREFERENCES.theme,
-    sortKey: isSortKey(merged.sortKey) ? merged.sortKey : DEFAULT_PREFERENCES.sortKey,
-    sortDir: merged.sortDir === 'asc' ? 'asc' : 'desc',
-    seenBadges: Array.isArray(merged.seenBadges) ? merged.seenBadges.map(String) : [],
-  };
-}
-
 export function readCache(): Preferences {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
-    return complete(raw ? (JSON.parse(raw) as Partial<Preferences>) : {});
+    return normalizePreferences(raw ? JSON.parse(raw) : {});
   } catch {
-    return { ...DEFAULT_PREFERENCES };
+    return normalizePreferences({});
   }
 }
 
@@ -63,9 +33,7 @@ function writeCache(prefs: Preferences): void {
 }
 
 export async function fetchPreferences(): Promise<Preferences> {
-  const response = await fetch(`${API_BASE}prefs`, { credentials: 'same-origin' });
-  if (!response.ok) throw new Error(`could not load preferences (${response.status})`);
-  const prefs = complete((await response.json()) as Partial<Preferences>);
+  const prefs = normalizePreferences(await request<unknown>('prefs'));
   writeCache(prefs);
   return prefs;
 }
@@ -79,16 +47,14 @@ function send(): void {
   if (Object.keys(pending).length === 0) return;
   const body = pending;
   pending = {};
-  void fetch(`${API_BASE}prefs`, {
+  // keepalive lets a save fired just before the tab closes still reach the
+  // server; a failure (offline, signed out) leaves the cache consistent.
+  request('prefs', {
     method: 'PATCH',
-    credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
-    // Let a save fired just before the tab closes still reach the server.
     keepalive: true,
-  }).catch(() => {
-    // Offline or unauthenticated: the cache keeps the UI consistent.
-  });
+  }).catch(() => {});
 }
 
 // The debounce buys nothing if the tab closes inside it: a theme picked and
@@ -96,9 +62,13 @@ function send(): void {
 // is the last reliable moment, and keepalive lets the request outlive the tab.
 window.addEventListener('pagehide', send);
 
-/** Merge-and-save, coalescing rapid changes such as dragging the detail pane. */
-export function savePreferences(patch: Partial<Preferences>, current: Preferences): void {
-  writeCache({ ...current, ...patch });
+/**
+ * Merge a change into the cache now and into the server file shortly,
+ * coalescing rapid changes such as dragging the detail pane. Call it from an
+ * event handler, not from inside a state updater — React may run those twice.
+ */
+export function savePreferences(patch: Partial<Preferences>): void {
+  writeCache({ ...readCache(), ...patch });
   pending = { ...pending, ...patch };
   window.clearTimeout(timer);
   timer = window.setTimeout(send, 400);

@@ -1,3 +1,5 @@
+import type { ProgressUnit } from './types';
+
 const UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
 
 export function bytes(value: number, precision?: number): string {
@@ -61,17 +63,34 @@ export function relative(value: number): string {
   return `${duration(delta)} ago`;
 }
 
-/** Parse "12", "12k", "1.5M" into bytes/second. Empty or 0 means unlimited. */
-export function parseRate(input: string): number {
+const RATE_FACTORS: Record<string, number> = { k: 1024, m: 1024 ** 2, g: 1024 ** 3 };
+
+/**
+ * Parse "12", "12k", "1.5M", "2 MiB/s", "800 B/s" into bytes/second. A bare
+ * number is KiB/s (the convention of every rtorrent front end); empty means
+ * 0, which rtorrent reads as unlimited. Anything else is null, not 0: a limit
+ * is a live throttle, and a typo ("1.5.2", "fast") that quietly parsed to 0
+ * used to lift it altogether.
+ */
+export function parseRate(input: string): number | null {
   const text = input.trim();
   if (text === '') return 0;
-  const match = /^([\d.]+)\s*([kKmMgG])?/.exec(text);
-  if (!match) return 0;
-  const value = Number(match[1]);
-  if (!Number.isFinite(value)) return 0;
-  const suffix = (match[2] ?? 'k').toLowerCase();
-  const factor = suffix === 'g' ? 1024 ** 3 : suffix === 'm' ? 1024 ** 2 : 1024;
-  return Math.round(value * factor);
+  const match = /^(\d+(?:\.\d+)?|\.\d+)\s*(?:([kmg])(?:i?b)?|(b))?(?:\/s)?$/i.exec(text);
+  if (!match) return null;
+  const factor = match[3] ? 1 : RATE_FACTORS[(match[2] ?? 'k').toLowerCase()];
+  return Math.round(Number(match[1]) * factor);
+}
+
+/**
+ * A whole number of at least `min`, or null. Settings and slot counts are
+ * integers, and several accept -1 ("disabled"), so a lone "-" on the way to
+ * "-1" has to read as not-yet-valid rather than as 0.
+ */
+export function parseWholeNumber(input: string, min = 0): number | null {
+  const text = input.trim();
+  if (!/^-?\d+$/.test(text)) return null;
+  const value = Number(text);
+  return Number.isSafeInteger(value) && value >= min ? value : null;
 }
 
 /** Render a byte rate back into the compact KiB/MiB form used by the inputs. */
@@ -151,4 +170,68 @@ export function logDay(at: Date): string {
 export function fileName(path: string): string {
   const index = path.lastIndexOf('/');
   return index < 0 ? path : path.slice(index + 1);
+}
+
+/**
+ * A magnet link that reproduces the torrent from its info hash. Trackers are
+ * left out on purpose: a private tracker's announce URL carries the owner's
+ * passkey, and a copied magnet gets pasted to other people.
+ */
+export function magnetLink(hash: string, name?: string): string {
+  const dn = name ? `&dn=${encodeURIComponent(name)}` : '';
+  return `magnet:?xt=urn:btih:${hash.toLowerCase()}${dn}`;
+}
+
+/** rtorrent's d.priority, highest first, as the menu offers it. */
+export const TORRENT_PRIORITIES: ReadonlyArray<{ value: number; label: string }> = [
+  { value: 3, label: 'High' },
+  { value: 2, label: 'Normal' },
+  { value: 1, label: 'Low' },
+  { value: 0, label: 'Off' },
+];
+
+/** rtorrent's f.priority: 0 means the file is not downloaded at all. */
+export const FILE_PRIORITIES: ReadonlyArray<{ value: number; label: string }> = [
+  { value: 0, label: 'Skip' },
+  { value: 1, label: 'Normal' },
+  { value: 2, label: 'High' },
+];
+
+/** The label for a priority value, or the bare number for one no table names. */
+export function priorityLabel(
+  table: ReadonlyArray<{ value: number; label: string }>,
+  value: number,
+): string {
+  return table.find((item) => item.value === value)?.label ?? String(value);
+}
+
+/** "1.20 GiB / 100 GiB", "3 / 10", "2.41 / 5.00" — progress in the target's own unit. */
+export function progressText(unit: ProgressUnit, current: number, target: number): string {
+  switch (unit) {
+    case 'bytes':
+      return `${bytes(current)} / ${bytes(target)}`;
+    case 'rate':
+      // Not rate(): that shows an idle zero as "—", which reads as "no data"
+      // here rather than as the zero it is.
+      return `${bytes(current)}/s / ${bytes(target)}/s`;
+    case 'ratio':
+      return `${current.toFixed(2)} / ${target.toFixed(2)}`;
+    case 'duration':
+      return `${duration(current)} / ${duration(target)}`;
+    default:
+      return `${Math.floor(current)} / ${target}`;
+  }
+}
+
+/**
+ * Bulk endpoints report failures as "<info hash>: <reason>". A hash means
+ * nothing to the person reading the toast, so the torrent's name replaces it
+ * where it is known.
+ */
+export function nameErrors(errors: string[], nameOf: (hash: string) => string | undefined): string[] {
+  return errors.map((error) => {
+    const match = /^([0-9A-Fa-f]{40}): (.*)$/s.exec(error);
+    const name = match ? nameOf(match[1].toUpperCase()) : undefined;
+    return match && name ? `${name}: ${match[2]}` : error;
+  });
 }

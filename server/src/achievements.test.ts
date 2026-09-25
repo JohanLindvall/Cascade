@@ -71,3 +71,11 @@ test('every achievement id is unique and has a progress pair', () => {
     assert.ok(target > 0, def.id);
   }
 });
+
+test('every achievement declares the unit its progress is measured in', () => {
+  const units = new Set(['count', 'bytes', 'rate', 'ratio', 'duration']);
+  for (const def of ACHIEVEMENTS) assert.ok(units.has(def.unit), `${def.id}: ${def.unit}`);
+  const game = buildGameState(stats(), {}, true);
+  const speed = game.achievements.find((item) => item.id === 'speed-demon');
+  assert.equal(speed?.unit, 'rate'); // a peak transfer rate, not a byte count
+});

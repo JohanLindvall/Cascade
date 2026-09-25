@@ -10,6 +10,7 @@ import path from 'node:path';
 import { createApi, createRpcProxy } from './api';
 import { basicAuth } from './auth';
 import type { Config } from './config';
+import { isCrossSiteRequest } from './crossSite';
 import { HttpError } from './errors';
 import type { RtorrentService } from './service';
 import type { Store } from './store';
@@ -20,12 +21,36 @@ export function createApp(service: RtorrentService, config: Config, store: Store
   app.disable('x-powered-by');
   app.set('trust proxy', true);
 
+  // Cheap, compatible hardening on every response: no MIME sniffing of what
+  // is served, and no URL (which carries the base path) leaking in Referer to
+  // anything outside this origin. Framing is deliberately left alone —
+  // dashboards embed Cascade in iframes.
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'same-origin');
+    next();
+  });
+
   const router = express.Router();
 
   // Health stays outside Basic auth so container healthchecks and orchestrator
   // probes work when WEB_USER/WEB_PASS are set. It reveals nothing but liveness.
   router.get('/healthz', (_req, res) => {
     res.json({ ok: true, rtorrent: service.capabilities.ready });
+  });
+
+  // Before auth, so a hostile page learns nothing — not even whether a
+  // password is set. See crossSite.ts for what is refused and why.
+  router.use((req, res, next) => {
+    const forwarded = req.get('x-forwarded-host')?.split(',')[0]?.trim();
+    const refused = isCrossSiteRequest({
+      method: req.method,
+      origin: req.get('origin'),
+      fetchSite: req.get('sec-fetch-site'),
+      host: forwarded || req.get('host'),
+    });
+    if (!refused) return next();
+    res.status(403).json({ error: 'cross-site request refused' });
   });
 
   router.use(basicAuth(config));

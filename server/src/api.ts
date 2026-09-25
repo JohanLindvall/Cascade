@@ -43,6 +43,18 @@ function requireIndex(value: unknown): number {
   return requireInt(value, 'index', 0, 100_000);
 }
 
+/** d.tracker.insert keeps whatever string it is given; only these schemes can
+ *  ever announce. The web UI checks the same rule before sending. */
+const ANNOUNCE_URL_RE = /^(https?|udp):\/\/\S+$/i;
+
+function requireAnnounceUrl(value: unknown): string {
+  const url = requireString(value, 'url');
+  if (!ANNOUNCE_URL_RE.test(url)) {
+    throw new HttpError(400, '"url" must be an http(s):// or udp:// announce URL');
+  }
+  return url;
+}
+
 function requireHash(req: Request): string {
   const hash = String(req.params.hash ?? '');
   if (!HASH_RE.test(hash)) throw new HttpError(400, 'invalid info hash');
@@ -303,7 +315,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
       const body = (req.body ?? {}) as Record<string, unknown>;
       await service.addTracker(
         requireHash(req),
-        requireString(body.url, 'url'),
+        requireAnnounceUrl(body.url),
         requireInt(body.group ?? 0, 'group', 0, 100_000),
       );
       res.json({ ok: true });

@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acceptTorrents, droppedFiles, isTorrentFile } from './files.ts';
+import { acceptTorrents, dropText, droppedFiles, isTorrentFile, linksFromDrop } from './files.ts';
 
 const file = (name: string, type = '') => new File([], name, { type });
 
@@ -55,4 +55,28 @@ test('droppedFiles does not double-count a file both sources report', () => {
   const same = new File([], 'a.torrent');
   const got = droppedFiles({ files: [a], items: [fileItem(same)] });
   assert.equal(got.length, 1);
+});
+
+test('a drop without files reads its link list first, then its plain text', () => {
+  const transfer = (data: Record<string, string>) => ({ getData: (format: string) => data[format] ?? '' });
+  assert.equal(dropText(transfer({ 'text/uri-list': ' magnet:?xt=1 ', 'text/plain': 'x' })), 'magnet:?xt=1');
+  assert.equal(dropText(transfer({ 'text/plain': 'https://a.example/t.torrent\n' })), 'https://a.example/t.torrent');
+  assert.equal(dropText(transfer({})), '');
+  assert.equal(dropText(null), '');
+});
+
+test('dropped text yields its magnet and http(s) links, and nothing else', () => {
+  const text = '# a comment\nmagnet:?xt=urn:btih:abc\r\nhttps://tracker.example/x.torrent  ftp://no http:nope words';
+  assert.deepEqual(linksFromDrop(text), {
+    links: ['magnet:?xt=urn:btih:abc', 'https://tracker.example/x.torrent'],
+    problem: null,
+  });
+});
+
+test('a drop with nothing to add always says why', () => {
+  // A file manager that hands over only a path: the browser may not read it.
+  assert.equal(linksFromDrop('file:///home/me/a.torrent').problem?.level, 'error');
+  assert.match(String(linksFromDrop('file:///home/me/a.torrent').problem?.text), /path rather than the file/);
+  assert.match(String(linksFromDrop('just some words').problem?.text), /Nothing to add/);
+  assert.match(String(linksFromDrop('').problem?.text), /no file or link/);
 });

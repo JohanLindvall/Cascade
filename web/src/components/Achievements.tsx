@@ -1,5 +1,6 @@
-import { bytes, duration, timestamp } from '../format';
-import type { Achievement, GameState } from '../types';
+import type { ComponentType } from 'react';
+import { bytes, progressText, timestamp } from '../format';
+import type { GameState } from '../types';
 import {
   IconBolt,
   IconClock,
@@ -11,10 +12,11 @@ import {
   IconTrophy,
   IconUp,
   IconUsers,
+  type IconProps,
 } from './icons';
 import { Modal } from './ui';
 
-const ICONS: Record<string, (props: { size?: number }) => JSX.Element> = {
+const ICONS: Record<string, ComponentType<IconProps>> = {
   trophy: IconTrophy,
   medal: IconMedal,
   bolt: IconBolt,
@@ -30,23 +32,6 @@ const ICONS: Record<string, (props: { size?: number }) => JSX.Element> = {
 export function BadgeIcon({ icon, size = 18 }: { icon: string; size?: number }) {
   const Glyph = ICONS[icon] ?? IconTrophy;
   return <Glyph size={size} />;
-}
-
-/** Render progress in the same unit the target is expressed in. */
-function describeProgress(item: Achievement): string {
-  if (item.target >= 1024 * 1024) {
-    return `${bytes(item.current)} / ${bytes(item.target)}`;
-  }
-  if (item.id === 'marathon') {
-    return `${duration(item.current)} / ${duration(item.target)}`;
-  }
-  if (item.target === 1 && item.id === 'break-even') {
-    return `${item.current.toFixed(2)} / 1.00`;
-  }
-  if (item.id === 'overachiever') {
-    return `${item.current.toFixed(2)} / ${item.target.toFixed(2)}`;
-  }
-  return `${Math.floor(item.current)} / ${item.target}`;
 }
 
 export function AchievementsDialog({
@@ -76,9 +61,7 @@ export function AchievementsDialog({
       onClose={onClose}
       footer={
         <>
-          <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>
-            Counted from real transfer totals · turn this off with CASCADE_GAMIFY=0
-          </span>
+          <span className="foot-note">Counted from real transfer totals · turn this off with CASCADE_GAMIFY=0</span>
           <div className="spacer" />
           <button className="btn" onClick={onClose}>
             Close
@@ -142,10 +125,17 @@ export function AchievementsDialog({
                     <div className="badge-meta num">Earned {timestamp(item.unlockedAt as number)}</div>
                   ) : (
                     <>
-                      <div className="bar badge-bar">
+                      <div
+                        className="bar badge-bar"
+                        role="progressbar"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Math.round(pct * 100)}
+                        aria-label={`Progress towards ${item.title}`}
+                      >
                         <i style={{ width: `${pct * 100}%` }} />
                       </div>
-                      <div className="badge-meta num">{describeProgress(item)}</div>
+                      <div className="badge-meta num">{progressText(item.unit, item.current, item.target)}</div>
                     </>
                   )}
                 </div>

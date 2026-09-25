@@ -55,6 +55,14 @@ export interface BackendSummary {
   supports: Record<string, boolean>;
 }
 
+/** Mirrors the server's Policy: the CASCADE_ALLOW_* switches. */
+export interface Policy {
+  /** The API console and /RPC2 (CASCADE_ALLOW_RAW_RPC). */
+  rawRpc: boolean;
+  /** Removing a torrent together with its data (CASCADE_ALLOW_DATA_DELETE). */
+  deleteData: boolean;
+}
+
 export interface RateSample {
   t: number;
   down: number;
@@ -78,8 +86,20 @@ export interface GlobalStatus {
   diskFree: number | null;
   /** rtorrent's default download directory — what an add lands in unless told otherwise. */
   downloadDir: string;
+  /** What this server allows; the UI hides what it would refuse. */
+  policy: Policy;
   backend: BackendSummary;
   history: RateSample[];
+}
+
+/** The log-verbosity state the log dialog shows. */
+export interface LogScopes {
+  /** Baked into rtorrent.rc by RT_LOG_LEVEL; fixed until the container restarts. */
+  boot: string[];
+  /** Raised from the UI on top of that; live, persisted, re-applied. */
+  extra: string[];
+  available: string[];
+  supported: boolean;
 }
 
 export interface ThrottleGroup {
@@ -90,12 +110,16 @@ export interface ThrottleGroup {
 
 export type Tier = 'bronze' | 'silver' | 'gold';
 
+/** Mirrors the server's ProgressUnit: how a badge's progress is measured. */
+export type ProgressUnit = 'count' | 'bytes' | 'rate' | 'ratio' | 'duration';
+
 export interface Achievement {
   id: string;
   title: string;
   description: string;
   tier: Tier;
   icon: string;
+  unit: ProgressUnit;
   current: number;
   target: number;
   unlockedAt: number | null;

@@ -37,6 +37,7 @@ function stubService() {
     setPriority: record('setPriority'),
     setLabel: record('setLabel'),
     setFilePriority: record('setFilePriority'),
+    addTracker: record('addTracker'),
     game: () => ({ enabled: true }),
     logScopes: () => ({ boot: [], extra: [], available: [], supported: true }),
     client: { call: record('rpc', 'pong') },
@@ -155,6 +156,23 @@ test('a file index and priority are validated', async () => {
   assert.match(String(result.body.error), /"priority"/);
 });
 
+test('an added tracker must be an announce URL', async () => {
+  const add = (url: unknown) =>
+    json(open.base, `/api/torrents/${HASH}/trackers`, { method: 'POST', body: JSON.stringify({ url }) });
+  for (const url of ['tracker.example.org/announce', 'ftp://example.org/announce', 'http://', 42]) {
+    const { status } = await add(url);
+    assert.equal(status, 400, String(url));
+  }
+  assert.equal(open.service.calls.filter((call) => call.method === 'addTracker').length, 0);
+  const { status } = await add(' udp://tracker.example.org:6969/announce ');
+  assert.equal(status, 200);
+  assert.deepEqual(open.service.calls.find((call) => call.method === 'addTracker')?.args, [
+    HASH,
+    'udp://tracker.example.org:6969/announce',
+    0,
+  ]);
+});
+
 test('a malformed JSON body is a 400, not a stack trace', async () => {
   const { status, body } = await json(open.base, '/api/torrents/action/start', {
     method: 'POST',
@@ -208,4 +226,32 @@ test('the SPA fallback says where it looked when the build is missing', async ()
   const response = await fetch(`${open.base}/some/client/route`);
   assert.equal(response.status, 500);
   assert.match(await response.text(), /web assets not found/);
+});
+
+test('a cross-site form post is refused before it reaches the service', async () => {
+  const before = open.service.calls.length;
+  const form = new FormData();
+  form.append('urls', 'magnet:?xt=urn:btih:' + 'c'.repeat(40));
+  const response = await fetch(`${open.base}/api/torrents/upload`, {
+    method: 'POST',
+    body: form,
+    headers: { 'sec-fetch-site': 'cross-site', origin: 'https://evil.example' },
+  });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: 'cross-site request refused' });
+  assert.equal(open.service.calls.length, before);
+});
+
+test('same-origin and non-browser posts still go through', async () => {
+  const cases: Array<Record<string, string>> = [{ 'sec-fetch-site': 'same-origin' }, {}];
+  for (const headers of cases) {
+    const { status } = await json(open.base, `/api/torrents/${HASH}/action/stop`, { method: 'POST', headers });
+    assert.equal(status, 200, JSON.stringify(headers));
+  }
+});
+
+test('every response carries the hardening headers', async () => {
+  const response = await fetch(`${open.base}/healthz`);
+  assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(response.headers.get('referrer-policy'), 'same-origin');
 });

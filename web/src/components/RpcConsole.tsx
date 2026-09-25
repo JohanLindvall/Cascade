@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { IconTerminal } from './icons';
 import { Field, Modal, useToast } from './ui';
@@ -16,6 +16,9 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
   const [help, setHelp] = useState('');
   const [filter, setFilter] = useState('');
   const [busy, setBusy] = useState(false);
+  // The command whose help was asked for last: a slower answer for an earlier
+  // click must not overwrite it.
+  const helpFor = useRef('');
   const toast = useToast();
 
   useEffect(() => {
@@ -60,18 +63,19 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
   const pick = async (name: string) => {
     setMethod(name);
     setHelp('');
+    helpFor.current = name;
     try {
       const result = await api.rpcHelp(name);
-      setHelp(result.help || '(no help text)');
+      if (helpFor.current === name) setHelp(result.help || '(no help text)');
     } catch {
-      setHelp('');
+      // No help is fine; the command still runs.
     }
   };
 
   return (
     <Modal
       title={
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <span className="title-with-icon">
           <IconTerminal size={16} /> rtorrent API console
         </span>
       }
@@ -79,7 +83,7 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       footer={
         <>
-          <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>
+          <span className="foot-note">
             {methods.length} commands · also reachable over HTTP at <code>POST /RPC2</code>
           </span>
           <div className="spacer" />
@@ -97,6 +101,7 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
           <input
             className="input"
             placeholder="Filter commands…"
+            aria-label="Filter commands"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
           />
@@ -107,9 +112,7 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
               </button>
             ))}
             {hidden > 0 && <div className="method-more">…{hidden} more — narrow the filter</div>}
-            {shown.length === 0 && (
-              <div style={{ padding: 10, color: 'var(--text-faint)', fontSize: 12 }}>No matches</div>
-            )}
+            {shown.length === 0 && <div className="method-more">No matches</div>}
           </div>
         </div>
 
@@ -119,7 +122,7 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
               className="input"
               value={method}
               onChange={(event) => setMethod(event.target.value)}
-              onKeyDown={(event) => event.key === 'Enter' && void run()}
+              onKeyDown={(event) => event.key === 'Enter' && !busy && void run()}
             />
           </Field>
           <Field

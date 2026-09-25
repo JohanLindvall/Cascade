@@ -26,6 +26,7 @@ server/src/
   torrentfile.ts  bencode parse: reject non-torrents, derive the info hash
   prefs.ts        UI preference shape and validation
   auth.ts         optional HTTP Basic
+  crossSite.ts    refuses browser writes that come from another origin
   errors.ts       HttpError
   api.ts          REST routes + /RPC2 passthrough, input validation
   app.ts          express wiring: auth, API, static SPA, error mapping
@@ -33,9 +34,11 @@ server/src/
   testing/        test doubles (FakeClient, testConfig, tempStore); not built
 web/src/          React UI: components/, one styles.css of design tokens,
                   theme.ts (themes + effect flavors), grim.ts (black metal
-                  copy), assets/ (the retro and black metal wordmarks);
-                  sort.ts, filter.ts, files.ts and format.ts are the pure
-                  logic the node runner can reach
+                  copy), assets/ (the retro and black metal wordmarks),
+                  hooks.ts (usePolling, useLatest), prefs.ts (the server
+                  copy and the cache); sort.ts, filter.ts, files.ts,
+                  format.ts, selection.ts, redact.ts and preferences.ts are
+                  the pure logic the node runner can reach
 docker/entrypoint.sh      renders rtorrent.rc, supervises rtorrent + node
 .github/workflows/ci.yml  typecheck, options check, Docker build + API smoke
 .github/workflows/release.yml  multi-arch GHCR publish, tags every main push
@@ -60,10 +63,16 @@ The server suite compiles through `tsconfig.test.json` into `dist-test/` and run
 load `index.js`, which starts the server and hangs the run. The web suite runs the `.ts` files
 directly under `--experimental-strip-types`; those files are excluded from each side's build
 tsconfig, which is why the runtime `dist/` stays clean and the DOM-flavoured web typecheck does
-not need node types. Pure logic belongs where the runner can reach it — sorting, filtering and
-the `.torrent` file check live in `web/src/sort.ts`, `filter.ts` and `files.ts` rather than in
-the components for exactly that reason, and `grim.test.ts` imports the server's achievement
-table directly to check every badge and title has a black metal entry.
+not need node types. Pure logic belongs where the runner can reach it — sorting, filtering, the `.torrent` file check
+and drop parsing, the selection rules, redaction and the preference shape live in
+`web/src/sort.ts`, `filter.ts`, `files.ts`, `selection.ts`, `redact.ts` and `preferences.ts`
+rather than in the components for exactly that reason, and `grim.test.ts` imports the server's
+achievement table directly to check every badge and title has a black metal entry. A pure module
+that imports another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`): the
+runner resolves specifiers literally, and Vite and tsc accept either. A module that touches
+`window` or `document` at load time cannot be imported by a test at all, which is why
+`preferences.ts` (the shape and its repair) is apart from `prefs.ts` (the fetch, the cache, the
+`pagehide` flush).
 
 The server suite reaches everything above the socket without one: `RtorrentClient` takes an
 optional `Transport`, and `RtorrentService` and `Capabilities` depend on the `RpcClient`
@@ -224,8 +233,9 @@ Three things are worth knowing before touching it:
   `state()` refreshes them on every UI poll.
 
 Badges are pure functions of the stats (`ACHIEVEMENTS` in `achievements.ts`), so adding one is a
-single entry — but the unlock timestamp is persisted, so a badge whose condition later stops
-holding stays earned. `CASCADE_GAMIFY=0` disables the whole layer; the UI keys off
+single entry — with a `unit` (`count`, `bytes`, `rate`, `ratio`, `duration`), which is how the UI
+formats its progress (`progressText` in `format.ts`) instead of guessing from the id — but the
+unlock timestamp is persisted, so a badge whose condition later stops holding stays earned. `CASCADE_GAMIFY=0` disables the whole layer; the UI keys off
 `game.enabled`, so anything you add must be behind that flag too.
 
 The black metal theme re-carves all gamification copy client-side (`web/src/grim.ts`, keyed by
@@ -266,7 +276,9 @@ state file. Keep that property when adding counters.
 Preferences are validated in `prefs.ts` (`sanitizePreferences`) before being stored — an unknown
 theme or sort key falls back to the default instead of reaching the UI. The browser keeps a
 localStorage copy of the preferences, but only as a cache so the theme can apply on first paint;
-the file always wins once it loads.
+the file always wins once it loads, and the cache is repaired on read (`normalizePreferences`)
+because a browser's storage can hold anything. Browser-side writes are debounced and flushed on
+`pagehide` with `keepalive`, so a theme picked just before the tab closes still reaches the file.
 
 ## Themes
 
@@ -280,7 +292,12 @@ a glyph in `ThemePicker.tsx`, and the `THEMES` allowlist in the server's `prefs.
 
 An inline script in `index.html` applies the cached theme before first paint (no dark flash for
 light-theme users) and `applyTheme` mirrors the page background into `<meta name="theme-color">`;
-both must stay in step with the theme list.
+both must stay in step with the theme list. A theme also declares `color-scheme` — dark in the
+default block (which retro and black metal inherit), light in light's. Without it Firefox draws
+its own parts for a light page: a white scrollbar track down the middle of every dark theme, which
+headless screenshots show plainly. Firefox's scrollbar colours are set under
+`@supports (-moz-appearance: none)`, because Chrome ignores the `::-webkit-scrollbar` rules
+altogether once `scrollbar-color` is set.
 
 Retro and black metal each replace the wordmark with an image from `web/src/assets/`, swapped in
 by CSS on `.brand-name` — a generated pixel grid for retro, a deliberately illegible band logo for
@@ -310,7 +327,12 @@ Two things about the drop handling are load-bearing:
   the file there and adds it immediately via the window handler.
 
 A drop with no file payload falls back to `text/uri-list` / `text/plain`, so magnets and URLs work;
-a `file://` URI cannot be read by the browser and says so rather than failing quietly.
+a `file://` URI cannot be read by the browser and says so rather than failing quietly. That reading
+is `dropText` + `linksFromDrop` in `files.ts`, shared with the Add dialog's dropzone (where a
+dropped link joins the link list), so both places accept and refuse the same things in the same
+words. Text dropped on a text field — a magnet into the link box, a name into the search — is the
+field's: the window handler lets it through rather than cancelling it, while a *file* dropped
+there is still taken, or the browser would navigate to it.
 
 ## Animations
 
@@ -323,11 +345,13 @@ eight-way burst and points on the score. The flavor is latched at launch (ref/me
 flip mid-flight cannot restyle or restart a sequence, and every variant keeps the same trigger
 contract and reduced-motion skip.
 
-Both keep their `onDone` in a ref and depend only on the trigger id. That is not incidental — the
-app re-renders on every poll, so an inline `onDone={() => ...}` in the dependency array tears the
-effect down and restarts the sequence one and a half seconds in. The visible symptom is subtle
-(the tail of the animation silently never runs), so if you add another timed effect, follow the
-same pattern.
+Both read their `onDone` through `useLatest` (`hooks.ts`) and depend only on the trigger id. That
+is not incidental — the app re-renders on every poll, so an inline `onDone={() => ...}` in the
+dependency array tears the effect down and restarts the sequence one and a half seconds in. The
+visible symptom is subtle (the tail of the animation silently never runs), so if you add another
+timed effect, follow the same pattern. `useLatest` writes its ref in a layout effect, not during
+render — a render React throws away would otherwise leave its values behind — and the app's
+global keydown listener is attached once and reads its handler the same way.
 
 Both are also skipped under `prefers-reduced-motion`, in the component *and* in CSS, and both
 render above the modal layer so a dialog opening underneath does not cut them off.
@@ -356,7 +380,8 @@ widths are percentages so narrow windows squeeze rather than scroll; check with
 Two other things are easy to get wrong here:
 
 - **Button labels must be wrapped in a `<span>`.** The compact rules hide labels to leave icons;
-  a bare text node inside a button cannot be targeted.
+  a bare text node inside a button cannot be targeted. An icon-only button carries an
+  `aria-label`; the icons themselves are `aria-hidden`.
 - **Do not let anything scroll the page sideways.** `html, body` are capped at `100%` with
   `overflow-x: hidden`; wide content scrolls inside its own container instead. Check new layout
   work at 360px before calling it done.
@@ -407,7 +432,13 @@ Two other things are easy to get wrong here:
   pollers — the browser's and the server's rate sampler — chain timeouts rather than using an
   interval, so a slow response never stacks requests (the SCGI timeout is 30s; an interval at
   1s would have queued thirty ticks behind a hung rtorrent), and the browser's pauses entirely
-  while the tab is hidden.
+  while the tab is hidden. In the browser that is `usePolling` (`hooks.ts`), used by the app,
+  the detail pane, the throttle dialog and the log — no component runs its own interval. Its
+  task gets `isCurrent()`: an answer that arrives after the inputs changed (another torrent,
+  another tab) or the component closed is for the old question and is dropped, which is also
+  why the detail pane keys what it shows by hash and renders "Loading…" rather than the last
+  torrent's files. The app's own poll additionally drops a `/api/state` answer older than the
+  one on screen, since a refresh after an action can overtake the tick in flight.
 - `status()` looks its multicall answers up by command name, not position, so adding a probe
   cannot shift another into the wrong slot. Optional probes (`dht.statistics`) are only asked
   for when `supports()` says so; the same goes for actions — `announce` and the tracker toggle
@@ -421,11 +452,52 @@ Two other things are easy to get wrong here:
   unknown name would *create* that group in rtorrent rather than remove anything.
 - Confirmations and text prompts are in-app (`components/dialogs.tsx`, promise-shaped:
   `await dialogs.confirm(...)` / `await dialogs.prompt(...)`), not `window.confirm`/`prompt`:
-  they follow the theme, list the torrents an action applies to, offer existing labels, and do
-  not block the poll. While one is open `dialogs.open` is true and the app's global shortcuts
-  stand down, so Escape closes it without also clearing the selection and Delete cannot stack a
-  second confirmation. The right-click menu is `components/TorrentMenu.tsx`; every item closes
-  the menu before acting.
+  they follow the theme, list the torrents an action applies to (`items`, on both), offer
+  existing labels, and do not block the poll. A request that arrives while another is showing
+  answers the first as cancelled — left unanswered, its caller would wait forever. While one is
+  open `dialogs.open` is true and the app's global shortcuts stand down, so Escape closes it
+  without also clearing the selection and Delete cannot stack a second confirmation. The
+  right-click menu is `components/TorrentMenu.tsx`; every item closes the menu before acting.
+- Modals stack (`Modal` in `ui.tsx`): a confirmation over the throttle dialog is two, Escape
+  closes only the top one, Tab stays inside it, and focus goes back where it came from — or, when
+  that element is gone, into the dialog underneath. Menus (`ContextMenu`, the theme picker) share
+  `useMenuKeys`: the first item takes focus, arrows/Home/End move, Escape or Tab closes. A
+  `contextmenu` event landing *inside* an open menu is the keyboard's menu key arriving after the
+  keydown that opened it, so the menu stays and the browser's is held back.
+- **A component that handles a key claims it with `preventDefault()`.** The app's global keydown
+  handler returns on `defaultPrevented`, in a text field, while a modal is open and while a menu
+  is — that is what stops the detail pane's resize handle (↑/↓) or the tab list (←/→) from also
+  moving the row selection.
+- Selection lives in `selection.ts` (pure, tested). **Actions reach only visible rows**:
+  `actionTargets` is the selected rows the current filter shows, else the focused row if shown.
+  A selection survives a filter or search change, but the rows it hides are counted in the pill
+  (`+N hidden`) and never acted on — Delete after narrowing the list used to remove torrents that
+  had scrolled out of sight. Shift ranges replace the selection from the anchor (so Shift+↑ can
+  shrink one), Ctrl/⌘+Shift adds the range.
+- Forms go through `Field` (`ui.tsx`), which ties the label to the first control by id and wires
+  its hint or error in as `aria-describedby`, and values that must parse go through
+  `ParsedInput`: the text is kept as typed, `aria-invalid` flags what does not parse, and the
+  dialog holds its Apply until it does. Never coerce a typo to a default — `parseRate` used to
+  read "12 parsecs" as 0, which rtorrent takes as *unlimited*. `parseRate` and
+  `parseWholeNumber` answer `null` for anything they do not understand.
+- **Secrets never reach the screen.** Tracker URLs, `d.message` and log lines pass through
+  `redactUrl` / `redactSecrets` (`redact.ts`): passkey-style query parameters, long token path
+  segments and `user:pass@` are masked, and only inside `scheme://` spans, so an info hash in the
+  same text is untouched. Copied magnet links carry the hash and name, never the trackers.
+- `status.policy` mirrors the `CASCADE_ALLOW_*` switches, and the UI stops offering what the
+  server forbids: no API console with raw RPC off, no *Remove + delete data* (and a toast for
+  Shift+Delete) with data deletion off. The server still refuses both; hiding them only spares
+  the user a 403.
+- Browser writes must be same-origin (`crossSite.ts`, mounted after `/healthz` and before Basic
+  auth). A multipart upload is a "simple" request any page can send without a CORS preflight, and
+  the browser attaches Basic credentials to it by itself, so without the guard a hostile page
+  could add torrents or rewrite settings. It trusts `Sec-Fetch-Site` when present, else `Origin`
+  against `Host` (the first `X-Forwarded-Host` behind a proxy), and passes requests with neither —
+  `curl` and scripts are not browsers.
+- Inline `style` is for computed values only — a bar's width, a colour from data. Anything static
+  is a class; the utilities (`.right`, `.faint`, `.dim`, `.warn-text`, `.grow`,
+  `.visually-hidden`, …) sit at the end of `styles.css` so they win a tie with a component
+  rule.
 - `/healthz` is deliberately outside Basic auth (container healthchecks and orchestrator probes
   must work with `WEB_USER`/`WEB_PASS` set) and reveals nothing but liveness.
 - Static caching is split by what can change: Vite's content-hashed `assets/` are served

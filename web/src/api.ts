@@ -1,11 +1,9 @@
 import type {
-  BackendSummary,
-  GameState,
+  LogScopes,
   Peer,
   Settings,
   StateResponse,
   ThrottleGroup,
-  Torrent,
   TorrentFile,
   Tracker,
 } from './types';
@@ -33,7 +31,12 @@ function timeoutSignal(ms: number): AbortSignal | undefined {
     : undefined;
 }
 
-async function request<T>(path: string, init?: RequestInitEx): Promise<T> {
+/**
+ * One call to the Cascade API: resolved against the document base, bounded
+ * by a timeout, and turned into an ApiError carrying the server's own message
+ * when it fails. Everything that talks to /api goes through here.
+ */
+export async function request<T>(path: string, init?: RequestInitEx): Promise<T> {
   const { timeoutMs = 15_000, ...rest } = init ?? {};
   let response: Response;
   try {
@@ -62,6 +65,12 @@ async function request<T>(path: string, init?: RequestInitEx): Promise<T> {
   return (await response.json()) as T;
 }
 
+/** What a bulk operation reports: which torrents failed, as "<hash>: <reason>". */
+export interface BulkResult {
+  ok: boolean;
+  errors: string[];
+}
+
 function json<T>(path: string, method: string, body?: unknown): Promise<T> {
   return request<T>(path, {
     method,
@@ -75,8 +84,6 @@ const TRACKER_CHUNK = 80;
 
 export const api = {
   state: () => request<StateResponse>('state'),
-  capabilities: () => request<BackendSummary>('capabilities'),
-  game: () => request<GameState>('game'),
   files: (hash: string) => request<TorrentFile[]>(`torrents/${hash}/files`),
   peers: (hash: string) => request<Peer[]>(`torrents/${hash}/peers`),
   trackers: (hash: string) => request<Tracker[]>(`torrents/${hash}/trackers`),
@@ -100,14 +107,28 @@ export const api = {
       timeoutMs: 120_000,
     }),
 
-  action: (hash: string, action: string) =>
-    json<{ ok: boolean }>(`torrents/${hash}/action/${action}`, 'POST'),
   bulkAction: (hashes: string[], action: string) =>
-    json<{ ok: boolean; errors: string[] }>(`torrents/action/${action}`, 'POST', { hashes }),
+    json<BulkResult>(`torrents/action/${action}`, 'POST', { hashes }),
   remove: (hashes: string[], deleteData: boolean) =>
-    json<{ ok: boolean; errors: string[] }>('torrents/remove', 'POST', { hashes, deleteData }),
+    json<BulkResult>('torrents/remove', 'POST', { hashes, deleteData }),
   patch: (hash: string, patch: Record<string, unknown>) =>
     json<{ ok: boolean }>(`torrents/${hash}`, 'PATCH', patch),
+  /**
+   * Apply one patch to several torrents, one request each, collecting the
+   * failures the way the server's bulk routes do instead of stopping at the
+   * first — which left the rest unpatched and nobody told.
+   */
+  patchEach: async (hashes: string[], patch: Record<string, unknown>): Promise<BulkResult> => {
+    const errors: string[] = [];
+    for (const hash of hashes) {
+      try {
+        await api.patch(hash, patch);
+      } catch (error) {
+        errors.push(`${hash}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return { ok: errors.length === 0, errors };
+  },
 
   setFilePriority: (hash: string, index: number, priority: number) =>
     json<{ ok: boolean }>(`torrents/${hash}/files/${index}/priority`, 'POST', { priority }),
@@ -127,7 +148,7 @@ export const api = {
   deleteThrottle: (name: string) =>
     json<{ ok: boolean }>(`throttles/${encodeURIComponent(name)}`, 'DELETE'),
 
-  log: (lines = 400) => request<{ lines: string[] }>(`log?lines=${lines}`),
+  log: (lines = 500) => request<{ lines: string[] }>(`log?lines=${lines}`),
   logScopes: () => request<LogScopes>('log/scopes'),
   setLogScopes: (scopes: string[]) =>
     json<LogScopes & { stillActive: string[]; failed: string[] }>('log/scopes', 'POST', {
@@ -144,14 +165,3 @@ export const api = {
   rpcHelp: (method: string) =>
     json<{ method: string; help: string; signature: unknown }>('rpc/help', 'POST', { method }),
 };
-
-export interface LogScopes {
-  /** Baked into rtorrent.rc by RT_LOG_LEVEL; fixed until the container restarts. */
-  boot: string[];
-  /** Raised from the UI on top of that; live, persisted, reapplied. */
-  extra: string[];
-  available: string[];
-  supported: boolean;
-}
-
-export type { Torrent };

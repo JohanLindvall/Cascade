@@ -23,6 +23,7 @@ export function acceptTorrents(files: Iterable<File>): { accepted: File[]; ignor
 export interface DropSource {
   files?: ArrayLike<File> | null;
   items?: ArrayLike<{ kind: string; getAsFile: () => File | null }> | null;
+  getData?: (format: string) => string;
 }
 
 /**
@@ -51,4 +52,47 @@ export function droppedFiles(transfer: DropSource | null): File[] {
     if (item.kind === 'file') add(item.getAsFile());
   }
   return out;
+}
+
+/** The text a drop carries: its link list if it has one, else its plain text. */
+export function dropText(transfer: DropSource | null): string {
+  const read = (format: string) => transfer?.getData?.(format) ?? '';
+  return (read('text/uri-list') || read('text/plain')).trim();
+}
+
+export interface DroppedLinks {
+  /** Magnet and http(s) links, one per whitespace-separated word. */
+  links: string[];
+  /** Why there is nothing to add, when there is not. */
+  problem: { level: 'error' | 'info'; text: string } | null;
+}
+
+/**
+ * The links in a drop that carried no file — which is how a magnet arrives
+ * when dragged out of a browser tab — or what to tell the user instead. A
+ * drop that quietly does nothing looks exactly like a broken torrent, so
+ * every empty outcome has words.
+ */
+export function linksFromDrop(text: string): DroppedLinks {
+  // text/uri-list comment lines start with "#", so the scheme test drops them too.
+  const links = text.split(/\s+/).filter((word) => /^(magnet:|https?:\/\/)/i.test(word));
+  if (links.length > 0) return { links, problem: null };
+  if (/^file:/i.test(text)) {
+    return {
+      links,
+      problem: {
+        level: 'error',
+        text: 'Your file manager passed the path rather than the file itself, which the browser is not allowed to read. Pick the file in the Add dialog’s file browser, or drag it from a different file manager.',
+      },
+    };
+  }
+  return {
+    links,
+    problem: {
+      level: 'info',
+      text: text
+        ? 'Nothing to add — drop .torrent files, magnet links or URLs.'
+        : 'That drop carried no file or link the browser could read — pick the file in the Add dialog’s file browser instead.',
+    },
+  };
 }

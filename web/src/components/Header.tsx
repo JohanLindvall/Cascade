@@ -17,6 +17,8 @@ interface HeaderProps {
   onThrottles: () => void;
   onConsole: () => void;
   onProgress: () => void;
+  /** Whether the API console may be offered (CASCADE_ALLOW_RAW_RPC). */
+  showConsole: boolean;
 }
 
 export function Header({
@@ -30,6 +32,7 @@ export function Header({
   onThrottles,
   onConsole,
   onProgress,
+  showConsole,
 }: HeaderProps) {
   const history = status?.history ?? [];
   const down = history.map((sample) => sample.down);
@@ -47,7 +50,7 @@ export function Header({
         </span>
       </div>
 
-      <button className="btn primary" onClick={onAdd} title="Add torrent">
+      <button className="btn primary add-torrent" onClick={onAdd} title="Add torrent (n)">
         <IconPlus size={15} />
         <span>Add torrent</span>
       </button>
@@ -79,13 +82,20 @@ export function Header({
       </div>
 
       {/* On compact layouts these live in the filter drawer's Tools group. */}
-      <button className="btn icon compact-hide" onClick={onThrottles} title="Throttle groups">
+      <button className="btn icon compact-hide" onClick={onThrottles} title="Throttle groups" aria-label="Throttle groups">
         <IconGauge size={16} />
       </button>
-      <button className="btn icon compact-hide" onClick={onConsole} title="rtorrent API console">
-        <IconTerminal size={16} />
-      </button>
-      <button className="btn icon compact-hide" onClick={onSettings} title="rtorrent settings">
+      {showConsole && (
+        <button
+          className="btn icon compact-hide"
+          onClick={onConsole}
+          title="rtorrent API console"
+          aria-label="rtorrent API console"
+        >
+          <IconTerminal size={16} />
+        </button>
+      )}
+      <button className="btn icon compact-hide" onClick={onSettings} title="rtorrent settings" aria-label="rtorrent settings">
         <IconSettings size={16} />
       </button>
       <ThemePicker mode={themeMode} resolved={resolvedTheme} onChange={onThemeChange} />

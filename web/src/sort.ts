@@ -48,12 +48,18 @@ const STATUS_RANK: Record<Torrent['status'], number> = {
   error: 5,
 };
 
+/**
+ * Natural, case-insensitive text order: "Episode 2" before "Episode 10",
+ * "alpha" beside "Alpha". One collator for every comparison — building the
+ * options for each localeCompare call is what makes sorting a big list slow.
+ */
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
 function sortValue(torrent: Torrent, key: SortKey): number | string {
   switch (key) {
     case 'name':
-      return torrent.name.toLowerCase();
     case 'label':
-      return torrent.label.toLowerCase();
+      return torrent[key];
     case 'status':
       return STATUS_RANK[torrent.status];
     case 'peers':
@@ -65,14 +71,26 @@ function sortValue(torrent: Torrent, key: SortKey): number | string {
   }
 }
 
+function compare(left: number | string, right: number | string): number {
+  return typeof left === 'string' || typeof right === 'string'
+    ? collator.compare(String(left), String(right))
+    : left - right;
+}
+
+/**
+ * The list in the requested order. Ties fall back to the name and then the
+ * hash, ascending whichever way the column runs, so rows that share a value
+ * (every stopped torrent under "status", every idle one under "down") keep a
+ * fixed order instead of depending on how the server happened to list them.
+ */
 export function sortTorrents(torrents: Torrent[], sort: SortState): Torrent[] {
   const factor = sort.dir === 'asc' ? 1 : -1;
-  return [...torrents].sort((a, b) => {
-    const left = sortValue(a, sort.key);
-    const right = sortValue(b, sort.key);
-    if (typeof left === 'string' || typeof right === 'string') {
-      return String(left).localeCompare(String(right)) * factor;
-    }
-    return (left - right) * factor;
-  });
+  return [...torrents].sort(
+    (a, b) =>
+      compare(sortValue(a, sort.key), sortValue(b, sort.key)) * factor ||
+      collator.compare(a.name, b.name) ||
+      // Plain code-unit order: the collator's numeric mode can call "07" and
+      // "7" equal, and the last resort has to tell every pair apart.
+      (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0),
+  );
 }

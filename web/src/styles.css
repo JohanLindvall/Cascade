@@ -1,6 +1,10 @@
 /* ============================ design tokens ============================= */
 
 :root {
+  /* The default tokens are dark, and so are retro's and black metal's; light
+     says otherwise below. Without it the browser draws its own parts — form
+     controls, Firefox's scrollbars — for a light page. */
+  color-scheme: dark;
   --bg: #0b0d13;
   --bg-elevated: #11141c;
   --panel: rgba(255, 255, 255, 0.035);
@@ -38,6 +42,7 @@
 }
 
 :root[data-theme='light'] {
+  color-scheme: light;
   --bg: #f4f6fb;
   --bg-elevated: #ffffff;
   --panel: rgba(15, 20, 35, 0.028);
@@ -126,6 +131,15 @@ textarea {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-faint);
   background-clip: content-box;
+}
+
+/* Firefox ignores the ::-webkit-scrollbar rules above. Scoped to it, because
+   Chrome drops those rules altogether once scrollbar-color is set. */
+@supports (-moz-appearance: none) {
+  :root {
+    scrollbar-color: var(--border-strong) transparent;
+    scrollbar-width: thin;
+  }
 }
 
 .num {
@@ -469,6 +483,16 @@ button:focus-visible,
   outline-offset: 2px;
 }
 
+/* Focusable things that are not buttons get the ring inset: a table or a
+   scrolling pane would clip one drawn outside them. */
+table.torrents th[tabindex]:focus-visible,
+table.grid tr.expandable:focus-visible,
+.detail-resize:focus-visible,
+.dropzone:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent);
+  outline-offset: -2px;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -493,6 +517,19 @@ button:focus-visible,
 .field .hint {
   font-size: 11px;
   color: var(--text-faint);
+}
+
+.field .hint.error {
+  color: var(--danger);
+}
+
+/* Stands in for a label, so a button lines up with the inputs beside it. */
+.field-spacer {
+  font-size: 11.5px;
+}
+
+.field-spacer::before {
+  content: '\00a0';
 }
 
 .input,
@@ -534,6 +571,22 @@ button:focus-visible,
   color: var(--text-faint);
 }
 
+/* A value that does not parse: set by ParsedInput, explained by its Field. */
+.input[aria-invalid='true'] {
+  border-color: color-mix(in srgb, var(--danger) 70%, transparent);
+}
+
+.input[aria-invalid='true']:focus {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+
+/* Inputs that sit in a table row. */
+.input.compact,
+.select.compact {
+  height: 26px;
+  font-size: 12px;
+}
+
 .select {
   appearance: none;
   padding-right: 30px;
@@ -551,6 +604,12 @@ button:focus-visible,
 .select option {
   background: var(--bg-elevated);
   color: var(--text);
+}
+
+.select.compact {
+  background-position:
+    calc(100% - 15px) 11px,
+    calc(100% - 11px) 11px;
 }
 
 .switch {
@@ -610,7 +669,8 @@ button:focus-visible,
   align-items: center;
 }
 
-.search svg {
+/* Only the magnifier: the clear button carries an icon of its own. */
+.search > svg {
   position: absolute;
   left: 10px;
   color: var(--text-faint);
@@ -621,6 +681,31 @@ button:focus-visible,
   padding-left: 32px;
   height: 32px;
   width: 220px;
+}
+
+/* Room for the clear button, which only exists once there is text. */
+.search .input:not(:placeholder-shown) {
+  padding-right: 30px;
+}
+
+.search-clear {
+  position: absolute;
+  right: 5px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.search-clear:hover {
+  background: var(--panel-strong);
+  color: var(--text);
 }
 
 /* =============================== sidebar =============================== */
@@ -770,6 +855,13 @@ button:focus-visible,
 .selection-pill .pill-clear {
   height: 18px;
   padding: 0 4px;
+}
+
+/* Selected rows the filter hides: counted, never acted on. */
+.selection-pill .pill-hidden {
+  color: var(--text-faint);
+  font-size: 11px;
+  cursor: help;
 }
 
 /* =============================== table ================================= */
@@ -1244,7 +1336,8 @@ table.torrents td {
   z-index: 3;
 }
 
-.detail-resize:hover {
+.detail-resize:hover,
+.detail-resize:focus-visible {
   background: var(--accent-soft);
 }
 
@@ -1275,6 +1368,9 @@ table.torrents td {
 }
 
 .tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 4px 11px;
   border-radius: 7px;
   border: none;
@@ -1400,6 +1496,24 @@ table.grid tr.expandable.open td {
   width: 12px;
   color: var(--text-faint);
   font-size: 9px;
+}
+
+/* A second line under a cell's main text: a path, an on-disk name. */
+.subline {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.add-tracker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.add-tracker .input {
+  flex: 1;
+  min-width: 0;
 }
 
 table.grid tr.detail-row > td {
@@ -1528,6 +1642,18 @@ table.grid tr.detail-row > td {
   flex: 1;
 }
 
+.title-with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The small print on the left of a dialog's footer. */
+.foot-note {
+  color: var(--text-faint);
+  font-size: 11.5px;
+}
+
 .modal-body {
   padding: 16px;
   overflow: auto;
@@ -1609,6 +1735,12 @@ table.grid tr.detail-row > td {
   color: var(--text-faint);
 }
 
+.file-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .file-chip {
   display: flex;
   align-items: center;
@@ -1668,6 +1800,31 @@ table.grid tr.detail-row > td {
 }
 .toast.info {
   border-left: 3px solid var(--accent);
+}
+
+.toast-icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+.toast.achievement .toast-icon {
+  color: var(--gold);
+}
+.toast.error .toast-icon {
+  color: var(--danger);
+}
+.toast.success .toast-icon {
+  color: var(--ok);
+}
+.toast.info .toast-icon {
+  color: var(--accent);
+}
+
+/* A long release name or URL wraps instead of widening the toast. */
+.toast-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .toast .close {
@@ -1754,6 +1911,7 @@ table.grid tr.detail-row > td {
 }
 
 .log-view {
+  max-height: 60vh;
   font-family: var(--mono);
   font-size: 11.8px;
   line-height: 1.55;
@@ -1801,6 +1959,35 @@ table.grid tr.detail-row > td {
   color: var(--danger);
 }
 
+/* Arrow keys move focus through the items: the focused one reads as hovered. */
+.menu button:focus-visible {
+  outline: none;
+  background: var(--panel-strong);
+  color: var(--text);
+}
+
+.menu button.danger:focus-visible {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+}
+
+.menu button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.menu button:disabled:hover {
+  background: none;
+  color: var(--text-dim);
+}
+
+.menu-icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  flex: none;
+}
+
 .menu hr {
   border: none;
   border-top: 1px solid var(--border);
@@ -1822,6 +2009,13 @@ table.grid tr.detail-row > td {
   color: var(--text-dim);
   font-size: 13px;
   line-height: 1.5;
+}
+
+/* A prompt's message, target list and field share one form. */
+.prompt-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* The names an action applies to: monospace, one per line, never wrapping
@@ -1858,6 +2052,16 @@ table.grid tr.detail-row > td {
   border-bottom: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
   color: var(--danger);
   font-size: 12.5px;
+}
+
+/* Inside a dialog or the detail pane a banner is a card, not a full-width strip. */
+.modal-body .banner,
+.detail-body .banner {
+  border-radius: 9px;
+}
+
+.detail-body .banner {
+  margin-bottom: 12px;
 }
 
 .spin {
@@ -3440,6 +3644,14 @@ td.ratio.poor {
   min-width: 214px;
 }
 
+.theme-label {
+  flex: 1;
+}
+
+.theme-current {
+  color: var(--accent);
+}
+
 .theme-hint {
   display: block;
   font-size: 10.5px;
@@ -3770,4 +3982,53 @@ td.ratio.poor {
   .drop-burst {
     display: none;
   }
+}
+
+/* ============================== utilities ============================== */
+
+/* Last in the file, so a utility wins a tie with a component rule. */
+
+/* Figures align right, headers and cells alike; the table rules set left. */
+.right,
+table.torrents th.right,
+table.grid th.right {
+  text-align: right;
+}
+
+.dim {
+  color: var(--text-dim);
+}
+
+.faint {
+  color: var(--text-faint);
+}
+
+.warn-text {
+  color: var(--warn);
+}
+
+.ok-text {
+  color: var(--ok);
+}
+
+.danger-text {
+  color: var(--danger);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Read by screen readers, not shown. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

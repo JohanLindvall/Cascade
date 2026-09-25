@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLatest } from '../hooks';
 import type { FxFlavor } from '../theme';
 
 type PieceKind = 'confetti' | 'ash' | 'ember' | 'pixel';
@@ -99,11 +100,9 @@ export function Celebrate({
   // The flavor the batch in flight was launched with — the sequence must keep
   // the look it started with even if the theme flips mid-fall.
   const [shown, setShown] = useState<FxFlavor>('party');
-  // Held in refs so a parent re-render cannot restart the sequence mid-flight.
-  const done = useRef(onDone);
-  done.current = onDone;
-  const flavorRef = useRef(flavor);
-  flavorRef.current = flavor;
+  // Read through refs so a parent re-render cannot restart the sequence mid-flight.
+  const done = useLatest(onDone);
+  const flavorRef = useLatest(flavor);
 
   useEffect(() => {
     if (!trigger) return;
@@ -119,7 +118,7 @@ export function Celebrate({
       done.current();
     }, FLAVOR_DURATION[launched]);
     return () => window.clearTimeout(timer);
-  }, [trigger]);
+  }, [trigger, done, flavorRef]);
 
   if (pieces.length === 0) return null;
 

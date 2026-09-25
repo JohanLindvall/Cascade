@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useLatest } from '../hooks';
 import type { FxFlavor } from '../theme';
 import { IconFile } from './icons';
 
@@ -7,6 +8,9 @@ export interface Burst {
   x: number;
   y: number;
   count: number;
+  /** The look, fixed when the burst is launched: a theme flip mid-flight
+   *  must not restyle it (the parent reads the theme at drop time). */
+  flavor: FxFlavor;
 }
 
 const SPARKS = 16;
@@ -14,6 +18,39 @@ const ARCADE_SPARKS = 8;
 
 const SHARD_COLORS = ['#9d968a', '#7a7568', 'var(--accent)', '#514d44', '#d4454f', '#8b857a'];
 const PIXEL_COLORS = ['#34ff9e', '#ff4fd8', '#35f0ff', '#ffd23f'];
+
+/**
+ * Spark trajectories: fixed rather than random, so they need no per-burst
+ * state and a re-render cannot reshuffle them mid-flight. The grim variant
+ * reuses them as shards, adding a terminal fall.
+ */
+const SPARK_PATHS = Array.from({ length: SPARKS }, (_, index) => {
+  const angle = (index / SPARKS) * Math.PI * 2 + (index % 3) * 0.22;
+  const distance = 70 + ((index * 37) % 70);
+  return {
+    dx: Math.cos(angle) * distance,
+    dy: Math.sin(angle) * distance,
+    fall: 44 + ((index * 29) % 52),
+    delay: (index % 5) * 0.02,
+    size: 5 + ((index * 13) % 5),
+    spin: index % 2 ? 220 : -220,
+    color: SHARD_COLORS[index % SHARD_COLORS.length],
+    ember: index % 4 === 2,
+  };
+});
+
+/** The arcade burst is grid-locked: eight ways, two waves, no randomness. */
+const PIXEL_PATHS = Array.from({ length: ARCADE_SPARKS * 2 }, (_, index) => {
+  const angle = ((index % ARCADE_SPARKS) / ARCADE_SPARKS) * Math.PI * 2;
+  const distance = index < ARCADE_SPARKS ? 58 : 92;
+  return {
+    dx: Math.round(Math.cos(angle) * distance),
+    dy: Math.round(Math.sin(angle) * distance),
+    delay: index < ARCADE_SPARKS ? 0 : 0.09,
+    size: index < ARCADE_SPARKS ? 8 : 6,
+    color: PIXEL_COLORS[index % PIXEL_COLORS.length],
+  };
+});
 
 /**
  * Pickup animation for a torrent dropped on the window: a shockwave at the drop
@@ -25,75 +62,24 @@ const PIXEL_COLORS = ['#34ff9e', '#ff4fd8', '#35f0ff', '#ffd23f'];
  * upload flow does not wait on it, and it is skipped entirely under
  * prefers-reduced-motion.
  */
-export function DropBurst({
-  burst,
-  flavor = 'party',
-  onDone,
-}: {
-  burst: Burst | null;
-  flavor?: FxFlavor;
-  onDone: () => void;
-}) {
+export function DropBurst({ burst, onDone }: { burst: Burst | null; onDone: () => void }) {
   const [flight, setFlight] = useState({ dx: 0, dy: 0 });
-  // The parent re-renders on every poll, so keep the callback out of the effect
-  // deps — otherwise the sequence is torn down and restarted mid-flight.
-  const done = useRef(onDone);
-  done.current = onDone;
-
-  // Lock the look in at launch so a theme flip cannot restyle a burst mid-air.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const shown = useMemo(() => flavor, [burst?.id]);
-
-  // Spark trajectories are fixed per burst so a re-render cannot reshuffle
-  // them. The grim variant reuses them as shards, adding a terminal fall.
-  const sparks = useMemo(
-    () =>
-      Array.from({ length: SPARKS }, (_, index) => {
-        const angle = (index / SPARKS) * Math.PI * 2 + (index % 3) * 0.22;
-        const distance = 70 + ((index * 37) % 70);
-        return {
-          dx: Math.cos(angle) * distance,
-          dy: Math.sin(angle) * distance,
-          fall: 44 + ((index * 29) % 52),
-          delay: (index % 5) * 0.02,
-          size: 5 + ((index * 13) % 5),
-          spin: index % 2 ? 220 : -220,
-          color: SHARD_COLORS[index % SHARD_COLORS.length],
-          ember: index % 4 === 2,
-        };
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [burst?.id],
-  );
-
-  // The arcade burst is grid-locked: eight ways, two waves, no randomness.
-  const pixels = useMemo(
-    () =>
-      Array.from({ length: ARCADE_SPARKS * 2 }, (_, index) => {
-        const angle = ((index % ARCADE_SPARKS) / ARCADE_SPARKS) * Math.PI * 2;
-        const distance = index < ARCADE_SPARKS ? 58 : 92;
-        return {
-          dx: Math.round(Math.cos(angle) * distance),
-          dy: Math.round(Math.sin(angle) * distance),
-          delay: index < ARCADE_SPARKS ? 0 : 0.09,
-          size: index < ARCADE_SPARKS ? 8 : 6,
-          color: PIXEL_COLORS[index % PIXEL_COLORS.length],
-        };
-      }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [burst?.id],
-  );
+  // The parent re-renders on every poll, so the callback is read through a
+  // ref and the effect keys on the burst alone — otherwise the sequence is
+  // torn down and restarted mid-flight.
+  const done = useLatest(onDone);
+  const id = burst?.id;
 
   useEffect(() => {
     if (!burst) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      onDone();
+      done.current();
       return;
     }
 
     // Fly towards the Add button, so the payload visibly lands where torrents
     // are added from.
-    const target = document.querySelector('.header .btn.primary');
+    const target = document.querySelector('.add-torrent');
     const rect = target?.getBoundingClientRect();
     setFlight({
       dx: (rect ? rect.left + rect.width / 2 : window.innerWidth / 2) - burst.x,
@@ -110,10 +96,12 @@ export function DropBurst({
       window.clearTimeout(finish);
       target?.classList.remove('hit');
     };
+    // Keyed on the id: a new burst restarts the sequence, a re-render does not.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [burst?.id]);
+  }, [id]);
 
   if (!burst) return null;
+  const shown = burst.flavor;
 
   const score =
     shown === 'grim'
@@ -159,7 +147,7 @@ export function DropBurst({
       <span className="burst-flash" />
 
       {shown === 'arcade'
-        ? pixels.map((pixel, index) => (
+        ? PIXEL_PATHS.map((pixel, index) => (
             <span
               key={index}
               className="burst-pixel"
@@ -173,7 +161,7 @@ export function DropBurst({
               }}
             />
           ))
-        : sparks.map((spark, index) =>
+        : SPARK_PATHS.map((spark, index) =>
             shown === 'grim' ? (
               <span
                 key={index}

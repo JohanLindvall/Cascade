@@ -328,11 +328,27 @@ Settings given as environment variables are applied over XML-RPC at startup rath
 
 ## The UI
 
-The keyboard works throughout: `/` focuses search, `n` opens the Add dialog, `↑`/`↓` walk the
-list, `Ctrl/⌘-A` selects everything visible, `Delete` removes the selection (`Shift-Delete` also
-deletes its data), `Esc` clears the selection or closes what is open, and the column headers sort
-from the keyboard too. Removing asks first, in a dialog that lists what is about to go; setting a
-label offers the labels already in use.
+The keyboard works throughout: `/` focuses search (`Esc` there clears it), `n` opens the Add
+dialog, `↑`/`↓` walk the list and `Home`/`End` jump to its ends — with `Shift` held they extend
+the selection, as `Shift`-click does from the last row clicked, while `Ctrl/⌘`-click toggles one
+row and `Ctrl/⌘+Shift`-click adds a range. `Ctrl/⌘-A` selects everything visible, `Delete` (or
+`⌘⌫`) removes the selection and `Shift-Delete` also deletes its data, and the menu key or
+`Shift-F10` opens the right-click menu on the current row, arrow keys moving through it. `Esc`
+closes one thing at a time: a menu, a dialog (only the top one, when a confirmation sits on
+another), the filter drawer, then the selection. The column headers sort from the keyboard, the
+detail tabs follow the arrow keys, and the detail pane's resize handle takes `↑`/`↓`. Removing
+asks first, in a dialog that lists what is about to go; setting a label or a directory lists the
+torrents it applies to and offers the labels already in use.
+
+Actions reach only what is on screen. A selection survives a search or a filter change —
+narrowing the list to find one more torrent does not drop the ones already picked — but the rows
+it hides are left alone until they are shown again: the selection pill counts them
+(`2 selected +1 hidden`), and `Delete` cannot reach a torrent you cannot see.
+
+Private trackers put your passkey in the announce URL, so the UI masks it wherever a URL is
+shown — the Trackers tab, tracker messages, the log — as `passkey=•••`, along with other
+credential-looking parameters and `user:password@`. Copied magnet links leave trackers out
+altogether.
 
 The log reads as a log: rtorrent's raw epoch seconds become clock times in your own timezone,
 with the level shown as colour (warnings amber, errors red) and a separator wherever the log
@@ -364,7 +380,8 @@ encryption and the preferred/snubbed/unwanted/banned flags.
 
 Trackers show type, state, scrape counts and the peers returned by the last announce, with a
 countdown to the next one; expanding a row adds announce intervals, success and failure timings,
-and the latest event.
+and the latest event. An announce URL (`http(s)://` or `udp://`) can be added at the foot of the
+tab.
 
 ![Trackers](docs/screenshot-trackers.png)
 
@@ -390,7 +407,8 @@ Torrents are checked before rtorrent sees them, so a file that is not really a t
 so instead of vanishing.
 
 Use the **Add torrent** button when you want to choose a destination directory or label first, or
-to paste magnet links and URLs.
+to paste magnet links and URLs. Its dropzone takes links as well as files: a magnet dragged onto it
+joins the link list.
 
 ![Add torrents](docs/screenshot-add.png)
 
@@ -401,17 +419,21 @@ leans on uploading rather than downloading. Set `CASCADE_GAMIFY=0` and the whole
 ![Progress and badges](docs/screenshot-progress.png)
 
 rtorrent's live settings are editable, with anything the running version does not support greyed
-out.
+out. Rate fields take `500k`, `2M`, `1.5 MiB/s` or `800 B/s` — a bare number is KiB/s, empty is
+unlimited — and anything else is flagged at the field and holds **Apply** back, rather than being
+read as "unlimited".
 
 ![Settings](docs/screenshot-settings.png)
 
 rtorrent has no per-torrent rate limit — it throttles by *named group*. Create groups here and
-assign torrents to them from the right-click menu.
+assign torrents to them from the right-click menu; deleting one asks first.
 
 ![Throttle groups](docs/screenshot-throttles.png)
 
 Anything not wrapped by the UI is reachable from the API console, which lists every command the
-backend exposes with its help text.
+backend exposes with its help text. With `CASCADE_ALLOW_RAW_RPC=0` the console leaves the UI, and
+with `CASCADE_ALLOW_DATA_DELETE=0` so does *Remove + delete data*: the server refuses both
+regardless, and the UI stops offering them.
 
 ![API console](docs/screenshot-console.png)
 
@@ -458,11 +480,6 @@ right-click, and polling pauses while the tab is in the background.
   <img src="docs/screenshot-mobile-drawer.png" alt="Filter drawer" width="290">
 </p>
 
-Keyboard: `n` add torrents · `/` search · `↑`/`↓` move through the list · `Ctrl/⌘+A` select all ·
-`Delete` remove · `Shift+Delete` remove with data · `Esc` close details and clear the selection.
-Rows support `Ctrl`-click and `Shift`-click ranges, and the right-click menu can copy a torrent's
-magnet link.
-
 ## API
 
 All endpoints live under `/api` and honour the same Basic auth as the UI.
@@ -472,9 +489,9 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET` | `/healthz` | Liveness (deliberately outside Basic auth, for healthchecks) |
 | `GET` | `/api/state` | Torrents, global status, throttle groups (the UI's poll) |
 | `GET` | `/api/torrents?view=main` | Torrent list for an rtorrent view |
-| `GET` | `/api/status` | Global rates, limits and backend summary on their own |
+| `GET` | `/api/status` | Global rates, limits, backend summary and policy on their own |
 | `GET` | `/api/capabilities` | Backend version and supported feature map |
-| `GET` | `/api/game` | Level, XP and badge progress |
+| `GET` | `/api/game` | Level, XP and badge progress, each badge with its unit |
 | `GET`/`PATCH` | `/api/prefs` | UI preferences (theme, sort, layout) |
 | `GET` | `/api/torrents/:hash/files` \| `/peers` \| `/trackers` | Per-torrent detail |
 | `POST` | `/api/torrents/upload` | Multipart: `torrents[]`, `urls`, `start`, `directory`, `label` |
@@ -484,6 +501,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `PATCH` | `/api/torrents/:hash` | `priority` (0 off … 3 high), `label`, `throttle`, `directory`, `maxUploads`, `maxDownloads` |
 | `POST` | `/api/torrents/remove` | Remove hashes, optionally `deleteData` |
 | `POST` | `/api/torrents/:hash/files/:index/priority` | `0` skip, `1` normal, `2` high |
+| `POST` | `/api/torrents/:hash/trackers` | Add an announce URL: `url` (`http(s)://`, `udp://`), optional `group` |
 | `POST` | `/api/torrents/:hash/trackers/:index/enabled` | Enable/disable a tracker |
 | `GET`/`POST` | `/api/settings` | Read/write rtorrent's live settings |
 | `GET`/`POST`/`DELETE` | `/api/throttles` | Manage throttle groups |
@@ -494,9 +512,16 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `POST` | `/RPC2` | Raw XML-RPC passthrough |
 
 Malformed input — a hash that is not forty hex digits, a priority outside its range, a file
-index that is not a number — is answered with a `400` naming the field rather than forwarded to
-rtorrent; the bulk routes apply their action per hash and return the failures by hash in
-`errors` instead of stopping at the first.
+index that is not a number, a tracker that is not an announce URL — is answered with a `400`
+naming the field rather than forwarded to rtorrent; the bulk routes apply their action per hash
+and return the failures by hash in `errors` instead of stopping at the first.
+
+A browser only gets to change things from the UI's own origin. A `POST`, `PATCH` or `DELETE` that
+the browser marks as cross-site — by `Sec-Fetch-Site`, or an `Origin` naming another host — is
+refused with a `403` before auth is even considered, so a page elsewhere cannot use a signed-in
+browser (Basic credentials ride along automatically) to add torrents or change settings. Requests
+without those headers — `curl`, scripts, other tools — are unaffected. Every response also carries
+`X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`.
 
 `/RPC2` lets existing tooling drive rtorrent over HTTP:
 

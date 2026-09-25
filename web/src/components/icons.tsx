@@ -1,7 +1,12 @@
 import type { SVGProps } from 'react';
 
-type IconProps = SVGProps<SVGSVGElement> & { size?: number };
+export type IconProps = SVGProps<SVGSVGElement> & { size?: number };
 
+/**
+ * Every icon is decoration: the control it sits in carries the text or the
+ * aria-label, so the SVG is hidden from assistive technology and kept out of
+ * the tab order (old Edge and IE focused inline SVGs).
+ */
 function Icon({ size = 16, children, ...rest }: IconProps) {
   return (
     <svg
@@ -13,6 +18,8 @@ function Icon({ size = 16, children, ...rest }: IconProps) {
       strokeWidth={1.8}
       strokeLinecap="round"
       strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
       {...rest}
     >
       {children}

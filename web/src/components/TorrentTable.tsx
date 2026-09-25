@@ -1,40 +1,35 @@
-import { useMemo, useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
+import { useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { bytes, duration, percent, rate, relative } from '../format';
+import { redactSecrets } from '../redact';
+import type { SelectMods } from '../selection';
 import type { SortKey, SortState } from '../sort';
 import type { Torrent } from '../types';
 import { EmptyState, ProgressBar, type BarVariant } from './ui';
 import { IconDown } from './icons';
 
-/** Modifier keys that drive multi-select, decoupled from the DOM event type. */
-export interface SelectMods {
-  ctrl: boolean;
-  shift: boolean;
-}
-
 interface Column {
   key: SortKey;
   label: string;
-  className?: string;
-  align?: 'right';
+  className: string;
 }
 
 /**
  * Every column carries a class so styles.css can pin its width. Without that
  * the browser sizes columns from their content, and since most of these change
  * text on every poll ("2m 54s" becomes "2m 9s") the whole table shifts
- * sideways twice a second.
+ * sideways twice a second. Numeric columns are right-aligned through `right`.
  */
 const COLUMNS: Column[] = [
   { key: 'name', label: 'Name', className: 'col-name' },
-  { key: 'size', label: 'Size', align: 'right', className: 'col-size' },
+  { key: 'size', label: 'Size', className: 'col-size right' },
   { key: 'progress', label: 'Progress', className: 'col-progress' },
   { key: 'status', label: 'Status', className: 'col-status' },
-  { key: 'peers', label: 'Peers', align: 'right', className: 'col-peers' },
-  { key: 'downRate', label: 'Down', align: 'right', className: 'col-down' },
-  { key: 'upRate', label: 'Up', align: 'right', className: 'col-up' },
-  { key: 'ratio', label: 'Ratio', align: 'right', className: 'col-ratio' },
-  { key: 'eta', label: 'ETA', align: 'right', className: 'col-eta' },
-  { key: 'addedAt', label: 'Added', align: 'right', className: 'col-added' },
+  { key: 'peers', label: 'Peers', className: 'col-peers right' },
+  { key: 'downRate', label: 'Down', className: 'col-down right' },
+  { key: 'upRate', label: 'Up', className: 'col-up right' },
+  { key: 'ratio', label: 'Ratio', className: 'col-ratio right' },
+  { key: 'eta', label: 'ETA', className: 'col-eta right' },
+  { key: 'addedAt', label: 'Added', className: 'col-added right' },
 ];
 
 /** Sortable fields with labels, for the compact layout's sort dropdown. */
@@ -59,6 +54,11 @@ function barVariant(torrent: Torrent): BarVariant {
   return 'default';
 }
 
+/** The ETA as the list shows it: nothing to wait for once complete. */
+function etaText(torrent: Torrent): string {
+  return torrent.progress >= 1 ? '—' : duration(torrent.eta);
+}
+
 /** The bar and its percentage, shared by the table row and the card. */
 function TorrentProgress({ torrent }: { torrent: Torrent }) {
   return (
@@ -68,6 +68,7 @@ function TorrentProgress({ torrent }: { torrent: Torrent }) {
         variant={barVariant(torrent)}
         striped={torrent.status === 'checking'}
         live={torrent.status === 'downloading' && torrent.progress < 1}
+        label={`Progress of ${torrent.name || torrent.hash}`}
       />
       <span className="num">{percent(torrent.progress, torrent.progress >= 1 ? 0 : 1)}</span>
     </div>
@@ -85,11 +86,38 @@ function TorrentTags({ torrent, showPrivate }: { torrent: Torrent; showPrivate?:
   );
 }
 
+/** A tracker or storage message, with any credential in it masked (see redact.ts). */
+function messageOf(torrent: Torrent): string {
+  return redactSecrets(torrent.message);
+}
+
+/** Checkbox that selects one row, shared by the table and the card. */
+function RowCheck({
+  torrent,
+  checked,
+  onSelect,
+}: {
+  torrent: Torrent;
+  checked: boolean;
+  onSelect: (hash: string, mods: SelectMods) => void;
+}) {
+  return (
+    <input
+      className="check"
+      type="checkbox"
+      checked={checked}
+      onClick={(event) => event.stopPropagation()}
+      onChange={() => onSelect(torrent.hash, { ctrl: true, shift: false })}
+      aria-label={`Select ${torrent.name || torrent.hash}`}
+    />
+  );
+}
+
 interface TorrentTableProps {
   /** Render as stacked cards instead of a table (narrow viewports). */
   compact?: boolean;
   torrents: Torrent[];
-  selected: Set<string>;
+  selected: ReadonlySet<string>;
   focused: string | null;
   sort: SortState;
   onSort: (key: SortKey) => void;
@@ -111,84 +139,6 @@ export function TorrentTable({
   onContextMenu,
   emptyHint,
 }: TorrentTableProps) {
-  const allSelected = torrents.length > 0 && torrents.every((t) => selected.has(t.hash));
-  const someSelected = torrents.some((t) => selected.has(t.hash));
-
-  const rows = useMemo(
-    () =>
-      torrents.map((torrent) => {
-        const checked = selected.has(torrent.hash);
-        return (
-          <tr
-            key={torrent.hash}
-            data-hash={torrent.hash}
-            className={`${checked ? 'selected' : ''} ${focused === torrent.hash ? 'focused' : ''}`}
-            onClick={(event) =>
-              onSelect(torrent.hash, {
-                ctrl: event.ctrlKey || event.metaKey,
-                shift: event.shiftKey,
-              })
-            }
-            onContextMenu={(event) => onContextMenu(torrent.hash, event)}
-          >
-            <td className="col-check" onClick={(event) => event.stopPropagation()}>
-              <input
-                className="check"
-                type="checkbox"
-                checked={checked}
-                onChange={() => onSelect(torrent.hash, { ctrl: true, shift: false })}
-                aria-label={`Select ${torrent.name}`}
-              />
-            </td>
-            <td className="col-name">
-              <div className="name-cell">
-                <div className="name-line">
-                  <span className="name-text" title={torrent.name}>
-                    {torrent.name || torrent.hash}
-                  </span>
-                  <TorrentTags torrent={torrent} showPrivate />
-                </div>
-                {torrent.message && (
-                  <div className="name-meta" style={{ color: 'var(--warn)' }} title={torrent.message}>
-                    {torrent.message.slice(0, 120)}
-                  </div>
-                )}
-              </div>
-            </td>
-            <td className="num" style={{ textAlign: 'right' }}>
-              {bytes(torrent.size)}
-            </td>
-            <td>
-              <TorrentProgress torrent={torrent} />
-            </td>
-            <td>
-              <StatusPill torrent={torrent} />
-            </td>
-            <td className="num col-peers" style={{ textAlign: 'right' }}>
-              <span style={{ color: 'var(--text-dim)' }}>{torrent.peersConnected}</span>
-              <span style={{ color: 'var(--text-faint)' }}>/{torrent.peersNotConnected}</span>
-            </td>
-            <td className={`num rate-num ${torrent.downRate ? 'down' : 'zero'}`} style={{ textAlign: 'right' }}>
-              {rate(torrent.downRate)}
-            </td>
-            <td className={`num rate-num ${torrent.upRate ? 'up' : 'zero'}`} style={{ textAlign: 'right' }}>
-              {rate(torrent.upRate)}
-            </td>
-            <td className={`num col-ratio ratio ${ratioTier(torrent.ratio)}`} style={{ textAlign: 'right' }}>
-              {torrent.ratio.toFixed(2)}
-            </td>
-            <td className="num col-eta" style={{ textAlign: 'right' }}>
-              {torrent.progress >= 1 ? '—' : duration(torrent.eta)}
-            </td>
-            <td className="num col-added" style={{ textAlign: 'right', color: 'var(--text-faint)' }}>
-              {relative(torrent.addedAt)}
-            </td>
-          </tr>
-        );
-      }),
-    [torrents, selected, focused, onSelect, onContextMenu],
-  );
-
   if (torrents.length === 0) {
     return (
       <div className="table-wrap">
@@ -218,6 +168,9 @@ export function TorrentTable({
     );
   }
 
+  const allSelected = torrents.every((t) => selected.has(t.hash));
+  const someSelected = !allSelected && torrents.some((t) => selected.has(t.hash));
+
   return (
     <div className="table-wrap">
       <table className="torrents">
@@ -229,43 +182,90 @@ export function TorrentTable({
                 type="checkbox"
                 checked={allSelected}
                 ref={(element) => {
-                  if (element) element.indeterminate = !allSelected && someSelected;
+                  if (element) element.indeterminate = someSelected;
                 }}
                 onChange={(event) => onSelectAll(event.target.checked)}
                 aria-label="Select all"
               />
             </th>
-            {COLUMNS.map((column) => (
-              <th
-                key={column.key}
-                className={`${column.className ?? ''} ${sort.key === column.key ? 'sorted' : ''}`}
-                style={column.align === 'right' ? { textAlign: 'right' } : undefined}
-                aria-sort={
-                  sort.key === column.key
-                    ? sort.dir === 'asc'
-                      ? 'ascending'
-                      : 'descending'
-                    : undefined
-                }
-                onClick={() => onSort(column.key)}
-                // Sorting is an action, so the headers take the keyboard too.
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    event.preventDefault();
-                    onSort(column.key);
-                  }
-                }}
-              >
-                {column.label}
-                {sort.key === column.key && (
-                  <span className="arrow">{sort.dir === 'asc' ? '▲' : '▼'}</span>
-                )}
-              </th>
-            ))}
+            {COLUMNS.map((column) => {
+              const sorted = sort.key === column.key;
+              return (
+                <th
+                  key={column.key}
+                  className={`${column.className} ${sorted ? 'sorted' : ''}`}
+                  aria-sort={sorted ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
+                  onClick={() => onSort(column.key)}
+                  // Sorting is an action, so the headers take the keyboard too.
+                  tabIndex={0}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      onSort(column.key);
+                    }
+                  }}
+                >
+                  {column.label}
+                  {sorted && <span className="arrow">{sort.dir === 'asc' ? '▲' : '▼'}</span>}
+                </th>
+              );
+            })}
           </tr>
         </thead>
-        <tbody>{rows}</tbody>
+        <tbody>
+          {torrents.map((torrent) => {
+            const checked = selected.has(torrent.hash);
+            const message = messageOf(torrent);
+            return (
+              <tr
+                key={torrent.hash}
+                data-hash={torrent.hash}
+                className={`${checked ? 'selected' : ''} ${focused === torrent.hash ? 'focused' : ''}`}
+                onClick={(event) =>
+                  onSelect(torrent.hash, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey })
+                }
+                onContextMenu={(event) => onContextMenu(torrent.hash, event)}
+              >
+                {/* The cell around the box is inert: a near-miss while
+                    multi-selecting must not collapse the selection to one row. */}
+                <td className="col-check" onClick={(event) => event.stopPropagation()}>
+                  <RowCheck torrent={torrent} checked={checked} onSelect={onSelect} />
+                </td>
+                <td className="col-name">
+                  <div className="name-cell">
+                    <div className="name-line">
+                      <span className="name-text" title={torrent.name}>
+                        {torrent.name || torrent.hash}
+                      </span>
+                      <TorrentTags torrent={torrent} showPrivate />
+                    </div>
+                    {message && (
+                      <div className="name-meta warn-text" title={message}>
+                        {message.slice(0, 120)}
+                      </div>
+                    )}
+                  </div>
+                </td>
+                <td className="num right">{bytes(torrent.size)}</td>
+                <td>
+                  <TorrentProgress torrent={torrent} />
+                </td>
+                <td>
+                  <StatusPill torrent={torrent} />
+                </td>
+                <td className="num col-peers right">
+                  <span className="dim">{torrent.peersConnected}</span>
+                  <span className="faint">/{torrent.peersNotConnected}</span>
+                </td>
+                <td className={`num right rate-num ${torrent.downRate ? 'down' : 'zero'}`}>{rate(torrent.downRate)}</td>
+                <td className={`num right rate-num ${torrent.upRate ? 'up' : 'zero'}`}>{rate(torrent.upRate)}</td>
+                <td className={`num col-ratio right ratio ${ratioTier(torrent.ratio)}`}>{torrent.ratio.toFixed(2)}</td>
+                <td className="num col-eta right">{etaText(torrent)}</td>
+                <td className="num col-added right faint">{relative(torrent.addedAt)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
       </table>
     </div>
   );
@@ -294,6 +294,7 @@ function TorrentCard({
   // and selects the card underneath it.
   const pressFired = useRef(false);
   const pressStart = useRef({ x: 0, y: 0 });
+  const message = messageOf(torrent);
 
   const startPress = (event: ReactTouchEvent) => {
     const touch = event.touches[0];
@@ -345,14 +346,7 @@ function TorrentCard({
       onTouchCancel={cancelPress}
     >
       <div className="card-top">
-        <input
-          className="check"
-          type="checkbox"
-          checked={selected}
-          onClick={(event) => event.stopPropagation()}
-          onChange={() => onSelect(torrent.hash, { ctrl: true, shift: false })}
-          aria-label={`Select ${torrent.name}`}
-        />
+        <RowCheck torrent={torrent} checked={selected} onSelect={onSelect} />
         <span className="card-name" title={torrent.name}>
           {torrent.name || torrent.hash}
         </span>
@@ -363,23 +357,19 @@ function TorrentCard({
 
       <div className="card-stats num">
         <span>{bytes(torrent.size)}</span>
-        <span className={torrent.downRate ? 'rate-num down' : 'rate-num zero'}>
-          ↓ {rate(torrent.downRate)}
-        </span>
-        <span className={torrent.upRate ? 'rate-num up' : 'rate-num zero'}>
-          ↑ {rate(torrent.upRate)}
-        </span>
+        <span className={torrent.downRate ? 'rate-num down' : 'rate-num zero'}>↓ {rate(torrent.downRate)}</span>
+        <span className={torrent.upRate ? 'rate-num up' : 'rate-num zero'}>↑ {rate(torrent.upRate)}</span>
         <span>{torrent.peersConnected} peers</span>
         <span>ratio {torrent.ratio.toFixed(2)}</span>
-        {torrent.progress < 1 && <span>{duration(torrent.eta)}</span>}
+        {torrent.progress < 1 && <span>{etaText(torrent)}</span>}
       </div>
 
-      {(torrent.label || torrent.throttle || torrent.message) && (
+      {(torrent.label || torrent.throttle || message) && (
         <div className="card-tags">
           <TorrentTags torrent={torrent} />
-          {torrent.message && (
-            <span className="card-message" title={torrent.message}>
-              {torrent.message}
+          {message && (
+            <span className="card-message" title={message}>
+              {message}
             </span>
           )}
         </div>
@@ -395,7 +385,7 @@ export function StatusPill({ torrent }: { torrent: Torrent }) {
       : torrent.status;
   const live = torrent.status === 'downloading' || torrent.status === 'seeding';
   return (
-    <span className={`pill ${torrent.status}`} title={torrent.message || undefined}>
+    <span className={`pill ${torrent.status}`} title={messageOf(torrent) || undefined}>
       <span className={`dot ${live ? 'pulse' : ''}`} />
       {label}
     </span>

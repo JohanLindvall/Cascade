@@ -6,6 +6,12 @@
 
 export type Tier = 'bronze' | 'silver' | 'gold';
 
+/**
+ * How a badge's progress is measured, so the UI can print "1.2 GiB / 100 GiB"
+ * or "3 / 10" without guessing from the badge id or the target's magnitude.
+ */
+export type ProgressUnit = 'count' | 'bytes' | 'rate' | 'ratio' | 'duration';
+
 /** Lifetime counters, accumulated in the store so they survive restarts. */
 export interface GameStats {
   lifetimeUp: number;
@@ -41,6 +47,7 @@ export interface AchievementDef {
   description: string;
   tier: Tier;
   icon: string;
+  unit: ProgressUnit;
   /** [current, target]; unlocked once current >= target. */
   progress: (stats: GameStats) => [number, number];
 }
@@ -57,6 +64,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Add your first torrent',
     tier: 'bronze',
     icon: 'download',
+    unit: 'count',
     progress: (s) => [s.everAdded, 1],
   },
   {
@@ -65,6 +73,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Finish your first download',
     tier: 'bronze',
     icon: 'target',
+    unit: 'count',
     progress: (s) => [s.completed, 1],
   },
   {
@@ -73,6 +82,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Finish 10 downloads',
     tier: 'silver',
     icon: 'target',
+    unit: 'count',
     progress: (s) => [s.completed, 10],
   },
   {
@@ -81,6 +91,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Finish 100 downloads',
     tier: 'gold',
     icon: 'trophy',
+    unit: 'count',
     progress: (s) => [s.completed, 100],
   },
   {
@@ -89,6 +100,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Download 1 GiB',
     tier: 'bronze',
     icon: 'download',
+    unit: 'bytes',
     progress: (s) => [s.lifetimeDown, GIB],
   },
   {
@@ -97,6 +109,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Download 1 TiB',
     tier: 'gold',
     icon: 'trophy',
+    unit: 'bytes',
     progress: (s) => [s.lifetimeDown, TIB],
   },
   {
@@ -105,6 +118,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Upload 1 GiB',
     tier: 'bronze',
     icon: 'upload',
+    unit: 'bytes',
     progress: (s) => [s.lifetimeUp, GIB],
   },
   {
@@ -113,6 +127,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Upload 100 GiB',
     tier: 'gold',
     icon: 'medal',
+    unit: 'bytes',
     progress: (s) => [s.lifetimeUp, 100 * GIB],
   },
   {
@@ -121,6 +136,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Reach a lifetime ratio of 1.00',
     tier: 'silver',
     icon: 'star',
+    unit: 'ratio',
     progress: (s) => [
       s.lifetimeDown > 0 ? Math.min(1, s.lifetimeUp / s.lifetimeDown) : 0,
       1,
@@ -132,6 +148,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Seed a single torrent to a ratio of 5.00',
     tier: 'silver',
     icon: 'star',
+    unit: 'ratio',
     progress: (s) => [s.bestRatio, 5],
   },
   {
@@ -140,6 +157,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Seed 10 torrents at once',
     tier: 'silver',
     icon: 'upload',
+    unit: 'count',
     progress: (s) => [s.maxSeeding, 10],
   },
   {
@@ -148,6 +166,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Hold 50 peer connections at once',
     tier: 'silver',
     icon: 'users',
+    unit: 'count',
     progress: (s) => [s.peakPeers, 50],
   },
   {
@@ -156,6 +175,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Hit 10 MiB/s of download',
     tier: 'silver',
     icon: 'bolt',
+    unit: 'rate',
     progress: (s) => [s.peakDownRate, 10 * MIB],
   },
   {
@@ -164,6 +184,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Organise torrents under 5 labels',
     tier: 'bronze',
     icon: 'tag',
+    unit: 'count',
     progress: (s) => [s.maxLabels, 5],
   },
   {
@@ -172,6 +193,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     description: 'Keep a torrent seeding for 7 days',
     tier: 'gold',
     icon: 'clock',
+    unit: 'duration',
     progress: (s) => [s.longestSeed, 7 * DAY],
   },
 ];
@@ -182,6 +204,7 @@ export interface Achievement {
   description: string;
   tier: Tier;
   icon: string;
+  unit: ProgressUnit;
   current: number;
   target: number;
   unlockedAt: number | null;
@@ -251,6 +274,7 @@ export function buildGameState(
       description: def.description,
       tier: def.tier,
       icon: def.icon,
+      unit: def.unit,
       current,
       target,
       unlockedAt: unlockedAt[def.id] ?? null,

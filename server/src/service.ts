@@ -63,8 +63,18 @@ export interface GlobalStatus {
   diskFree: number | null;
   /** rtorrent's default download directory, shown as the Add dialog's default. */
   downloadDir: string;
+  /** What this server allows, so the UI stops offering what it would refuse. */
+  policy: Policy;
   backend: BackendSummary;
   history: RateSample[];
+}
+
+/** The CASCADE_ALLOW_* switches, as the UI needs them. */
+export interface Policy {
+  /** The API console and /RPC2. */
+  rawRpc: boolean;
+  /** Removing a torrent together with its downloaded data. */
+  deleteData: boolean;
 }
 
 export interface BackendSummary {
@@ -541,6 +551,7 @@ export class RtorrentService {
         : typeof directory === 'string'
           ? directory
           : '',
+      policy: { rawRpc: this.config.allowRawRpc, deleteData: this.config.allowDataDelete },
       torrentCount: list.length,
       activeCount: list.filter((item) => item.status === 'downloading' || item.status === 'seeding')
         .length,

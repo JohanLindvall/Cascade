@@ -99,3 +99,23 @@ test('a column opens in its natural direction; only known keys pass the guard', 
   assert.ok(!isSortKey('hash'));
   assert.ok(!isSortKey(undefined));
 });
+
+test('names sort naturally: episode 2 before episode 10', () => {
+  const list = [torrent({ name: 'Show S01E10' }), torrent({ name: 'Show S01E2' }), torrent({ name: 'show S01E1' })];
+  assert.deepEqual(
+    sortTorrents(list, { key: 'name', dir: 'asc' }).map((t) => t.name),
+    ['show S01E1', 'Show S01E2', 'Show S01E10'],
+  );
+});
+
+test('ties keep a fixed order by name, whichever way the column runs', () => {
+  // Every row shares the sort value; the server's listing order must not leak through.
+  const list = [torrent({ name: 'charlie' }), torrent({ name: 'alpha' }), torrent({ name: 'bravo' })];
+  for (const dir of ['asc', 'desc'] as const) {
+    assert.deepEqual(
+      sortTorrents(list, { key: 'status', dir }).map((t) => t.name),
+      ['alpha', 'bravo', 'charlie'],
+      dir,
+    );
+  }
+});

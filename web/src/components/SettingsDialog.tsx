@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
-import { bytes, formatRateInput, parseRate } from '../format';
+import { bytes, formatRateInput, parseRate, parseWholeNumber, rate } from '../format';
 import type { BackendSummary, Settings } from '../types';
-import { Field, Modal, Switch, useToast } from './ui';
+import { IconRefresh } from './icons';
+import { Field, Modal, ParsedInput, Switch, useToast } from './ui';
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -36,25 +37,43 @@ type BoolKey = KeysOfType<boolean>;
  */
 export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Settings>({});
+  // Fields whose text does not parse; Apply waits until there are none.
+  const [invalid, setInvalid] = useState<ReadonlySet<keyof Settings>>(new Set());
   const [busy, setBusy] = useState(false);
   const toast = useToast();
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoadError(null);
     api
       .settings()
       .then((value) => {
         setSettings(value);
         setDraft(value);
       })
-      .catch((error) => toast.error(error));
-  }, [toast]);
+      .catch((error: unknown) => setLoadError(error instanceof Error ? error.message : String(error)));
+  }, []);
+
+  useEffect(load, [load]);
 
   const supports = (feature: string) => backend?.supports?.[feature] !== false;
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 
+  /** Record a parsed field: its value when valid, its key in `invalid` when not. */
+  const commit = (key: NumberKey, value: number | null) => {
+    setInvalid((current) => {
+      const next = new Set(current);
+      if (value === null) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+    if (value !== null) set(key, value);
+  };
+
   const save = async () => {
+    if (invalid.size > 0) return;
     setBusy(true);
     try {
       const patch: Settings = {};
@@ -79,15 +98,43 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
     }
   };
 
-  const numberField = (key: NumberKey, label: string, opts: { hint?: string; min?: number } = {}) => (
-    <Field label={label} hint={opts.hint}>
-      <input
-        className="input"
-        type="number"
-        min={opts.min ?? 0}
+  /**
+   * A whole-number setting. Text rather than type="number": a controlled
+   * number input turned a lone "-" into 0 (so -1 could not be typed), applied
+   * 0 when cleared, and changed value under a scrolling mouse wheel.
+   */
+  const numberField = (key: NumberKey, label: string, opts: { hint?: string; min?: number } = {}) => {
+    const min = opts.min ?? 0;
+    return (
+      <Field
+        label={label}
+        hint={opts.hint}
+        error={invalid.has(key) ? `A whole number, ${min} or more` : undefined}
+      >
+        <ParsedInput
+          inputMode="numeric"
+          disabled={!supports(key)}
+          initial={draft[key] === undefined ? '' : String(draft[key])}
+          parse={(text) => parseWholeNumber(text, min)}
+          onValue={(value) => commit(key, value)}
+        />
+      </Field>
+    );
+  };
+
+  /** A global rate limit, typed the way the throttle dialog takes them. */
+  const rateField = (key: 'downloadRate' | 'uploadRate', label: string) => (
+    <Field
+      label={label}
+      hint={draft[key] ? rate(draft[key] ?? 0) : 'unlimited'}
+      error={invalid.has(key) ? 'Not a rate — try 500k, 2M or 800 B/s' : undefined}
+    >
+      <ParsedInput
+        placeholder="unlimited — e.g. 500k, 2M"
         disabled={!supports(key)}
-        value={String(draft[key] ?? '')}
-        onChange={(event) => set(key, Number(event.target.value))}
+        initial={formatRateInput(settings?.[key] ?? 0)}
+        parse={parseRate}
+        onValue={(value) => commit(key, value)}
       />
     </Field>
   );
@@ -111,7 +158,17 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
   if (!settings) {
     return (
       <Modal title="rtorrent settings" onClose={onClose}>
-        <div style={{ color: 'var(--text-faint)' }}>Loading…</div>
+        {loadError ? (
+          <div className="banner">
+            <span className="grow">Could not read the settings: {loadError}</span>
+            <button className="btn sm ghost" onClick={load}>
+              <IconRefresh size={13} />
+              <span>Retry</span>
+            </button>
+          </div>
+        ) : (
+          <div className="faint">Loading…</div>
+        )}
       </Modal>
     );
   }
@@ -123,14 +180,17 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
       onClose={onClose}
       footer={
         <>
-          <span style={{ color: 'var(--text-faint)', fontSize: 11.5 }}>
-            Changes apply live and are not written back to rtorrent.rc
-          </span>
+          <span className="foot-note">Changes apply live and are not written back to rtorrent.rc</span>
           <div className="spacer" />
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn primary" onClick={() => void save()} disabled={busy}>
+          <button
+            className="btn primary"
+            onClick={() => void save()}
+            disabled={busy || invalid.size > 0}
+            title={invalid.size > 0 ? 'Fix the fields marked in red first' : undefined}
+          >
             {busy ? 'Applying…' : 'Apply'}
           </button>
         </>
@@ -139,28 +199,8 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
       <div className="section">
         <h3>Bandwidth &amp; slots</h3>
         <div className="form-grid">
-          <Field
-            label="Global download limit"
-            hint={draft.downloadRate ? bytes(draft.downloadRate) + '/s' : 'unlimited'}
-          >
-            <input
-              className="input"
-              placeholder="unlimited — e.g. 500k, 2M"
-              defaultValue={formatRateInput(settings.downloadRate ?? 0)}
-              onChange={(event) => set('downloadRate', parseRate(event.target.value))}
-            />
-          </Field>
-          <Field
-            label="Global upload limit"
-            hint={draft.uploadRate ? bytes(draft.uploadRate) + '/s' : 'unlimited'}
-          >
-            <input
-              className="input"
-              placeholder="unlimited — e.g. 500k, 2M"
-              defaultValue={formatRateInput(settings.uploadRate ?? 0)}
-              onChange={(event) => set('uploadRate', parseRate(event.target.value))}
-            />
-          </Field>
+          {rateField('downloadRate', 'Global download limit')}
+          {rateField('uploadRate', 'Global upload limit')}
           {numberField('maxUploads', 'Max upload slots per torrent')}
           {numberField('minUploads', 'Min upload slots per torrent')}
           {numberField('maxDownloads', 'Max download slots per torrent')}
@@ -308,7 +348,7 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
             hint: draft.preloadMinSize ? bytes(draft.preloadMinSize) : 'bytes',
           })}
           {numberField('preloadMinRate', 'Preload above upload rate', {
-            hint: draft.preloadMinRate ? bytes(draft.preloadMinRate) + '/s' : 'bytes/s',
+            hint: draft.preloadMinRate ? rate(draft.preloadMinRate) : 'bytes/s',
           })}
         </div>
         <div className="switch-row">
