@@ -123,7 +123,9 @@ jobs:
           print(torrent['status'], torrent['message'])
           assert torrent['status'] != 'error', torrent['message']
           EOF
-          docker exec cascade-ci sh -c 'ls -b /downloads | grep -c "~"'
+          # ...and the file on disk is the shortened name, "~" and its tag.
+          # (Not ls -b: the image's BusyBox ls has no such flag.)
+          test "$(docker exec cascade-ci find /downloads -maxdepth 1 -name '*~*' | wc -l)" -ge 1
       - name: Container log on failure
         if: failure()
         run: docker logs cascade-ci 2>&1 | tail -50 || true

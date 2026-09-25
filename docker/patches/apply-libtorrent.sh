@@ -69,10 +69,11 @@ substitute src/torrent/data/file_list.cc "FileList::set_root_dir" path_fit_path 
 # PEER_NAME: the prefix of the peer id every peer and tracker sees.
 #
 # libtorrent bakes it into configure.ac as an Azureus-style "-ltXXXX-", where
-# XXXX encodes the release (0.16.20 is -lt1014-, 0.16.22 -lt1016-, 0.16.23
-# -lt1017-). It is the other half of the client's identity: changing only
-# rtorrent's HTTP User-Agent leaves a peer id that still names the real
-# version, which a tracker checking both would see straight through.
+# XXXX encodes the release — from 0.15 on, the minor and patch release as two
+# hex digits each (0.16.20 is -lt1014-, 0.16.24 -lt1018-). It is the other
+# half of the client's identity: changing only rtorrent's HTTP User-Agent
+# leaves a peer id that still names the real version, which a tracker
+# checking both would see straight through.
 #
 # Unset means untouched. The two AC_DEFINE spellings (0.13.x bare, 0.15+
 # double-bracketed) both carry the value as a quoted "-lt....-", so the edit

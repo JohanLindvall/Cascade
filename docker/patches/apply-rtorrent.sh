@@ -9,10 +9,10 @@
 #
 # Why anyone would: private trackers whitelist client versions, and a release
 # newer than their list is refused ("this version has not yet been
-# whitelisted"), which rtorrent reports as a plain announce failure. Note this
-# changes only the HTTP header; the BitTorrent peer_id still carries
-# libtorrent's own prefix (-lt1016- for 0.16.x), so a tracker that checks the
-# peer_id still sees the real version.
+# whitelisted"), which rtorrent reports as a plain announce failure. This is
+# only the HTTP header; the peer id prefix is libtorrent's, set by PEER_NAME in
+# apply-libtorrent.sh — the Dockerfile moves the two together, since a tracker
+# that checks both would see straight through one alone.
 #
 # Unset means untouched: the stock build announces its true version.
 set -eu

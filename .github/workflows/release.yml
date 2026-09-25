@@ -6,8 +6,10 @@
 # runners — arm64 under QEMU would spend an hour emulating a C++ compile — and
 # joined into one manifest per rtorrent version.
 #
-# Image tags are <version>-<rtorrent-version>, e.g. v1.2.0-0.16.23. The build
-# of DEFAULT_RTORRENT additionally answers to the bare <version> and :latest.
+# Image tags are <version>-<rtorrent-version>, e.g. v1.2.0-0.16.24. The build
+# of the default rtorrent — the Dockerfile's RTORRENT_VERSION, read from there
+# so that a bump is one line — additionally answers to the bare <version> and
+# :latest.
 #
 # The tag this workflow pushes does not re-trigger it: GitHub deliberately does
 # not run workflows for refs created with GITHUB_TOKEN, which is why the tag is
@@ -22,8 +24,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # The rtorrent build that also carries the bare <version> and :latest tags.
-  DEFAULT_RTORRENT: 0.16.23
 
 concurrency:
   group: release-${{ github.ref }}
@@ -38,6 +38,9 @@ jobs:
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       image: ${{ steps.resolve.outputs.image }}
+      # The default rtorrent, and every rtorrent to publish (a JSON list).
+      rtorrent: ${{ steps.resolve.outputs.rtorrent }}
+      rtorrents: ${{ steps.resolve.outputs.rtorrents }}
     steps:
       - uses: actions/checkout@v7
 
@@ -54,9 +57,14 @@ jobs:
           fi
           # GHCR rejects uppercase in image names; the owner login has it.
           owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          rtorrent="$(sed -n 's/^ARG RTORRENT_VERSION=//p' Dockerfile)"
+          [ -n "$rtorrent" ] || { echo "no ARG RTORRENT_VERSION in the Dockerfile" >&2; exit 1; }
           {
             echo "version=$version"
             echo "image=${REGISTRY}/${owner}/cascade"
+            echo "rtorrent=$rtorrent"
+            # Publishing another rtorrent means adding it to this list.
+            echo "rtorrents=[\"$rtorrent\"]"
           } >> "$GITHUB_OUTPUT"
           echo "publishing ${REGISTRY}/${owner}/cascade:${version}-*"
 
@@ -84,8 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Adding a version here publishes another -<rtorrent-version> tag.
-        rtorrent: ['0.16.23']
+        rtorrent: ${{ fromJSON(needs.version.outputs.rtorrents) }}
         platform: [linux/amd64, linux/arm64]
     steps:
       - uses: actions/checkout@v7
@@ -169,8 +176,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        # Keep in step with the build matrix above (Actions has no anchors).
-        rtorrent: ['0.16.23']
+        rtorrent: ${{ fromJSON(needs.version.outputs.rtorrents) }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -194,7 +200,7 @@ jobs:
           version='${{ needs.version.outputs.version }}'
           rtorrent='${{ matrix.rtorrent }}'
           set -- --tag "${image}:${version}-${rtorrent}"
-          if [ "$rtorrent" = "$DEFAULT_RTORRENT" ]; then
+          if [ "$rtorrent" = '${{ needs.version.outputs.rtorrent }}' ]; then
             set -- "$@" --tag "${image}:${version}" --tag "${image}:latest"
           fi
           # One digest file per platform, named by the digest the build pushed.

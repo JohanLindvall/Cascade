@@ -6,13 +6,18 @@
 # is exactly the one you asked for rather than whatever a distro happens to
 # package:
 #
-#     docker build -t cascade .                                  # 0.16.23
+#     docker build -t cascade .                                  # the default
 #     docker build --build-arg RTORRENT_VERSION=0.15.2 -t cascade:0.15.2 .
 #     docker build --build-arg RTORRENT_VERSION=0.9.8  -t cascade:0.9.8 .
 #
-# USER_AGENT overrides the version rtorrent announces to trackers; 0.16.23
-# announces as 0.16.20 by default, because some trackers have not whitelisted
-# it yet. See docker/patches/apply-rtorrent.sh.
+# The default is RTORRENT_VERSION below — the one place it is written: the
+# Makefile and the release workflow read it from here, and
+# docker/bump-rtorrent.sh moves it to a newer upstream release.
+#
+# USER_AGENT and PEER_NAME override what the client calls itself; a release
+# newer than 0.16.20 presents itself as 0.16.20 by default, because private
+# trackers refuse versions they have not whitelisted yet. See
+# docker/patches/apply-rtorrent.sh and apply-libtorrent.sh.
 #
 # libtorrent is pinned to the matching release automatically (rtorrent 0.9.x
 # pairs with libtorrent 0.13.x, 0.10.x with 0.14.x, and from 0.15 onwards the
@@ -50,7 +55,7 @@ RUN cd server && npm run build && npm test && npm prune --omit=dev
 # 2. compile libtorrent and rtorrent from upstream tags
 # --------------------------------------------------------------------------
 FROM alpine:${ALPINE_VERSION} AS rtorrent
-ARG RTORRENT_VERSION=0.16.23
+ARG RTORRENT_VERSION=0.16.24
 ARG LIBTORRENT_VERSION=
 ARG RTORRENT_REPO=https://github.com/rakshasa/rtorrent
 ARG LIBTORRENT_REPO=https://github.com/rakshasa/libtorrent
@@ -84,17 +89,22 @@ RUN set -eux; \
       esac; \
     fi; \
     # Private trackers whitelist client versions and refuse anything newer
-    # than their list, which surfaces only as a failed announce. 0.16.23 is
-    # too new for some, so it presents itself as 0.16.20 unless told
-    # otherwise; every other version presents itself as what it is. The peer
-    # id prefix moves with the User-Agent: libtorrent 0.16.20 is -lt1014-.
-    # Override with --build-arg USER_AGENT=... and PEER_NAME=... (or
-    # make build USER_AGENT=... PEER_NAME=...); to be 0.16.23 outright,
-    # USER_AGENT=rtorrent/0.16.23 PEER_NAME=-lt1017-.
-    if [ -z "${USER_AGENT}" ] && [ -z "${PEER_NAME}" ]; then \
-      case "${RTORRENT_VERSION}" in \
-        0.16.23) USER_AGENT="rtorrent/0.16.20"; PEER_NAME="-lt1014-" ;; \
-      esac; \
+    # than their list, which surfaces only as a failed announce. A release
+    # newer than 0.16.20 therefore presents itself as 0.16.20 unless told
+    # otherwise — a rule rather than a list, so a new default release does not
+    # start failing announces the day it lands — and older ones present
+    # themselves as what they are. The peer id prefix moves with the
+    # User-Agent: libtorrent 0.16.20 is -lt1014-. Override with --build-arg
+    # USER_AGENT=... and PEER_NAME=... (or make build USER_AGENT=...
+    # PEER_NAME=...); to present the real version, pass it and its prefix
+    # (from 0.15 on, -lt and then the minor and patch release as two hex
+    # digits each: 0.16.24 is -lt1018-).
+    if [ -z "${USER_AGENT}" ] && [ -z "${PEER_NAME}" ] && \
+       echo "${RTORRENT_VERSION} 0.16.20" | awk '{ \
+         split($1, have, "."); split($2, known, "."); \
+         for (i = 1; i <= 3; i++) if (have[i] != known[i]) exit !(have[i] + 0 > known[i] + 0); \
+         exit 1 }'; then \
+      USER_AGENT="rtorrent/0.16.20"; PEER_NAME="-lt1014-"; \
     fi; \
     export USER_AGENT PEER_NAME; \
     echo "building rtorrent ${RTORRENT_VERSION} against libtorrent ${LIBTORRENT_VERSION}"; \

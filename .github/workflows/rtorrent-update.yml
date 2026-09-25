@@ -1,0 +1,91 @@
+# Keep the default rtorrent on the newest upstream release.
+#
+# Dependabot cannot do this one: rtorrent is a git tag compiled from source in
+# the Dockerfile, not a package in any registry Dependabot reads. So this
+# looks upstream every morning and, once rtorrent and libtorrent have both
+# tagged a newer release, opens a pull request moving the default to it — the
+# same edit as `make bump-rtorrent` (docker/bump-rtorrent.sh). Merging it is a
+# push to main like any other, so release.yml publishes it.
+# .github/dependabot.yml covers the npm packages and the Actions.
+#
+# Two GitHub rules shape the last step. A pull request opened with
+# GITHUB_TOKEN needs Settings → Actions → General → "Allow GitHub Actions to
+# create and approve pull requests"; without it the branch is still pushed and
+# the run fails with a link to open the pull request by hand. And GitHub starts
+# no workflows for what that token pushes, so CI is dispatched on the branch
+# explicitly — its checks land on the pull request all the same.
+name: rtorrent update
+
+on:
+  schedule:
+    - cron: '41 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: rtorrent-update
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Look for a newer rtorrent
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # pushes the branch
+      pull-requests: write # opens the pull request
+      actions: write # dispatches CI on it
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Move the default to the newest release
+        id: bump
+        run: |
+          set -eu
+          from="$(sed -n 's/^ARG RTORRENT_VERSION=//p' Dockerfile)"
+          to="$(docker/bump-rtorrent.sh)"
+          if [ -z "$to" ]; then
+            echo "rtorrent $from is the newest release"
+            exit 0
+          fi
+          echo "rtorrent $from -> $to"
+          { echo "from=$from"; echo "to=$to"; } >> "$GITHUB_OUTPUT"
+
+      - name: Open a pull request
+        if: steps.bump.outputs.to != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.ref_name }}
+          FROM: ${{ steps.bump.outputs.from }}
+          TO: ${{ steps.bump.outputs.to }}
+        run: |
+          set -eu
+          branch="rtorrent/$TO"
+          # One pull request per release, ever: closing one is an answer, not
+          # something to reopen every morning.
+          if [ "$(gh pr list --head "$branch" --state all --json number --jq length)" != 0 ]; then
+            echo "a pull request for rtorrent $TO exists already"
+            exit 0
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "$branch"
+          git commit -qam "Build rtorrent $TO"
+          git push --force origin "$branch"
+
+          body="Upstream has tagged rtorrent and libtorrent $TO; this moves the default build from $FROM to it (\`make bump-rtorrent\`).
+
+          - [rtorrent $TO](https://github.com/rakshasa/rtorrent/releases/tag/v$TO) · [libtorrent $TO](https://github.com/rakshasa/libtorrent/releases/tag/v$TO)
+          - What it announces to trackers follows the Dockerfile's rule, unchanged by this.
+
+          CI builds and boots the image on this branch; merging publishes it. Renamed or removed commands are worth a look in the release notes first — the capability probe keeps the UI working, but a setting can go quiet."
+
+          if ! url="$(gh pr create --base "$BASE" --head "$branch" --title "Build rtorrent $TO" --body "$body" 2>&1)"; then
+            echo "::error::Could not open the pull request: $url"
+            echo "The branch is pushed — open it by hand: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE...$branch?expand=1"
+            exit 1
+          fi
+          echo "$url"
+          echo "Opened [Build rtorrent $TO]($url)." >> "$GITHUB_STEP_SUMMARY"
+
+          gh workflow run ci.yml --ref "$branch"

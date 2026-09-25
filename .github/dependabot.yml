@@ -1,0 +1,39 @@
+# Dependabot keeps up what it can see: the npm packages of both halves and the
+# Actions the workflows use.
+#
+# Neither half has a lockfile — the image installs the newest release each
+# range allows, at build time — so only a release outside its range (a new
+# major) needs a pull request, and increase-if-necessary opens exactly those.
+# Actions are pinned by major tag, which works out the same.
+#
+# What Dependabot cannot see: rtorrent, a git tag compiled from source, which
+# .github/workflows/rtorrent-update.yml follows instead; and the base images,
+# pinned through build arguments (ALPINE_VERSION, NODE_VERSION) rather than a
+# literal FROM line.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /server
+    schedule:
+      interval: weekly
+    versioning-strategy: increase-if-necessary
+    groups:
+      server:
+        patterns: ['*']
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    versioning-strategy: increase-if-necessary
+    groups:
+      web:
+        patterns: ['*']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ['*']

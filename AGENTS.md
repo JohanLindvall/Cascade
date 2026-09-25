@@ -40,8 +40,11 @@ web/src/          React UI: components/, one styles.css of design tokens,
                   format.ts, selection.ts, redact.ts and preferences.ts are
                   the pure logic the node runner can reach
 docker/entrypoint.sh      renders rtorrent.rc, supervises rtorrent + node
+docker/bump-rtorrent.sh   moves the default rtorrent to a newer upstream release
 .github/workflows/ci.yml  typecheck, options check, Docker build + API smoke
 .github/workflows/release.yml  multi-arch GHCR publish, tags every main push
+.github/workflows/rtorrent-update.yml  daily: a pull request per new rtorrent
+.github/dependabot.yml    npm packages and Actions (rtorrent is the workflow's)
 ```
 
 There are no runtime dependencies beyond express and multer on the server, and react on the
@@ -94,8 +97,18 @@ curl -s localhost:18080/api/state               # what the UI polls
 
 rtorrent is always compiled from an upstream tag; there is no distro-package path. To test against
 a different one, rebuild with `--build-arg RTORRENT_VERSION=0.9.8` (or `make matrix`, which builds
-0.9.8, 0.15.2 and 0.16.23). **Changes to the backend should be checked against at least the oldest
-and newest**, because the command set genuinely differs.
+0.9.8, 0.15.2 and the default). **Changes to the backend should be checked against at least the
+oldest and newest**, because the command set genuinely differs.
+
+The default release is written once, as the Dockerfile's `ARG RTORRENT_VERSION`: the Makefile and
+`release.yml` read it from there, and other docs say "the default" rather than a number. The README
+names it in two phrases — the highlights' "**rtorrent X, compiled from source**" and "The default
+is **X**" — which `docker/bump-rtorrent.sh` rewrites along with the Dockerfile and checks it did;
+reword either and the script has to follow. That script is `make bump-rtorrent`, and it is what
+`.github/workflows/rtorrent-update.yml` runs every morning to open a pull request per new upstream
+release (Dependabot cannot follow a git tag compiled from source; `.github/dependabot.yml` covers
+the npm packages and the Actions). When such a pull request comes in, read the release notes for
+renamed commands and check settings still round-trip (quirk 7) before merging.
 
 Old tags need `-include algorithm -include cstdint` to compile against a current libstdc++; the
 Dockerfile passes that to every source build.
@@ -194,13 +207,15 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    (`USER_AGENT`, patched into rtorrent's `set_user_agent(USER_AGENT)` call by
    `apply-rtorrent.sh`) and the peer id prefix (`PEER_NAME`, patched into libtorrent's
    `configure.ac` by `apply-libtorrent.sh`). Both are build args, not environment variables —
-   neither project exposes a command for them. The Dockerfile defaults 0.16.23 to presenting
-   itself as 0.16.20 (`rtorrent/0.16.20` + `-lt1014-`), because private trackers whitelist
-   client versions and refuse anything newer, which reaches the UI only as a failed announce
-   (and, on 0.16.22, only as `v6 : Could not resolve hostname`, since libtorrent prefers a
-   failed AAAA lookup over the real reply). Move the two together: a tracker checking both sees
-   a mismatch otherwise. Prefixes: 0.13.8 `-lt0D80-`, 0.15.2 `-lt0F02-`, 0.16.20 `-lt1014-`,
-   0.16.22 `-lt1016-`, 0.16.23 `-lt1017-`.
+   neither project exposes a command for them. The Dockerfile has every release newer than
+   0.16.20 present itself as 0.16.20 (`rtorrent/0.16.20` + `-lt1014-`) — a version comparison,
+   not a list, so a bumped default keeps the whitelisted identity without an edit — because
+   private trackers whitelist client versions and refuse anything newer, which reaches the UI
+   only as a failed announce (and, on 0.16.22, only as `v6 : Could not resolve hostname`, since
+   libtorrent prefers a failed AAAA lookup over the real reply). Move the two together: a
+   tracker checking both sees a mismatch otherwise. Prefixes: 0.13.8 `-lt0D80-`; from 0.15 on,
+   `-lt` and the minor and patch release as two hex digits each (0.15.2 `-lt0F02-`, 0.16.20
+   `-lt1014-`, 0.16.23 `-lt1017-`, 0.16.24 `-lt1018-`).
 
 ## Adding support for a new backend command
 
@@ -513,8 +528,8 @@ Two other things are easy to get wrong here:
   job because `release.yml` builds and probes those commits on both architectures anyway.
 - `release.yml` publishes to GHCR. Every push to main is a release: it tags the commit
   `v0.1.<run_number>` and publishes `cascade:<version>-<rtorrent-version>` (plus the bare
-  `<version>` and `latest` for `DEFAULT_RTORRENT`); pushing a `vX.Y.Z` tag publishes under that
-  name instead. Builds run per platform on native amd64/arm64 runners, are pushed **by digest**,
+  `<version>` and `latest` for the default rtorrent, which its first job reads from the
+  Dockerfile); pushing a `vX.Y.Z` tag publishes under that name instead. Builds run per platform on native amd64/arm64 runners, are pushed **by digest**,
   smoke-tested on their own architecture, and only then joined into a tagged manifest — so a
   broken or half-built release never claims a tag. The tag the workflow pushes does not
   re-trigger it (GitHub does not run workflows for refs created with `GITHUB_TOKEN`), which is

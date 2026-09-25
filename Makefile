@@ -15,22 +15,26 @@ OPEN             ?= 1
 BROWSER          ?= xdg-open
 URL               = http://localhost:$(PORT)
 
-# rtorrent is always compiled from an upstream tag.
+# rtorrent is always compiled from an upstream tag. The default release is
+# the Dockerfile's ARG RTORRENT_VERSION, read from there rather than repeated
+# (make bump-rtorrent moves it).
 ALPINE_VERSION   ?= 3.22
-RTORRENT_VERSION ?= 0.16.23
+DEFAULT_RTORRENT := $(shell sed -n 's/^ARG RTORRENT_VERSION=//p' Dockerfile)
+RTORRENT_VERSION ?= $(DEFAULT_RTORRENT)
 LIBTORRENT_VERSION ?=
 
 # What the client calls itself: USER_AGENT is the HTTP header trackers read,
 # PEER_NAME the peer id prefix peers and trackers see. Left empty the
-# Dockerfile decides: 0.16.23 presents itself as 0.16.20 (USER_AGENT
-# rtorrent/0.16.20, PEER_NAME -lt1014-), because some private trackers have
-# not whitelisted 0.16.23 and refuse the announce outright; every other
-# version presents itself as what it is. Set them together — a tracker that
-# checks both sees a mismatch:
-#   make build USER_AGENT=rtorrent/0.16.23 PEER_NAME=-lt1017-   # be 0.16.23
+# Dockerfile decides: a release newer than 0.16.20 presents itself as 0.16.20
+# (USER_AGENT rtorrent/0.16.20, PEER_NAME -lt1014-), because private trackers
+# refuse versions they have not whitelisted yet and say so only as a failed
+# announce; older releases present themselves as what they are. Set them
+# together — a tracker that checks both sees a mismatch:
+#   make build USER_AGENT=rtorrent/0.16.24 PEER_NAME=-lt1018-   # be 0.16.24
 #   make build USER_AGENT=rtorrent/0.9.8   PEER_NAME=-lt0D80-
-# The prefix per release: 0.13.8 -lt0D80-, 0.15.2 -lt0F02-, 0.16.20 -lt1014-,
-# 0.16.22 -lt1016-, 0.16.23 -lt1017-.
+# The prefix: 0.13.8 is -lt0D80-; from 0.15 on it is -lt and the minor and
+# patch release as two hex digits each (0.15.2 -lt0F02-, 0.16.20 -lt1014-,
+# 0.16.24 -lt1018-).
 USER_AGENT       ?=
 PEER_NAME        ?=
 
@@ -43,8 +47,8 @@ BUILD_ARGS = --build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
 REF = $(IMAGE):$(TAG)
 
 .DEFAULT_GOAL := help
-.PHONY: help build matrix run open stop logs shell attach rtorrent-log \
-        smoke clean distclean dev version
+.PHONY: help build matrix bump-rtorrent run open stop logs shell attach \
+        rtorrent-log smoke clean distclean dev version
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nCascade\n\nUsage: make \033[36m<target>\033[0m [VAR=value]\n\nTargets:\n"} \
@@ -53,7 +57,7 @@ help: ## Show this help
 	@printf "\nVariables: IMAGE=%s TAG=%s PORT=%s RTORRENT_VERSION=%s ALPINE_VERSION=%s OPEN=%s\n" \
 	  "$(IMAGE)" "$(TAG)" "$(PORT)" "$(RTORRENT_VERSION)" "$(ALPINE_VERSION)" "$(OPEN)"
 	@printf "           USER_AGENT=%s PEER_NAME=%s\n\n" \
-	  "$(if $(USER_AGENT),$(USER_AGENT),(0.16.23 presents as 0.16.20))" "$(if $(PEER_NAME),$(PEER_NAME),(likewise))"
+	  "$(if $(USER_AGENT),$(USER_AGENT),(past 0.16.20 presents as 0.16.20))" "$(if $(PEER_NAME),$(PEER_NAME),(likewise))"
 
 ##@ Build
 
@@ -61,11 +65,14 @@ build: ## Build the image (also typechecks both TypeScript halves)
 	docker build $(BUILD_ARGS) -t $(REF) .
 
 matrix: ## Build the rtorrent versions the UI is tested against
-	@for v in 0.9.8 0.15.2 0.16.23; do \
+	@for v in 0.9.8 0.15.2 $(DEFAULT_RTORRENT); do \
 	  echo "==> rtorrent $$v"; \
 	  docker build --build-arg RTORRENT_VERSION=$$v -t $(IMAGE):$$v . || exit 1; \
 	done
-	@echo "==> built: $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.23"
+	@echo "==> built: $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):$(DEFAULT_RTORRENT)"
+
+bump-rtorrent: ## Move the default rtorrent to the newest upstream release (TO=x.y.z for another)
+	@docker/bump-rtorrent.sh $(TO)
 
 ##@ Run
 
@@ -161,4 +168,4 @@ clean: stop ## Remove containers built from this image
 	@docker rm -f cascade-smoke >/dev/null 2>&1 || true
 
 distclean: clean ## Also remove the images
-	docker rmi -f $(REF) $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):0.16.23 >/dev/null 2>&1 || true
+	docker rmi -f $(REF) $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):$(DEFAULT_RTORRENT) >/dev/null 2>&1 || true
