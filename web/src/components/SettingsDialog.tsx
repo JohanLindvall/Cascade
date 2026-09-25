@@ -234,7 +234,7 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
         <div className="form-grid">
           {textField('portRange', 'Listening port range', {
             // Applying it over XML-RPC does not rebind a running rtorrent
-            // (CLAUDE.md quirk 6): saying so beats a field that looks applied.
+            // (AGENTS.md quirk 6): saying so beats a field that looks applied.
             hint: 'e.g. 50000-50000 — binds on the next container start',
           })}
           {textField('bindAddress', 'Bind address', { hint: 'all connections' })}

@@ -200,7 +200,7 @@ export interface TorrentFile {
   /** The path inside the torrent, as the torrent names it. */
   path: string;
   /** The file's name on disk when it differs from the torrent's: the image's
-   *  libtorrent shortens names longer than Linux allows (CLAUDE.md quirk 12).
+   *  libtorrent shortens names longer than Linux allows (AGENTS.md quirk 12).
    *  Empty when they agree, or before the torrent has ever been opened. */
   onDisk: string;
   size: number;

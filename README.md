@@ -629,5 +629,5 @@ web/src/       React UI (components/, styles.css)
 docker/        entrypoint that renders rtorrent.rc and supervises both processes
 ```
 
-See [CLAUDE.md](CLAUDE.md) for the architecture details and the rtorrent quirks worth knowing
+See [AGENTS.md](AGENTS.md) for the architecture details and the rtorrent quirks worth knowing
 before changing the backend.

@@ -1,7 +1,7 @@
 /**
  * The settings table drives reads, writes and the supports map, and its one
  * absolute rule is the empty-string target: a setter called without it makes
- * rtorrent read the value as the target and fault (quirk 1 in CLAUDE.md).
+ * rtorrent read the value as the target and fault (quirk 1 in AGENTS.md).
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
