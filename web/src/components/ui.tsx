@@ -456,7 +456,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
  * arrow keys, Home and End, and close on Escape or Tab — focus then goes back
  * to where it came from. Items are whatever carries a menuitem role.
  */
-export function useMenuKeys(ref: RefObject<HTMLElement>, onClose: () => void): void {
+export function useMenuKeys(ref: RefObject<HTMLElement | null>, onClose: () => void): void {
   const close = useLatest(onClose);
   useReturnFocus();
   useEffect(() => {
