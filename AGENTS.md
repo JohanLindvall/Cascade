@@ -187,6 +187,16 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    clears a lock unless this container's hostname *and* a live pid still hold it. Do not remove
    that check without replacing it — and prefer `docker stop` over `docker rm -f` in tooling.
 
+   A clean shutdown is slower than it looks: on SIGINT rtorrent announces "stopped" to every tracker
+   and only drops the unanswered requests after about ten seconds (`handle_shutdown` in its
+   control.cc, in rounds), so 100 torrents behind a hung tracker took 12–21s, measured. The
+   entrypoint's `stop_all` gives it 30s, then SIGTERM (quick shutdown) and 10s more, and must never
+   exit while rtorrent still runs: the container goes with the script and the kernel kills what is
+   left. It used to allow 10s and exit, so every `docker stop` left the lock behind and a stale peer
+   in the trackers' tables ("Got multiple targets in peer table!"). Docker's own timeout has to
+   outlast that, hence `--stop-timeout 60` in every `docker run` the docs show and `-t 60` in `make
+   stop` — a plain `docker stop` otherwise kills at Docker's default ten seconds.
+
 9. **rtorrent needs a pty**, so it runs inside a detached `screen` session. `SCREENDIR` must be
    mode 0700 or screen refuses to start.
 

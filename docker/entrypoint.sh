@@ -293,18 +293,40 @@ start_rtorrent() {
     screen -dmS rtorrent rtorrent -n -o import="$RC_FILE"
 }
 
+# Wait up to $1 seconds for rtorrent to exit; false if it is still running.
+# WAITED says how long it took.
+wait_rtorrent() {
+  WAITED=0
+  while pidof rtorrent >/dev/null 2>&1; do
+    [ "$WAITED" -lt "$1" ] || return 1
+    sleep 1
+    WAITED=$((WAITED + 1))
+  done
+}
+
+# SIGINT is rtorrent's clean shutdown: it announces "stopped" to every
+# tracker, drops the requests still unanswered after about ten seconds, then
+# saves the session and releases its lock — 12s to 21s, measured, with 100
+# torrents behind a tracker that never answers. It used to get 10s, then
+# SIGTERM and this script's exit, and the exit is what did the damage: the
+# container goes with it and the kernel kills whatever is left, so rtorrent
+# died mid-shutdown on every stop — lock left behind, no "stopped" sent, a
+# stale peer in every tracker's table. Hence 30s for SIGINT, then SIGTERM (its
+# quick shutdown, which skips the trackers) and 10s more for that. Docker's
+# stop timeout must outlast both — run the container with --stop-timeout 60.
 stop_all() {
   STOPPING=1
   log "shutting down"
   [ -n "$NODE_PID" ] && kill "$NODE_PID" 2>/dev/null || true
   if pidof rtorrent >/dev/null 2>&1; then
-    # SIGINT is rtorrent's clean-shutdown signal; it saves the session first.
     kill -INT "$(pidof rtorrent)" 2>/dev/null || true
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      pidof rtorrent >/dev/null 2>&1 || break
-      sleep 1
-    done
-    pidof rtorrent >/dev/null 2>&1 && kill -TERM "$(pidof rtorrent)" 2>/dev/null || true
+    if wait_rtorrent 30; then
+      log "rtorrent stopped cleanly after ${WAITED}s"
+    else
+      log "rtorrent is still shutting down after 30s — asking it to hurry"
+      kill -TERM "$(pidof rtorrent)" 2>/dev/null || true
+      wait_rtorrent 10 || log "rtorrent did not stop; the next start clears its session lock"
+    fi
   fi
   [ -z "$NODE_PID" ] || wait "$NODE_PID" 2>/dev/null || true
   exit "${1:-0}"

@@ -78,7 +78,7 @@ bump-rtorrent: ## Move the default rtorrent to the newest upstream release (TO=x
 
 run: stop ## Run the container in the background and open it (PORT=8080, OPEN=0 to skip)
 	@mkdir -p $(DATA)/downloads $(DATA)/config $(DATA)/watch
-	docker run -d --name $(CONTAINER) \
+	docker run -d --name $(CONTAINER) --stop-timeout 60 \
 	  -p $(PORT):8080 -p $(PEER_PORT):50000 -p $(PEER_PORT):50000/udp \
 	  -v $(DATA)/downloads:/downloads \
 	  -v $(DATA)/config:/config \
@@ -114,8 +114,9 @@ open: ## Wait for Cascade to answer, then open it in a browser
 
 stop: ## Stop and remove the container
 	@# SIGTERM rather than SIGKILL: the entrypoint shuts rtorrent down cleanly,
-	@# which releases the session lock. A killed rtorrent leaves it behind.
-	@docker stop -t 20 $(CONTAINER) >/dev/null 2>&1 || true
+	@# which releases the session lock and tells the trackers. That can take
+	@# a while with trackers that do not answer, hence the long timeout.
+	@docker stop -t 60 $(CONTAINER) >/dev/null 2>&1 || true
 	@docker rm -f $(CONTAINER) >/dev/null 2>&1 || true
 
 logs: ## Follow the container log

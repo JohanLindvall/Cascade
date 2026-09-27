@@ -57,6 +57,7 @@ docker run \
   -v /home/torrent/downloads:/downloads \
   -v /home/torrent/watch:/watch \
   --restart unless-stopped \
+  --stop-timeout 60 \
   ghcr.io/johanlindvall/cascade:latest
 ```
 <!-- /generated -->
@@ -68,8 +69,11 @@ Two volumes matter: `/config` holds rtorrent's session, its log and
 `/downloads` is where the data lands. Port 50000 is the peer port — publish it on TCP **and** UDP
 so DHT works — and `PUID`/`PGID` should match the owner of your download directory.
 
-Stop it with `docker stop cascade` rather than `docker rm -f`: rtorrent only releases its session
-lock on a clean shutdown.
+Stop it with `docker stop cascade` rather than `docker rm -f`. Only a clean shutdown tells the
+trackers the client is leaving, saves the session and releases rtorrent's lock, and with a tracker
+that is slow to answer that takes ten seconds or more — which is why the container is created with
+`--stop-timeout 60` (under Compose, `stop_grace_period: 60s`). Without it, `docker stop` gives up
+after Docker's default ten seconds and kills rtorrent mid-shutdown.
 
 ### Image tags
 
@@ -97,7 +101,7 @@ Upgrading is a pull and a re-create; all state lives in the two volumes:
 
 ```bash
 docker pull ghcr.io/johanlindvall/cascade:latest
-docker stop cascade && docker rm cascade
+docker stop -t 60 cascade && docker rm cascade
 docker run -d --name cascade ...   # same flags as before
 ```
 
@@ -592,7 +596,8 @@ private network, or prefer `/RPC2`, which sits behind Basic auth.
   container (`docker rm -f`, OOM, host reboot) leaves one behind and every later start fails. The
   entrypoint clears a lock that no live process in the container holds; set
   `RT_SESSION_LOCK_KEEP=1` if you deliberately share a session directory and want the check to
-  refuse instead. Stop the container with `docker stop` (as `make stop` does) to avoid it entirely.
+  refuse instead. Stop the container with `docker stop` and a minute to spare (`--stop-timeout 60`
+  when it is created, or `docker stop -t 60`, as `make stop` does) to avoid it entirely.
   The same lock check runs before an automatic in-container rtorrent restart. Saved log scopes
   unsupported by a different rtorrent version are skipped with a container-log message.
 

@@ -599,6 +599,7 @@ export const USAGE_EXAMPLE = [
   '  -v /home/torrent/downloads:/downloads \\',
   '  -v /home/torrent/watch:/watch \\',
   '  --restart unless-stopped \\',
+  '  --stop-timeout 60 \\',
   '  ghcr.io/johanlindvall/cascade:latest',
 ].join('\n');
 
