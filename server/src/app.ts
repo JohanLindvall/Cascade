@@ -90,7 +90,8 @@ export function createApp(service: RtorrentService, config: Config, store: Store
     }),
   );
   router.use('/assets', (_req, res) => res.status(404).type('text/plain').send('asset not found'));
-  router.get('*', (_req, res) => {
+  // Express 5 wants the wildcard named: "/{*splat}" is any path, the root included.
+  router.get('/{*splat}', (_req, res) => {
     if (!fs.existsSync(indexHtml)) {
       res.status(500).type('text/plain').send(`web assets not found at ${config.webRoot}`);
       return;

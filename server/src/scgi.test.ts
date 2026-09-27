@@ -56,7 +56,8 @@ function fakeScgi(reply: Buffer): Promise<{ path: string; received: () => Buffer
   const chunks: Buffer[] = [];
   const server = net.createServer((socket) => {
     socket.on('data', (chunk) => {
-      chunks.push(chunk);
+      // No encoding is set, so this is always a Buffer; the types allow a string.
+      chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, 'latin1') : chunk);
       // Netstring header, then CONTENT_LENGTH bytes of body: answer once all of it is in.
       const raw = Buffer.concat(chunks);
       const colon = raw.indexOf(':');
