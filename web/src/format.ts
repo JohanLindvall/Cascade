@@ -37,6 +37,11 @@ export function duration(seconds: number | null): string {
   return `${(days / 365).toFixed(1)}y`;
 }
 
+/** A refresh interval as its choices read: "250 ms", "1 s", "1.5 s". */
+export function interval(ms: number): string {
+  return ms < 1000 ? `${ms} ms` : `${ms / 1000} s`;
+}
+
 export function timestamp(value: number): string {
   if (!value) return '—';
   const date = new Date(value * 1000);

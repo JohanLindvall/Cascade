@@ -2,8 +2,8 @@
  * Theme selection. "system" follows the OS preference; the rest are explicit.
  * The resolved value is written to <html data-theme> and drives the CSS tokens.
  */
-import type { ThemeMode } from '../../server/src/prefs.ts';
-export { isThemeMode, type ThemeMode } from '../../server/src/prefs.ts';
+import type { ThemeMode } from './preferences.ts';
+export { isThemeMode, type ThemeMode } from './preferences.ts';
 export type ResolvedTheme = 'light' | 'dark' | 'retro' | 'blackmetal';
 
 export const THEME_MODES: Array<{ mode: ThemeMode; label: string; hint: string }> = [

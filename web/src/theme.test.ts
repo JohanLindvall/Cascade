@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { test } from 'node:test';
-import { THEMES } from '../../server/src/prefs.ts';
+import { THEMES } from './preferences.ts';
 import { THEME_MODES, fxFlavor, isThemeMode } from './theme.ts';
 
 test('every listed mode passes the guard and matches the shared schema; junk does not', () => {

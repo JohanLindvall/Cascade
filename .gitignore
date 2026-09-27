@@ -9,3 +9,8 @@ package-lock.json
 
 # Test torrents dropped into the working tree during debugging
 *.torrent
+
+# The server binary, when built in place, and what profiling leaves behind
+/server/cascade
+/server/*.test
+*.prof

@@ -2,7 +2,6 @@ import type {
   LogScopes,
   Peer,
   Settings,
-  StateResponse,
   ThrottleGroup,
   TorrentFile,
   Tracker,
@@ -84,7 +83,6 @@ function json<T>(path: string, method: string, body?: unknown): Promise<T> {
 const TRACKER_CHUNK = 80;
 
 export const api = {
-  state: () => request<StateResponse>('state'),
   files: (hash: string) => request<TorrentFile[]>(`torrents/${hash}/files`),
   peers: (hash: string) => request<Peer[]>(`torrents/${hash}/peers`),
   trackers: (hash: string) => request<Tracker[]>(`torrents/${hash}/trackers`),

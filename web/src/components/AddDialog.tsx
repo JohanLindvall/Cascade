@@ -9,12 +9,11 @@ import { Field, Modal, Switch, useToast } from './ui';
 
 interface AddDialogProps {
   onClose: () => void;
-  onAdded: () => void;
   defaultDirectory: string;
   labels: string[];
 }
 
-export function AddDialog({ onClose, onAdded, defaultDirectory, labels }: AddDialogProps) {
+export function AddDialog({ onClose, defaultDirectory, labels }: AddDialogProps) {
   const [files, setFiles] = useState<File[]>([]);
   const [urls, setUrls] = useState('');
   const [directory, setDirectory] = useState('');
@@ -84,7 +83,6 @@ export function AddDialog({ onClose, onAdded, defaultDirectory, labels }: AddDia
       } else for (const error of result.errors) toast.push('error', error);
       if (result.added > 0) {
         toast.push('success', `Added ${result.added} torrent${result.added === 1 ? '' : 's'}`);
-        onAdded();
         if (alive.current && result.errors.length === 0) onClose();
       }
     } catch (error) {

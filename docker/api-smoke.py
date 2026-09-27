@@ -74,7 +74,57 @@ def main(base):
         request('/api/throttles/' + group, method='DELETE')
         request('/api/settings', {key: original[key] for key in patch})
 
-    print('API, settings and throttle round trips passed on rtorrent ' + capabilities['clientVersion'])
+    stream_probe(base, request)
+
+    print('API, settings, throttle and stream round trips passed on rtorrent ' + capabilities['clientVersion'])
+
+
+def stream_probe(base, request):
+    """The state stream: a gzipped snapshot first, then a delta once a change
+    lands — here a preference, which the status carries."""
+    import http.client
+    import urllib.parse
+    import zlib
+
+    url = urllib.parse.urlsplit(base)
+    conn = http.client.HTTPConnection(url.hostname, url.port or 80, timeout=20)
+    conn.request('GET', url.path + '/api/stream', headers={'accept-encoding': 'gzip'})
+    response = conn.getresponse()
+    assert response.status == 200, response.status
+    assert response.getheader('content-type', '').startswith('text/event-stream')
+    assert response.getheader('content-encoding') == 'gzip', response.getheaders()
+    inflate = zlib.decompressobj(wbits=31)
+    pending = ''
+
+    def next_event():
+        nonlocal pending
+        while True:
+            while '\n\n' in pending:
+                block, pending = pending.split('\n\n', 1)
+                fields = dict(line.split(': ', 1) for line in block.split('\n') if ': ' in line)
+                if 'event' in fields:
+                    return fields['event'], json.loads(fields['data'])
+            chunk = response.read1(65536)
+            assert chunk, 'the stream ended'
+            pending += inflate.decompress(chunk).decode()
+
+    name, snapshot = next_event()
+    assert name == 'snapshot', name
+    assert isinstance(snapshot['torrents'], dict), type(snapshot['torrents'])
+    assert snapshot['status']['connected'], snapshot['status']
+    before = request('/api/prefs')['statePollMs']
+    wanted = 2000 if snapshot['status']['statePollMs'] != 2000 else 3000
+    try:
+        request('/api/prefs', {'statePollMs': wanted}, 'PATCH')
+        for _ in range(10):
+            name, delta = next_event()
+            if name == 'delta' and delta.get('status', {}).get('statePollMs') == wanted:
+                break
+        else:
+            raise AssertionError('no delta carried the new interval')
+    finally:
+        request('/api/prefs', {'statePollMs': before}, 'PATCH')
+        conn.close()
 
 
 if __name__ == '__main__':

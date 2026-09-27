@@ -1,0 +1,74 @@
+[
+  {
+    "name": "nothing changed",
+    "prev": { "status": { "upRate": 10, "error": null }, "torrents": { "AA": { "hash": "AA", "name": "x" } } },
+    "next": { "status": { "upRate": 10, "error": null }, "torrents": { "AA": { "hash": "AA", "name": "x" } } },
+    "patch": null
+  },
+  {
+    "name": "one field of one torrent",
+    "prev": { "torrents": { "AA": { "hash": "AA", "upRate": 0, "name": "x" }, "BB": { "hash": "BB", "upRate": 5 } } },
+    "next": { "torrents": { "AA": { "hash": "AA", "upRate": 2048, "name": "x" }, "BB": { "hash": "BB", "upRate": 5 } } },
+    "patch": { "torrents": { "AA": { "upRate": 2048 } } }
+  },
+  {
+    "name": "a torrent added and one removed",
+    "prev": { "torrents": { "AA": { "hash": "AA" }, "BB": { "hash": "BB" }, "CC": { "hash": "CC" } } },
+    "next": { "torrents": { "AA": { "hash": "AA" }, "DD": { "hash": "DD", "name": "new" } } },
+    "patch": { "torrents": { "-": ["BB", "CC"], "DD": { "hash": "DD", "name": "new" } } }
+  },
+  {
+    "name": "the rate history slides by one sample",
+    "prev": { "status": { "history": { "100": { "t": 100, "down": 1, "up": 2 }, "101": { "t": 101, "down": 3, "up": 4 } } } },
+    "next": { "status": { "history": { "101": { "t": 101, "down": 3, "up": 4 }, "102": { "t": 102, "down": 5, "up": 6 } } } },
+    "patch": { "status": { "history": { "-": ["100"], "102": { "t": 102, "down": 5, "up": 6 } } } }
+  },
+  {
+    "name": "an optional field appears, another goes",
+    "prev": { "status": { "connected": true, "downloadDir": "/downloads" } },
+    "next": { "status": { "connected": false, "error": "rtorrent is not responding" } },
+    "patch": { "status": { "-": ["downloadDir"], "connected": false, "error": "rtorrent is not responding" } }
+  },
+  {
+    "name": "null is a value, not a deletion",
+    "prev": { "status": { "diskFree": 1024 }, "game": { "unlockedAt": 5 } },
+    "next": { "status": { "diskFree": null }, "game": { "unlockedAt": null } },
+    "patch": { "status": { "diskFree": null }, "game": { "unlockedAt": null } }
+  },
+  {
+    "name": "an array of the same length is patched by index",
+    "prev": { "game": { "achievements": [ { "id": "a", "current": 1 }, { "id": "b", "current": 2 }, { "id": "c", "current": 3 } ] } },
+    "next": { "game": { "achievements": [ { "id": "a", "current": 1 }, { "id": "b", "current": 7 }, { "id": "c", "current": 3 } ] } },
+    "patch": { "game": { "achievements": { "1": { "current": 7 } } } }
+  },
+  {
+    "name": "an array that changes length is replaced",
+    "prev": { "throttles": [ { "name": "slow", "up": 1024 } ] },
+    "next": { "throttles": [ { "name": "slow", "up": 1024 }, { "name": "slower", "up": 512 } ] },
+    "patch": { "throttles": [ { "name": "slow", "up": 1024 }, { "name": "slower", "up": 512 } ] }
+  },
+  {
+    "name": "an object where an array was is wrapped, or it would read as an index patch",
+    "prev": { "torrents": [ { "name": "no hash yet" } ] },
+    "next": { "torrents": { "AA": { "hash": "AA" } } },
+    "patch": { "torrents": { "=": { "AA": { "hash": "AA" } } } }
+  },
+  {
+    "name": "an array where an object was replaces it",
+    "prev": { "torrents": { "AA": { "hash": "AA" } } },
+    "next": { "torrents": [ { "name": "no hash" } ] },
+    "patch": { "torrents": [ { "name": "no hash" } ] }
+  },
+  {
+    "name": "scalars, strings and booleans change type or value",
+    "prev": { "a": 1, "b": "x", "c": true, "d": null, "e": { "f": 1 } },
+    "next": { "a": "1", "b": "y", "c": false, "d": { "g": 2 }, "e": 3 },
+    "patch": { "a": "1", "b": "y", "c": false, "d": { "g": 2 }, "e": 3 }
+  },
+  {
+    "name": "nested objects patch only the branch that changed",
+    "prev": { "status": { "backend": { "clientVersion": "0.16.24", "supports": { "labels": true, "trackerInsert": true } }, "upRate": 1 } },
+    "next": { "status": { "backend": { "clientVersion": "0.16.24", "supports": { "labels": true, "trackerInsert": false } }, "upRate": 1 } },
+    "patch": { "status": { "backend": { "supports": { "trackerInsert": false } } } }
+  }
+]

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
-import { bytes, formatRateInput, parseRate, parseWholeNumber, rate } from '../format';
+import { bytes, formatRateInput, interval, parseRate, parseWholeNumber, rate } from '../format';
 import { useMounted } from '../hooks';
 import { redactSecrets } from '../redact';
 import type { BackendSummary, Settings } from '../types';
@@ -10,6 +10,11 @@ import { Field, Modal, ParsedInput, Switch, useToast } from './ui';
 interface SettingsDialogProps {
   onClose: () => void;
   backend: BackendSummary | null;
+  /** The refresh-interval preference, ms; null leaves it to the server. */
+  statePollMs: number | null;
+  /** The server's own interval (CASCADE_STATE_POLL_MS); null before the first state. */
+  statePollDefaultMs: number | null;
+  onStatePollChange: (statePollMs: number | null) => void;
 }
 
 const ENCRYPTION_PRESETS = [
@@ -18,6 +23,9 @@ const ENCRYPTION_PRESETS = [
   { value: 'allow_incoming,try_outgoing,enable_retry', label: 'Allow incoming, try outgoing, retry' },
   { value: 'require,require_RC4,allow_incoming,enable_retry', label: 'Require encryption (RC4)' },
 ];
+
+/** Refresh intervals on offer, ms: faster than 100 shows nothing new and costs rtorrent. */
+const POLL_INTERVALS = [100, 250, 500, 1000, 2000, 5000, 10_000, 30_000, 60_000];
 
 const PRELOAD_TYPES = [
   { value: 0, label: 'Off' },
@@ -37,8 +45,14 @@ type BoolKey = KeysOfType<boolean>;
  * a feature key in the backend's capability map, so a control this rtorrent
  * build cannot apply is greyed out rather than silently ignored.
  */
-export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
+export function SettingsDialog({
+  onClose, backend, statePollMs, statePollDefaultMs, onStatePollChange,
+}: SettingsDialogProps) {
   const [settings, setSettings] = useState<Settings | null>(null);
+  // Untouched until the select changes, so a preference that arrives while
+  // the dialog is open is shown rather than overwritten by a stale copy.
+  const [poll, setPoll] = useState<number | null | undefined>(undefined);
+  const shownPoll = poll === undefined ? statePollMs : poll;
   const [loadError, setLoadError] = useState<string | null>(null);
   const [draft, setDraft] = useState<Settings>({});
   // Fields whose text does not parse; Apply waits until there are none.
@@ -77,6 +91,9 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
 
   const save = async () => {
     if (busy || invalid.size > 0) return;
+    // A preference of this interface rather than an rtorrent setting: it is
+    // saved with the others, and the server reads at the new pace straight away.
+    if (poll !== undefined && poll !== statePollMs) onStatePollChange(poll);
     setBusy(true);
     try {
       const patch: Settings = {};
@@ -387,6 +404,31 @@ export function SettingsDialog({ onClose, backend }: SettingsDialogProps) {
             })}
             {numberField('maxUploadsDiv', 'Upload slot divider', { hint: '0 disables' })}
             {numberField('maxDownloadsDiv', 'Download slot divider', { hint: '0 disables' })}
+          </div>
+        </div>
+
+        <div className="section">
+          <h3>Interface</h3>
+          <div className="form-grid">
+            <Field label="Refresh interval" hint="how often rtorrent is read while a page is open">
+              <select
+                className="select"
+                value={shownPoll === null ? '' : String(shownPoll)}
+                onChange={(event) => setPoll(event.target.value === '' ? null : Number(event.target.value))}
+              >
+                <option value="">
+                  {statePollDefaultMs === null ? 'Server default' : `Server default (${interval(statePollDefaultMs)})`}
+                </option>
+                {POLL_INTERVALS.map((ms) => (
+                  <option key={ms} value={ms}>
+                    {interval(ms)}
+                  </option>
+                ))}
+                {shownPoll !== null && !POLL_INTERVALS.includes(shownPoll) && (
+                  <option value={shownPoll}>{interval(shownPoll)}</option>
+                )}
+              </select>
+            </Field>
           </div>
         </div>
 
