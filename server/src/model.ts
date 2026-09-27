@@ -1,50 +1,7 @@
+import type { TorrentStatus, Torrent, TorrentFile, Peer, Tracker } from './contracts';
+export type { TorrentStatus, Torrent, TorrentFile, Peer, Tracker } from './contracts';
+
 import type { XValue } from './xmlrpc';
-
-export type TorrentStatus =
-  | 'downloading'
-  | 'seeding'
-  | 'paused'
-  | 'stopped'
-  | 'checking'
-  | 'error';
-
-export interface Torrent {
-  hash: string;
-  name: string;
-  status: TorrentStatus;
-  progress: number;
-  size: number;
-  completed: number;
-  left: number;
-  downRate: number;
-  upRate: number;
-  downTotal: number;
-  upTotal: number;
-  ratio: number;
-  eta: number | null;
-  priority: number;
-  label: string;
-  message: string;
-  directory: string;
-  basePath: string;
-  throttle: string;
-  isOpen: boolean;
-  isActive: boolean;
-  isPrivate: boolean;
-  isMultiFile: boolean;
-  hashing: number;
-  chunkSize: number;
-  chunksDone: number;
-  chunksTotal: number;
-  peersConnected: number;
-  peersNotConnected: number;
-  peersComplete: number;
-  trackerCount: number;
-  addedAt: number;
-  startedAt: number;
-  finishedAt: number;
-  createdAt: number;
-}
 
 export const TORRENT_FIELDS = [
   'd.hash',
@@ -147,7 +104,7 @@ export function mapTorrent(row: Row, addedAt: number): Torrent {
     hash: text(row, 'd.hash'),
     name: text(row, 'd.name'),
     status,
-    progress: size > 0 ? Math.min(1, completed / size) : 0,
+    progress: complete ? 1 : size > 0 ? Math.min(1, Math.max(0, completed / size)) : 0,
     size,
     completed,
     left,
@@ -192,24 +149,7 @@ export const FILE_FIELDS = [
   'f.size_chunks',
   'f.priority',
   'f.is_created',
-  'f.offset',
 ] as const;
-
-export interface TorrentFile {
-  index: number;
-  /** The path inside the torrent, as the torrent names it. */
-  path: string;
-  /** The file's name on disk when it differs from the torrent's: the image's
-   *  libtorrent shortens names longer than Linux allows (AGENTS.md quirk 12).
-   *  Empty when they agree, or before the torrent has ever been opened. */
-  onDisk: string;
-  size: number;
-  completedChunks: number;
-  sizeChunks: number;
-  priority: number;
-  progress: number;
-  created: boolean;
-}
 
 function baseName(path: string): string {
   return path.slice(path.lastIndexOf('/') + 1);
@@ -258,30 +198,6 @@ export const PEER_FIELDS = [
   'p.banned',
   'p.options_str',
 ] as const;
-
-export interface Peer {
-  id: string;
-  address: string;
-  port: number;
-  client: string;
-  progress: number;
-  upRate: number;
-  downRate: number;
-  upTotal: number;
-  downTotal: number;
-  /** What the peer is pulling from the swarm as a whole, not from us. */
-  peerRate: number;
-  peerTotal: number;
-  encrypted: boolean;
-  obfuscated: boolean;
-  incoming: boolean;
-  snubbed: boolean;
-  preferred: boolean;
-  unwanted: boolean;
-  banned: boolean;
-  /** Reserved-bytes/extension string as rtorrent formats it. */
-  options: string;
-}
 
 export function mapPeer(row: Row): Peer {
   return {
@@ -337,38 +253,6 @@ export const TRACKER_FIELDS = [
   't.activity_time_last',
   't.activity_time_next',
 ] as const;
-
-export interface Tracker {
-  index: number;
-  url: string;
-  type: number;
-  group: number;
-  trackerId: string;
-  enabled: boolean;
-  usable: boolean;
-  open: boolean;
-  busy: boolean;
-  extra: boolean;
-  canScrape: boolean;
-  seeders: number;
-  leechers: number;
-  downloaded: number;
-  lastScrape: number;
-  scrapes: number;
-  successes: number;
-  lastSuccess: number;
-  nextSuccess: number;
-  failures: number;
-  lastFailure: number;
-  nextFailure: number;
-  latestEvent: number;
-  newPeers: number;
-  sumPeers: number;
-  interval: number;
-  minInterval: number;
-  lastActivity: number;
-  nextActivity: number;
-}
 
 export function mapTracker(row: Row, index: number): Tracker {
   return {

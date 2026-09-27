@@ -35,7 +35,11 @@ const SECRET_PARAMS = new Set([
 ]);
 
 /** A path segment that is one long opaque token: a passkey, not a word. */
-const SECRET_SEGMENT = /^[A-Za-z0-9]{16,}$/;
+const SECRET_SEGMENT = /^[A-Za-z0-9_-]{16,}(?:\.[A-Za-z0-9_-]+)*$/;
+
+function decoded(value: string): string {
+  try { return decodeURIComponent(value); } catch { return value; }
+}
 
 /** scheme://authority, then path, query and fragment. */
 const URL_PARTS = /^([a-z][a-z0-9+.-]*:\/\/[^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/i;
@@ -52,10 +56,10 @@ export function redactUrl(url: string): string {
   const host = authority.replace(/\/\/[^/@]*@/, `//${MASK}@`);
   const cleanPath = path
     .split('/')
-    .map((segment) => (SECRET_SEGMENT.test(segment) ? MASK : segment))
+    .map((segment) => (SECRET_SEGMENT.test(decoded(segment)) ? MASK : segment))
     .join('/');
   const cleanQuery = query.replace(/([?&;])([^=&;]+)=([^&;]*)/g, (whole, sep: string, name: string) =>
-    SECRET_PARAMS.has(name.toLowerCase()) ? `${sep}${name}=${MASK}` : whole,
+    SECRET_PARAMS.has(decoded(name).toLowerCase()) ? `${sep}${name}=${MASK}` : whole,
   );
   return `${host}${cleanPath}${cleanQuery}${fragment}`;
 }

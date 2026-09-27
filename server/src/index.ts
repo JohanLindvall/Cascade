@@ -26,12 +26,17 @@ const server = app.listen(config.port, config.host, () => {
   service.startPolling();
 });
 
+let stopping = false;
 function shutdown(signal: string): void {
+  if (stopping) return;
+  stopping = true;
   console.log(`[cascade] ${signal} received, shutting down`);
   service.stopPolling();
   store.flush();
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
+  // A request already in flight may still mutate preferences or counters.
+  const finish = () => { store.flush(); process.exit(0); };
+  server.close(finish);
+  setTimeout(finish, 5000).unref();
 }
 
 process.on('SIGTERM', () => shutdown('SIGTERM'));

@@ -3,30 +3,8 @@
  * badges. Everything is derived from real rtorrent numbers — nothing here is
  * invented, and the whole feature can be switched off with CASCADE_GAMIFY=0.
  */
-
-export type Tier = 'bronze' | 'silver' | 'gold';
-
-/**
- * How a badge's progress is measured, so the UI can print "1.2 GiB / 100 GiB"
- * or "3 / 10" without guessing from the badge id or the target's magnitude.
- */
-export type ProgressUnit = 'count' | 'bytes' | 'rate' | 'ratio' | 'duration';
-
-/** Lifetime counters, accumulated in the store so they survive restarts. */
-export interface GameStats {
-  lifetimeUp: number;
-  lifetimeDown: number;
-  completed: number;
-  everAdded: number;
-  peakDownRate: number;
-  peakUpRate: number;
-  peakPeers: number;
-  bestRatio: number;
-  longestSeed: number;
-  maxSeeding: number;
-  maxLabels: number;
-}
-
+import type { Tier, ProgressUnit, GameStats, Achievement, GameState } from './contracts';
+export type { Tier, ProgressUnit, GameStats, Achievement, GameState } from './contracts';
 export const EMPTY_STATS: GameStats = {
   lifetimeUp: 0,
   lifetimeDown: 0,
@@ -198,18 +176,6 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   },
 ];
 
-export interface Achievement {
-  id: string;
-  title: string;
-  description: string;
-  tier: Tier;
-  icon: string;
-  unit: ProgressUnit;
-  current: number;
-  target: number;
-  unlockedAt: number | null;
-}
-
 /* --------------------------------- levels -------------------------------- */
 
 /** XP is weighted towards uploading: sharing is the part worth rewarding. */
@@ -245,20 +211,6 @@ const TITLES: Array<[number, string]> = [
 
 export function titleFor(level: number): string {
   return TITLES.find(([threshold]) => level >= threshold)?.[1] ?? 'Newcomer';
-}
-
-export interface GameState {
-  enabled: boolean;
-  xp: number;
-  level: number;
-  title: string;
-  levelXp: number;
-  nextLevelXp: number;
-  progress: number;
-  stats: GameStats;
-  unlocked: number;
-  total: number;
-  achievements: Achievement[];
 }
 
 export function buildGameState(

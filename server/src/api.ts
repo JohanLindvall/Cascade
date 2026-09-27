@@ -4,6 +4,8 @@ import type { Config } from './config';
 import { HttpError } from './errors';
 import type { LoadOptions, RtorrentService } from './service';
 import type { Store } from './store';
+import { boundedUploadStorage } from './uploads';
+import { requireBool, requireInt, requireRecord, requireString } from './validation';
 import { XmlRpcFault, serializeCall, type XValue } from './xmlrpc';
 
 function wrap(handler: (req: Request, res: Response) => Promise<unknown>) {
@@ -12,31 +14,7 @@ function wrap(handler: (req: Request, res: Response) => Promise<unknown>) {
   };
 }
 
-function requireString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new HttpError(400, `"${field}" is required`);
-  }
-  return value.trim();
-}
-
-function asBool(value: unknown, fallback = false): boolean {
-  if (value === undefined || value === null || value === '') return fallback;
-  if (typeof value === 'boolean') return value;
-  return /^(1|true|yes|on)$/i.test(String(value));
-}
-
 const HASH_RE = /^[0-9A-Fa-f]{40}$/;
-
-/** A whole number within [min, max], or a 400 that names the field — an
- *  unchecked NaN used to reach rtorrent (as "<hash>:fNaN", or as a priority)
- *  and come back as an opaque 502 fault. */
-function requireInt(value: unknown, field: string, min: number, max: number): number {
-  const number = Number(value);
-  if (!Number.isInteger(number) || number < min || number > max) {
-    throw new HttpError(400, `"${field}" must be a whole number from ${min} to ${max}`);
-  }
-  return number;
-}
 
 /** A file/tracker index from the path. */
 function requireIndex(value: unknown): number {
@@ -49,7 +27,9 @@ const ANNOUNCE_URL_RE = /^(https?|udp):\/\/\S+$/i;
 
 function requireAnnounceUrl(value: unknown): string {
   const url = requireString(value, 'url');
-  if (!ANNOUNCE_URL_RE.test(url)) {
+  let valid = ANNOUNCE_URL_RE.test(url);
+  try { valid = valid && !!new URL(url).hostname; } catch { valid = false; }
+  if (!valid) {
     throw new HttpError(400, '"url" must be an http(s):// or udp:// announce URL');
   }
   return url;
@@ -61,10 +41,14 @@ function requireHash(req: Request): string {
   return hash.toUpperCase();
 }
 
-/** The hashes of a bulk request body, with anything that is not one dropped. */
+/** Validate the entire batch before starting; repeat hashes must not repeat destructive actions. */
 function bodyHashes(body: unknown): string[] {
   const hashes = (body as { hashes?: unknown })?.hashes;
-  return Array.isArray(hashes) ? hashes.map(String).filter((hash) => HASH_RE.test(hash)) : [];
+  if (!Array.isArray(hashes) || hashes.length === 0 ||
+      hashes.some((hash) => typeof hash !== 'string' || !HASH_RE.test(hash))) {
+    throw new HttpError(400, '"hashes" must be a non-empty array of 40-digit hexadecimal info hashes');
+  }
+  return [...new Set(hashes.map((hash: string) => hash.toUpperCase()))];
 }
 
 /**
@@ -89,19 +73,38 @@ async function bulk(
 
 /** Add options as both the multipart form and the JSON body carry them. */
 function loadOptionsFrom(body: Record<string, unknown>): LoadOptions {
-  const text = (value: unknown) => (typeof value === 'string' ? value.trim() : '');
   return {
-    start: asBool(body.start, true),
-    directory: text(body.directory) || undefined,
-    label: text(body.label) || undefined,
+    start: requireBool(body.start, 'start', true),
+    directory: body.directory === undefined ? undefined : requireString(body.directory, 'directory', true) || undefined,
+    label: body.label === undefined ? undefined : requireString(body.label, 'label', true) || undefined,
   };
+}
+
+function rpcParams(value: unknown): XValue[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new HttpError(400, '"params" must be an array');
+  const check = (item: unknown, depth: number): void => {
+    if (depth > 100) throw new HttpError(400, '"params" nesting is too deep');
+    if (typeof item === 'number' && !Number.isFinite(item)) {
+      throw new HttpError(400, '"params" numbers must be finite');
+    }
+    if (item && typeof item === 'object') {
+      for (const child of Object.values(item)) check(child, depth + 1);
+    }
+  };
+  check(value, 0);
+  return value as XValue[];
 }
 
 export function createApi(service: RtorrentService, config: Config, store: Store): Router {
   const router = Router();
   const upload = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: config.maxUploadBytes, files: 50 },
+    storage: boundedUploadStorage(config.maxUploadBytes),
+    limits: { fileSize: config.maxUploadBytes, files: 50, fields: 4, parts: 54 },
+  });
+  router.use((req, _res, next) => {
+    if (req.body !== undefined) requireRecord(req.body);
+    next();
   });
 
   /* ------------------------------- reads ------------------------------- */
@@ -174,7 +177,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     '/trackers',
     wrap(async (req, res) => {
       const raw = typeof req.query.hashes === 'string' ? req.query.hashes : '';
-      const hashes = raw.split(',').filter((hash) => HASH_RE.test(hash));
+      const hashes = [...new Set(raw.split(',').filter((hash) => HASH_RE.test(hash)).map((hash) => hash.toUpperCase()))];
       res.json(await service.trackerHosts(hashes));
     }),
   );
@@ -188,7 +191,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
       const files = (req.files as Express.Multer.File[] | undefined) ?? [];
       const body = (req.body ?? {}) as Record<string, unknown>;
       const options = loadOptionsFrom(body);
-      const urls = String(body.urls ?? '')
+      const urls = requireString(body.urls ?? '', 'urls', true)
         .split(/[\r\n]+/)
         .map((line) => line.trim())
         .filter(Boolean);
@@ -196,23 +199,30 @@ export function createApi(service: RtorrentService, config: Config, store: Store
       if (files.length === 0 && urls.length === 0) {
         throw new HttpError(400, 'no .torrent files or URLs supplied');
       }
+      if (files.length + urls.length > 50) {
+        throw new HttpError(400, 'at most 50 .torrent files and URLs may be added in one batch');
+      }
 
       const errors: string[] = [];
-      for (const file of files) {
+      const failedFiles: number[] = [];
+      const failedUrls: number[] = [];
+      for (const [index, file] of files.entries()) {
         try {
           await service.addTorrentFile(file.buffer, options);
         } catch (error) {
+          failedFiles.push(index);
           errors.push(`${file.originalname}: ${(error as Error).message}`);
         }
       }
-      for (const url of urls) {
+      for (const [index, url] of urls.entries()) {
         try {
           await service.addTorrentUrl(url, options);
         } catch (error) {
+          failedUrls.push(index);
           errors.push(`${url}: ${(error as Error).message}`);
         }
       }
-      res.json({ added: files.length + urls.length - errors.length, errors });
+      res.json({ added: files.length + urls.length - errors.length, errors, failedFiles, failedUrls });
     }),
   );
 
@@ -246,7 +256,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.delete(
     '/torrents/:hash',
     wrap(async (req, res) => {
-      await service.remove(requireHash(req), asBool(req.query.deleteData));
+      await service.remove(requireHash(req), requireBool(req.query.deleteData, 'deleteData', false));
       res.json({ ok: true });
     }),
   );
@@ -254,7 +264,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/torrents/remove',
     wrap(async (req, res) => {
-      const deleteData = asBool((req.body as { deleteData?: unknown })?.deleteData);
+      const deleteData = requireBool((req.body as { deleteData?: unknown })?.deleteData, 'deleteData', false);
       res.json(await bulk(bodyHashes(req.body), (hash) => service.remove(hash, deleteData)));
     }),
   );
@@ -264,27 +274,31 @@ export function createApi(service: RtorrentService, config: Config, store: Store
     wrap(async (req, res) => {
       const hash = requireHash(req);
       const body = (req.body ?? {}) as Record<string, unknown>;
-      if (body.priority !== undefined) {
+      // Parse all fields before the first RPC: a bad final field must not leave
+      // earlier changes applied even though the HTTP request was rejected.
+      const priority = body.priority === undefined ? undefined : requireInt(body.priority, 'priority', 0, 3);
+      const label = body.label === undefined ? undefined : requireString(body.label, 'label', true);
+      const throttle = body.throttle === undefined ? undefined : requireString(body.throttle, 'throttle', true);
+      const directory = body.directory === undefined ? undefined : requireString(body.directory, 'directory');
+      const slots = (value: unknown, field: string) =>
+        value === undefined ? undefined : requireInt(value, field, 0, 100_000);
+      const maxUploads = slots(body.maxUploads, 'maxUploads');
+      const maxDownloads = slots(body.maxDownloads, 'maxDownloads');
+      if (priority !== undefined) {
         // d.priority: 0 off, 1 low, 2 normal, 3 high.
-        await service.setPriority(hash, requireInt(body.priority, 'priority', 0, 3));
+        await service.setPriority(hash, priority);
       }
-      if (body.label !== undefined) {
-        await service.setLabel(hash, String(body.label));
+      if (label !== undefined) {
+        await service.setLabel(hash, label);
       }
-      if (body.throttle !== undefined) {
-        await service.setTorrentThrottle(hash, String(body.throttle));
+      if (throttle !== undefined) {
+        await service.setTorrentThrottle(hash, throttle);
       }
-      if (body.directory !== undefined) {
-        await service.moveDirectory(hash, String(body.directory));
+      if (directory !== undefined) {
+        await service.setDirectory(hash, directory);
       }
-      if (body.maxUploads !== undefined || body.maxDownloads !== undefined) {
-        const slots = (value: unknown, field: string) =>
-          value === undefined ? undefined : requireInt(value, field, 0, 100_000);
-        await service.setTorrentSlots(
-          hash,
-          slots(body.maxUploads, 'maxUploads'),
-          slots(body.maxDownloads, 'maxDownloads'),
-        );
+      if (maxUploads !== undefined || maxDownloads !== undefined) {
+        await service.setTorrentSlots(hash, maxUploads, maxDownloads);
       }
       res.json({ ok: true });
     }),
@@ -303,7 +317,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/torrents/:hash/trackers/:index/enabled',
     wrap(async (req, res) => {
-      const enabled = asBool((req.body as { enabled?: unknown })?.enabled);
+      const enabled = requireBool((req.body as { enabled?: unknown })?.enabled, 'enabled');
       await service.setTrackerEnabled(requireHash(req), requireIndex(req.params.index), enabled);
       res.json({ ok: true });
     }),
@@ -352,8 +366,8 @@ export function createApi(service: RtorrentService, config: Config, store: Store
       const body = (req.body ?? {}) as Record<string, unknown>;
       await service.saveThrottle({
         name: requireString(body.name, 'name'),
-        up: Math.max(0, Number(body.up) || 0),
-        down: Math.max(0, Number(body.down) || 0),
+        up: requireInt(body.up, 'up'),
+        down: requireInt(body.down, 'down'),
       });
       res.json({ ok: true });
     }),
@@ -366,6 +380,16 @@ export function createApi(service: RtorrentService, config: Config, store: Store
       res.json({ ok: true });
     }),
   );
+
+  router.patch('/throttles/:name', wrap(async (req, res) => {
+    const body = requireRecord(req.body);
+    const patch: { up?: number; down?: number } = {};
+    if (body.up !== undefined) patch.up = requireInt(body.up, 'up');
+    if (body.down !== undefined) patch.down = requireInt(body.down, 'down');
+    if (Object.keys(patch).length === 0) throw new HttpError(400, 'supply an up or down rate');
+    await service.patchThrottle(String(req.params.name), patch);
+    res.json({ ok: true });
+  }));
 
   /* --------------------------------- log ------------------------------- */
 
@@ -388,7 +412,11 @@ export function createApi(service: RtorrentService, config: Config, store: Store
   router.post(
     '/log/scopes',
     wrap(async (req, res) => {
-      const result = await service.setLogScopes((req.body as { scopes?: unknown })?.scopes);
+      const scopes = (req.body as { scopes?: unknown })?.scopes;
+      if (!Array.isArray(scopes) || scopes.some((scope) => typeof scope !== 'string')) {
+        throw new HttpError(400, '"scopes" must be an array of log scope names');
+      }
+      const result = await service.setLogScopes(scopes);
       res.json({ ...service.logScopes(), ...result });
     }),
   );
@@ -410,7 +438,7 @@ export function createApi(service: RtorrentService, config: Config, store: Store
       if (!config.allowRawRpc) throw new HttpError(403, 'raw RPC access is disabled');
       const body = (req.body ?? {}) as { method?: unknown; params?: unknown };
       const method = requireString(body.method, 'method');
-      const params = Array.isArray(body.params) ? (body.params as XValue[]) : [];
+      const params = rpcParams(body.params);
       try {
         const result = await service.client.call(method, params);
         res.json({ ok: true, result: jsonSafe(result) });
@@ -455,9 +483,7 @@ function jsonSafe(value: XValue): unknown {
   if (Buffer.isBuffer(value)) return { $base64: value.toString('base64') };
   if (Array.isArray(value)) return value.map(jsonSafe);
   if (value && typeof value === 'object') {
-    const result: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value)) result[key] = jsonSafe(item as XValue);
-    return result;
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, jsonSafe(item)]));
   }
   return value;
 }
@@ -477,7 +503,7 @@ export function createRpcProxy(service: RtorrentService, config: Config) {
       const json = req.body as { method?: unknown; params?: unknown };
       if (json && typeof json.method === 'string') {
         const response = await service.client.raw(
-          serializeCall(json.method, Array.isArray(json.params) ? (json.params as XValue[]) : []),
+          serializeCall(requireString(json.method, 'method'), rpcParams(json.params)),
         );
         res.type('text/xml').send(response);
         return;

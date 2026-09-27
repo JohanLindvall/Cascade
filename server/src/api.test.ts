@@ -11,7 +11,8 @@ import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import { createApp } from './app';
 import type { Config } from './config';
-import { HttpError } from './errors';
+import type { UploadResult } from './contracts';
+import { BackendError, HttpError } from './errors';
 import type { RtorrentService } from './service';
 import { tempStore, testConfig } from './testing/fakes';
 
@@ -38,6 +39,8 @@ function stubService() {
     setLabel: record('setLabel'),
     setFilePriority: record('setFilePriority'),
     addTracker: record('addTracker'),
+    addTorrentFile: record('addTorrentFile'),
+    addTorrentUrl: record('addTorrentUrl'),
     game: () => ({ enabled: true }),
     logScopes: () => ({ boot: [], extra: [], available: [], supported: true }),
     client: { call: record('rpc', 'pong') },
@@ -93,6 +96,16 @@ test('an unknown API path is a JSON 404, not the SPA shell', async () => {
   assert.match(String(body.error), /no such endpoint: GET \/nothing\/here/);
 });
 
+test('backend transport and protocol errors are reported as bad gateway', async () => {
+  const harness = await boot();
+  harness.service.state = async () => { throw new BackendError('SCGI connection failed'); };
+  try {
+    const { status, body } = await json(harness.base, '/api/state');
+    assert.equal(status, 502);
+    assert.equal(body.error, 'SCGI connection failed');
+  } finally { await harness.close(); }
+});
+
 test('a malformed info hash is refused before the service is asked', async () => {
   const { status, body } = await json(open.base, '/api/torrents/not-a-hash/action/start', {
     method: 'POST',
@@ -111,10 +124,10 @@ test('a lowercase hash is accepted and normalised', async () => {
   assert.deepEqual(call?.args, [HASH, 'stop']);
 });
 
-test('bulk actions skip junk hashes and collect failures by hash', async () => {
+test('bulk actions collect failures by hash, normalise and deduplicate', async () => {
   const { status, body } = await json(open.base, '/api/torrents/action/start', {
     method: 'POST',
-    body: JSON.stringify({ hashes: [HASH, 'junk', OTHER] }),
+    body: JSON.stringify({ hashes: [HASH.toLowerCase(), HASH, OTHER] }),
   });
   assert.equal(status, 200);
   assert.equal(body.ok, false);
@@ -122,6 +135,85 @@ test('bulk actions skip junk hashes and collect failures by hash', async () => {
   const asked = open.service.calls.filter((call) => call.method === 'action').map((call) => call.args[0]);
   assert.ok(asked.includes(HASH));
   assert.ok(!asked.includes('junk'));
+});
+
+test('malformed batches and values are rejected before any mutation', async () => {
+  const before = open.service.calls.length;
+  for (const hashes of [undefined, [], ['junk'], [HASH, 'junk'], [null], HASH]) {
+    const result = await json(open.base, '/api/torrents/action/start', {
+      method: 'POST', body: JSON.stringify({ hashes }),
+    });
+    assert.equal(result.status, 400);
+  }
+  for (const value of [null, false, '', [], {}, [1]]) {
+    const result = await json(open.base, `/api/torrents/${HASH}`, {
+      method: 'PATCH', body: JSON.stringify({ priority: value }),
+    });
+    assert.equal(result.status, 400);
+  }
+  const result = await json(open.base, `/api/torrents/${HASH}`, {
+    method: 'PATCH', body: JSON.stringify({ priority: 3, label: 'test', maxUploads: -1 }),
+  });
+  assert.equal(result.status, 400);
+  assert.equal(open.service.calls.length, before);
+});
+
+test('subpath deployments retain root health and redirect to a usable document base', async () => {
+  const nested = await boot({ basePath: '/cascade', user: 'admin', password: 'secret' });
+  try {
+    assert.equal((await fetch(`${nested.base}/healthz`)).status, 200);
+    assert.equal((await fetch(`${nested.base}/cascade/healthz`)).status, 200);
+    const redirect = await fetch(`${nested.base}/cascade?x=1`, { redirect: 'manual' });
+    assert.equal(redirect.status, 308);
+    assert.equal(redirect.headers.get('location'), '/cascade/?x=1');
+  } finally { await nested.close(); }
+});
+
+test('unexpected upload fields are a client error', async () => {
+  const form = new FormData();
+  form.append('wrong', new Blob(['x']), 'test.torrent');
+  assert.equal((await fetch(`${open.base}/api/torrents/upload`, { method: 'POST', body: form })).status, 400);
+});
+
+test('malformed RPC parameters and log scope lists cannot turn into empty requests', async () => {
+  for (const params of [null, {}, false, 'argument']) {
+    for (const endpoint of ['/api/rpc', '/RPC2']) {
+      assert.equal((await json(open.base, endpoint, {
+        method: 'POST', body: JSON.stringify({ method: 'd.erase', params }),
+      })).status, 400);
+    }
+  }
+  for (const scopes of [null, 'debug', [true], [{}]]) {
+    assert.equal((await json(open.base, '/api/log/scopes', {
+      method: 'POST', body: JSON.stringify({ scopes }),
+    })).status, 400);
+  }
+});
+
+test('the upload memory limit applies to the entire batch before loading any torrent', async () => {
+  const harness = await boot({ maxUploadBytes: 100 });
+  try {
+    const form = new FormData();
+    form.append('torrents', new Blob(['a'.repeat(60)]), 'a.torrent');
+    form.append('torrents', new Blob(['b'.repeat(60)]), 'b.torrent');
+    const response = await fetch(`${harness.base}/api/torrents/upload`, { method: 'POST', body: form });
+    assert.equal(response.status, 413);
+    assert.match(((await response.json()) as { error: string }).error, /batch exceeds/);
+    assert.deepEqual(harness.service.calls, []);
+  } finally { await harness.close(); }
+});
+
+test('upload replies identify failed items so a retry does not resubmit successes', async () => {
+  const form = new FormData();
+  form.append('torrents', new Blob(['a']), 'a.torrent');
+  form.append('urls', `https://example.test/a.torrent\n\n${OTHER}`);
+  const response = await fetch(`${open.base}/api/torrents/upload`, { method: 'POST', body: form });
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as UploadResult;
+  assert.equal(body.added, 2);
+  assert.deepEqual(body.failedFiles, []);
+  assert.deepEqual(body.failedUrls, [1]);
+  assert.equal(body.errors.length, 1);
 });
 
 test('PATCH validates priority and slot counts instead of forwarding NaN', async () => {

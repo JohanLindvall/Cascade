@@ -30,7 +30,11 @@ const TRUTHY = /^(1|true|yes|on)$/i;
 function normalizeBase(base: string): string {
   let value = base.trim();
   if (!value.startsWith('/')) value = `/${value}`;
-  if (value.length > 1 && value.endsWith('/')) value = value.slice(0, -1);
+  value = value.replace(/\/+$/, '') || '/';
+  if (value !== '/' && (!/^\/(?:[A-Za-z0-9._~-]+(?:\/[A-Za-z0-9._~-]+)*)$/.test(value) ||
+      value.split('/').some((part) => part === '.' || part === '..'))) {
+    throw new Error('WEB_BASE_PATH must be a URL path without traversal or route pattern characters');
+  }
   return value;
 }
 
@@ -54,9 +58,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     documentedDefault(name); // Asserts the option is catalogued.
     return raw(name);
   };
-  const num = (name: string, fallback = Number(documentedDefault(name))): number => {
-    const value = Number(raw(name));
-    return Number.isFinite(value) ? value : fallback;
+  const num = (name: string, max = Number.MAX_SAFE_INTEGER): number => {
+    const value = Number(raw(name) ?? documentedDefault(name));
+    if (!Number.isSafeInteger(value) || value < 1 || value > max) {
+      throw new Error(`${name} must be a whole number from 1 to ${max}`);
+    }
+    return value;
   };
   // An option with no documented default reads as false rather than true, so a
   // new flag cannot arrive switched on by accident.
@@ -74,20 +81,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   return {
     scgi: parseScgiTarget(str('CASCADE_SCGI', str('RT_SCGI_SOCKET'))),
     host: str('WEB_HOST'),
-    port: num('WEB_PORT'),
+    port: num('WEB_PORT', 65535),
     basePath: normalizeBase(str('WEB_BASE_PATH')),
     user: optional('WEB_USER'),
     password: optional('WEB_PASS'),
     // Falls back to the sibling directory so a source checkout runs too.
-    webRoot: str('CASCADE_WEB_ROOT', path.join(__dirname, '..', 'web')),
+    webRoot: path.resolve(str('CASCADE_WEB_ROOT', path.join(__dirname, '..', '..', 'web', 'dist'))),
     stateFile: str('CASCADE_STATE_FILE'),
     downloadDir,
     completedDir,
     deleteRoots,
     allowRawRpc: bool('CASCADE_ALLOW_RAW_RPC'),
     allowDataDelete: bool('CASCADE_ALLOW_DATA_DELETE'),
-    maxUploadBytes: num('CASCADE_MAX_UPLOAD_MB') * 1024 * 1024,
-    pollIntervalMs: num('CASCADE_POLL_MS'),
+    maxUploadBytes: num('CASCADE_MAX_UPLOAD_MB', Math.floor(Number.MAX_SAFE_INTEGER / (1024 * 1024))) * 1024 * 1024,
+    pollIntervalMs: num('CASCADE_POLL_MS', 2_147_483_647),
     logFile: str('RT_LOG_FILE'),
     logLevel: str('RT_LOG_LEVEL'),
     bootSettingsFile: str('CASCADE_BOOT_SETTINGS'),

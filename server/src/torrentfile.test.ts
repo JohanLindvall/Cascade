@@ -99,3 +99,36 @@ test('a magnet without a usable hash is undefined', () => {
   assert.equal(magnetInfoHash('magnet:?xt=urn:btih:tooshort'), undefined);
   assert.equal(magnetInfoHash('https://example.invalid/file.torrent'), undefined);
 });
+
+test('magnet topics are URL-decoded, fully matched and scoped to the xt parameter', () => {
+  const hash = 'A'.repeat(40);
+  assert.equal(magnetInfoHash(`magnet:?xt=urn%3Abtih%3A${hash}`), hash);
+  assert.equal(magnetInfoHash(`magnet:?xt=urn:btmh:123&xt=urn:btih:${hash}`), hash);
+  assert.equal(magnetInfoHash(`magnet:?dn=xt=urn:btih:${hash}`), undefined);
+  assert.equal(magnetInfoHash(`magnet:?xt=urn:btih:${hash}!`), undefined);
+  assert.equal(magnetInfoHash(`https://example.org/?xt=urn:btih:${hash}`), undefined);
+});
+
+test('malformed bencode and incomplete metadata are rejected before load', () => {
+  const info = { name: 'file', length: 1, 'piece length': 1, pieces: PIECES };
+  for (const patch of [
+    { name: '' }, { length: -1 }, { length: 1.5 }, { 'piece length': 0 },
+    { pieces: Buffer.alloc(19) }, { pieces: Buffer.alloc(40) }, { files: [] },
+  ]) assert.throws(() => parseTorrentFile(ben({ info: { ...info, ...patch } })), /not a valid/);
+  for (const key of Object.keys(info)) {
+    const partial: Record<string, unknown> = { ...info };
+    delete partial[key];
+    assert.throws(() => parseTorrentFile(ben({ info: partial })), /not a valid/);
+  }
+  assert.throws(() => parseTorrentFile(Buffer.concat([singleFile(), Buffer.from('junk')])), /trailing data/);
+  for (const integer of ['ie', 'i01e', 'i-0e', 'i1.5e', 'i1e3e']) {
+    assert.throws(() => parseTorrentFile(Buffer.from(`d4:info${integer}e`)), /not a valid/);
+  }
+  assert.throws(() => parseTorrentFile(Buffer.from('d4:infode4:infodee')), /duplicate/);
+  assert.throws(() => parseTorrentFile(Buffer.from('l'.repeat(200) + 'e'.repeat(200))), /nesting too deep/);
+});
+
+test('metadata keys cannot impersonate the info byte span', () => {
+  const data = ben({ __span_info: 'ordinary data', info: { name: 'x', length: 1, 'piece length': 1, pieces: PIECES } });
+  assert.equal(parseTorrentFile(data).name, 'x');
+});

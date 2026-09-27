@@ -229,3 +229,12 @@ test('timestamps, countdowns and ages treat zero as unset', () => {
   assert.equal(relative(now - 5), 'just now');
   assert.match(relative(now - 3 * 3600), /^3h .* ago$/);
 });
+
+test('editable rates preserve exact bytes and reject overflow instead of becoming unlimited', () => {
+  for (const value of [1, 800, 1025, 12345, 1048576]) {
+    assert.equal(parseRate(formatRateInput(value)), value);
+  }
+  assert.equal(parseRate('0.1 B/s'), 1);
+  assert.equal(parseRate('999999999999999999999G'), null);
+  assert.equal(duration(119.8), '2m 0s');
+});

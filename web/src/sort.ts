@@ -6,31 +6,12 @@
  */
 import type { Torrent } from './types';
 
-/** Keep in step with SORT_KEYS in the server's prefs.ts, which validates the stored preference. */
-export const SORT_KEYS = [
-  'name',
-  'size',
-  'progress',
-  'status',
-  'downRate',
-  'upRate',
-  'ratio',
-  'eta',
-  'peers',
-  'addedAt',
-  'label',
-] as const;
-
-export type SortKey = (typeof SORT_KEYS)[number];
-export type SortDir = 'asc' | 'desc';
+import type { SortKey, SortDir } from '../../server/src/prefs.ts';
+export { SORT_KEYS, isSortKey, type SortKey, type SortDir } from '../../server/src/prefs.ts';
 
 export interface SortState {
   key: SortKey;
   dir: SortDir;
-}
-
-export function isSortKey(value: unknown): value is SortKey {
-  return (SORT_KEYS as readonly unknown[]).includes(value);
 }
 
 /** Text columns open A→Z; everything numeric opens with the largest first. */

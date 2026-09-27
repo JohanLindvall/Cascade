@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -22,7 +23,7 @@ import {
   timestamp,
   until,
 } from '../format';
-import { usePolling } from '../hooks';
+import { useLatest, useMounted, usePolling } from '../hooks';
 import { DETAIL_HEIGHT } from '../preferences';
 import { redactSecrets, redactUrl } from '../redact';
 import type { Peer, Torrent, TorrentFile, Tracker } from '../types';
@@ -159,6 +160,10 @@ export function DetailPanel({
   const toast = useToast();
   const ids = useId();
   const hash = torrent.hash;
+  const context = useLatest({ hash, tab });
+  const revision = useRef(0);
+  const requestId = useRef(0);
+  const alive = useMounted();
   // Rows fetched for another torrent are not shown for this one, even for the
   // moment before this one's arrive — switching rows used to flash (and, with
   // a slow reply, keep) the previous torrent's files, peers and trackers.
@@ -166,6 +171,11 @@ export function DetailPanel({
 
   const loadTab = useCallback(
     async (isCurrent: () => boolean) => {
+      const id = ++requestId.current;
+      const beforeEdit = revision.current;
+      const relevant = () => alive.current && isCurrent() && id === requestId.current &&
+        context.current.hash === hash && context.current.tab === tab && beforeEdit === revision.current;
+      if (!relevant()) return;
       try {
         const patch: Partial<TabData> =
           tab === 'files'
@@ -175,13 +185,13 @@ export function DetailPanel({
               : tab === 'trackers'
                 ? { trackers: await api.trackers(hash) }
                 : {};
-        if (!isCurrent()) return; // An answer for a torrent or tab no longer shown.
+        if (!relevant()) return;
         setData((previous) => (previous.hash === hash ? { ...previous, ...patch } : { hash, ...patch }));
       } catch (error) {
-        if (isCurrent()) toast.error(error);
+        if (relevant()) toast.error(error);
       }
     },
-    [hash, tab, toast],
+    [hash, tab, toast, context, alive],
   );
   usePolling(loadTab, 2500);
 
@@ -197,8 +207,10 @@ export function DetailPanel({
     });
 
   /** Apply a local edit to this torrent's rows, for an instant response. */
-  const edit = (patch: (rows: TabData) => Partial<TabData>) =>
+  const edit = (patch: (rows: TabData) => Partial<TabData>) => {
+    revision.current += 1;
     setData((previous) => (previous.hash === hash ? { ...previous, ...patch(previous) } : previous));
+  };
 
   const setFilePriority = async (index: number, priority: number) => {
     try {
@@ -222,7 +234,8 @@ export function DetailPanel({
 
   /* ------------------------------ resizing ------------------------------ */
 
-  const clamp = (value: number) => Math.min(window.innerHeight - 200, Math.max(DETAIL_HEIGHT.min, value));
+  const clamp = (value: number) => Math.max(DETAIL_HEIGHT.min,
+    Math.min(DETAIL_HEIGHT.max, window.innerHeight - 200, value));
 
   // Pointer events cover mouse, touch and pen alike; capture keeps the moves
   // coming while the pointer is off the thin handle.
@@ -313,15 +326,15 @@ export function DetailPanel({
         {tab === 'general' && <General torrent={torrent} onRecheckRestart={onRecheckRestart} />}
 
         {tab === 'files' && (
-          <table className="grid">
+          <table className="grid files-grid">
             <thead>
               <tr>
                 <th>File</th>
-                <th className="right" style={{ width: 96 }}>
+                <th className="right col-size">
                   Size
                 </th>
-                <th style={{ width: 170 }}>Progress</th>
-                <th style={{ width: 130 }}>Priority</th>
+                <th className="col-progress">Progress</th>
+                <th className="col-priority">Priority</th>
               </tr>
             </thead>
             <tbody>
@@ -373,28 +386,28 @@ export function DetailPanel({
         )}
 
         {tab === 'peers' && (
-          <table className="grid">
+          <table className="grid peers-grid">
             <thead>
               <tr>
-                <th style={{ width: 160 }}>Address</th>
+                <th className="col-address">Address</th>
                 <th>Client</th>
-                <th style={{ width: 140 }}>Progress</th>
-                <th className="right" style={{ width: 92 }}>
+                <th className="col-progress">Progress</th>
+                <th className="right col-down">
                   Down
                 </th>
-                <th className="right" style={{ width: 92 }}>
+                <th className="right col-up">
                   Up
                 </th>
-                <th className="right" style={{ width: 92 }} title="What this peer is pulling from the swarm">
+                <th className="right col-swarm" title="What this peer is pulling from the swarm">
                   Swarm
                 </th>
-                <th className="right" style={{ width: 100 }}>
+                <th className="right col-down-total">
                   Downloaded
                 </th>
-                <th className="right" style={{ width: 100 }}>
+                <th className="right col-up-total">
                   Uploaded
                 </th>
-                <th style={{ width: 150 }}>Flags</th>
+                <th className="col-flags">Flags</th>
               </tr>
             </thead>
             <tbody>
@@ -409,8 +422,10 @@ export function DetailPanel({
                       aria-expanded={open}
                     >
                       <td className="num">
-                        <span className="caret">{open ? '▾' : '▸'}</span>
-                        {peer.address}:{peer.port}
+                        <button className="row-toggle" aria-expanded={open} onClick={(event) => { event.stopPropagation(); toggle(key); }}>
+                          <span className="caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+                          {peer.address}:{peer.port}
+                        </button>
                       </td>
                       <td>{peer.client || '—'}</td>
                       <td>
@@ -465,29 +480,29 @@ export function DetailPanel({
 
         {tab === 'trackers' && (
           <>
-            <table className="grid">
+            <table className="grid trackers-grid">
               <thead>
                 <tr>
                   <th>URL</th>
-                  <th style={{ width: 64 }}>Type</th>
-                  <th style={{ width: 132 }}>State</th>
-                  <th className="right" style={{ width: 80 }}>
+                  <th className="col-type">Type</th>
+                  <th className="col-state">State</th>
+                  <th className="right col-seeders">
                     Seeders
                   </th>
-                  <th className="right" style={{ width: 84 }}>
+                  <th className="right col-leechers">
                     Leechers
                   </th>
-                  <th className="right" style={{ width: 100 }}>
+                  <th className="right col-downloaded">
                     Downloaded
                   </th>
-                  <th className="right" style={{ width: 76 }} title="Peers returned by the last announce">
+                  <th className="right col-peers" title="Peers returned by the last announce">
                     Peers
                   </th>
-                  <th style={{ width: 116 }}>Next announce</th>
-                  <th className="right" style={{ width: 88 }}>
+                  <th className="col-next">Next announce</th>
+                  <th className="right col-attempts">
                     OK / fail
                   </th>
-                  <th style={{ width: 72 }}>Enabled</th>
+                  <th className="col-enabled">Enabled</th>
                 </tr>
               </thead>
               <tbody>
@@ -504,8 +519,10 @@ export function DetailPanel({
                         aria-expanded={open}
                       >
                         <td className="wrap" title={url}>
-                          <span className="caret">{open ? '▾' : '▸'}</span>
-                          {url}
+                          <button className="row-toggle" aria-expanded={open} onClick={(event) => { event.stopPropagation(); toggle(key); }}>
+                            <span className="caret" aria-hidden="true">{open ? '▾' : '▸'}</span>
+                            {url}
+                          </button>
                         </td>
                         <td>{TRACKER_TYPES[tracker.type] ?? `type ${tracker.type}`}</td>
                         <td>
@@ -571,7 +588,7 @@ export function DetailPanel({
               </tbody>
             </table>
             {supports?.trackerInsert !== false && (
-              <AddTracker hash={hash} onAdded={() => void loadTab(() => true)} />
+              <AddTracker key={hash} hash={hash} onAdded={() => void loadTab(() => true)} />
             )}
           </>
         )}
@@ -588,7 +605,7 @@ function AddTracker({ hash, onAdded }: { hash: string; onAdded: () => void }) {
   const valid = TRACKER_URL.test(url.trim());
 
   const add = async () => {
-    if (!valid) return;
+    if (!valid || busy) return;
     setBusy(true);
     try {
       await api.addTracker(hash, url.trim());
@@ -616,6 +633,7 @@ function AddTracker({ hash, onAdded }: { hash: string; onAdded: () => void }) {
         aria-label="Tracker announce URL"
         aria-invalid={(url.trim() !== '' && !valid) || undefined}
         value={url}
+        disabled={busy}
         onChange={(event) => setUrl(event.target.value)}
       />
       <button className="btn sm" type="submit" disabled={!valid || busy}>

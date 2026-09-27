@@ -5,6 +5,7 @@
  * with a small concurrency cap; hammering it with parallel multicalls stalls the
  * torrent engine itself.
  */
+import { BackendError } from './errors';
 import { scgiRequest, describeTarget, type ScgiTarget } from './scgi';
 import {
   serializeCall,
@@ -102,7 +103,8 @@ export class RtorrentClient implements RpcClient {
       params: entry.params,
     }));
     const result = await this.call('system.multicall', [payload]);
-    if (!Array.isArray(result)) throw new Error('system.multicall returned a non-array');
+    if (!Array.isArray(result)) throw new BackendError('system.multicall returned a non-array');
+    if (result.length !== entries.length) throw new BackendError('system.multicall returned the wrong number of results');
     return result.map((item, index) => {
       if (isFaultStruct(item)) {
         // Name the command in the fault: "-503 Wrong object type" on its own
@@ -127,7 +129,7 @@ export class RtorrentClient implements RpcClient {
     fields: readonly string[],
   ): Promise<T[]> {
     const result = await this.call(method, [...leadingParams, ...fields.map((f) => `${f}=`)]);
-    if (!Array.isArray(result)) return [];
+    if (!Array.isArray(result)) throw new BackendError(`${method} returned a non-array`);
     return result.map((row) => {
       const values = Array.isArray(row) ? row : [row];
       const record: Record<string, XValue> = {};
@@ -145,7 +147,8 @@ export class RtorrentClient implements RpcClient {
  */
 export function settledNumber(value: XValue | XmlRpcFault | undefined): number {
   if (value === undefined || value instanceof Error) return 0;
-  return Number(value) || 0;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
 }
 
 export { XmlRpcFault };

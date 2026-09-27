@@ -5,3 +5,7 @@ export class HttpError extends Error {
     this.name = 'HttpError';
   }
 }
+/** An unavailable backend or malformed upstream reply, mapped to HTTP 502. */
+export class BackendError extends Error {
+  override name = 'BackendError';
+}

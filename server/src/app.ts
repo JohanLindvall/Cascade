@@ -7,11 +7,12 @@
 import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
+import multer from 'multer';
 import { createApi, createRpcProxy } from './api';
 import { basicAuth } from './auth';
 import type { Config } from './config';
 import { isCrossSiteRequest } from './crossSite';
-import { HttpError } from './errors';
+import { BackendError, HttpError } from './errors';
 import type { RtorrentService } from './service';
 import type { Store } from './store';
 import { XmlRpcFault } from './xmlrpc';
@@ -35,9 +36,11 @@ export function createApp(service: RtorrentService, config: Config, store: Store
 
   // Health stays outside Basic auth so container healthchecks and orchestrator
   // probes work when WEB_USER/WEB_PASS are set. It reveals nothing but liveness.
-  router.get('/healthz', (_req, res) => {
+  const health = (_req: Request, res: Response) => {
     res.json({ ok: true, rtorrent: service.capabilities.ready });
-  });
+  };
+  app.get('/healthz', health);
+  router.get('/healthz', health);
 
   // Before auth, so a hostile page learns nothing — not even whether a
   // password is set. See crossSite.ts for what is refused and why.
@@ -48,6 +51,7 @@ export function createApp(service: RtorrentService, config: Config, store: Store
       origin: req.get('origin'),
       fetchSite: req.get('sec-fetch-site'),
       host: forwarded || req.get('host'),
+      protocol: req.protocol,
     });
     if (!refused) return next();
     res.status(403).json({ error: 'cross-site request refused' });
@@ -85,6 +89,7 @@ export function createApp(service: RtorrentService, config: Config, store: Store
       },
     }),
   );
+  router.use('/assets', (_req, res) => res.status(404).type('text/plain').send('asset not found'));
   router.get('*', (_req, res) => {
     if (!fs.existsSync(indexHtml)) {
       res.status(500).type('text/plain').send(`web assets not found at ${config.webRoot}`);
@@ -94,7 +99,16 @@ export function createApp(service: RtorrentService, config: Config, store: Store
     res.sendFile(indexHtml);
   });
 
-  app.use(config.basePath === '/' ? '/' : config.basePath, router);
+  if (config.basePath !== '/') {
+    app.use((req, res, next) => {
+      // Relative asset and API URLs need the trailing slash. Preserve queries
+      // when somebody bookmarks /cascade rather than /cascade/.
+      if ((req.method === 'GET' || req.method === 'HEAD') && req.path === config.basePath) {
+        res.redirect(308, `${config.basePath}/${req.url.slice(req.path.length)}`);
+      } else next();
+    });
+  }
+  app.use(config.basePath, router);
   app.use(errorHandler);
   return app;
 }
@@ -104,7 +118,8 @@ export function createApp(service: RtorrentService, config: Config, store: Store
  * carry their own, an rtorrent fault is a 502 with rtorrent's message, an
  * oversized upload is a 413, and only the unexpected is a 500.
  */
-function errorHandler(error: Error, _req: Request, res: Response, _next: NextFunction): void {
+function errorHandler(error: Error, _req: Request, res: Response, next: NextFunction): void {
+  if (res.headersSent) { next(error); return; }
   if (error instanceof HttpError) {
     res.status(error.status).json({ error: error.message });
     return;
@@ -113,9 +128,14 @@ function errorHandler(error: Error, _req: Request, res: Response, _next: NextFun
     res.status(502).json({ error: error.faultString, faultCode: error.faultCode });
     return;
   }
-  const multerCode = (error as { code?: string }).code;
-  if (multerCode === 'LIMIT_FILE_SIZE') {
-    res.status(413).json({ error: 'torrent file exceeds the upload size limit' });
+  if (error instanceof BackendError) {
+    res.status(502).json({ error: error.message });
+    return;
+  }
+  if (error instanceof multer.MulterError) {
+    const tooLarge = ['LIMIT_FILE_SIZE', 'LIMIT_FILE_COUNT', 'LIMIT_PART_COUNT', 'LIMIT_FIELD_VALUE'].includes(error.code);
+    const message = error.code === 'LIMIT_FILE_SIZE' ? 'torrent file exceeds the upload size limit' : error.message;
+    res.status(tooLarge ? 413 : 400).json({ error: message });
     return;
   }
   // express.json answers a malformed body with a SyntaxError carrying a status.

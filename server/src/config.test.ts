@@ -54,5 +54,16 @@ test('booleans read the usual spellings; an empty value means unset', () => {
   assert.equal(loadConfig({ CASCADE_GAMIFY: 'no' }).gamify, false);
   assert.equal(loadConfig({ CASCADE_GAMIFY: 'YES' }).gamify, true);
   assert.equal(loadConfig({ CASCADE_GAMIFY: '' }).gamify, true);
-  assert.equal(loadConfig({ WEB_PORT: 'eighty' }).port, 8080); // junk falls back
+  assert.throws(() => loadConfig({ WEB_PORT: 'eighty' }), /WEB_PORT/);
+});
+
+test('invalid ports, polling intervals and upload limits fail early', () => {
+  for (const value of ['-1', '0', '1.5', 'NaN', 'Infinity']) {
+    for (const name of ['WEB_PORT', 'CASCADE_POLL_MS', 'CASCADE_MAX_UPLOAD_MB']) {
+      assert.throws(() => loadConfig({ [name]: value }), new RegExp(name));
+    }
+  }
+  assert.throws(() => loadConfig({ WEB_PORT: '65536' }), /WEB_PORT/);
+  assert.throws(() => loadConfig({ CASCADE_POLL_MS: '2147483648' }), /CASCADE_POLL_MS/);
+  assert.equal(loadConfig({ WEB_BASE_PATH: '/cascade///' }).basePath, '/cascade');
 });

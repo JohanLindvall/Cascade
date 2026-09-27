@@ -26,6 +26,7 @@ export interface RequestFacts {
   fetchSite?: string;
   /** The host the browser addressed: X-Forwarded-Host behind a proxy, else Host. */
   host?: string;
+  protocol?: string;
 }
 
 /** Methods that must not change state, and so need no check. */
@@ -34,14 +35,15 @@ const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 /** Extension pages post as themselves; a web page cannot claim these schemes. */
 const EXTENSION_ORIGIN = /^(chrome|moz|safari-web)-extension:\/\//i;
 
-export function isCrossSiteRequest({ method, origin, fetchSite, host }: RequestFacts): boolean {
+export function isCrossSiteRequest({ method, origin, fetchSite, host, protocol = 'http' }: RequestFacts): boolean {
   if (SAFE_METHODS.has(method.toUpperCase())) return false;
   if (origin && EXTENSION_ORIGIN.test(origin)) return false;
   // "none" is the user's own doing: a bookmark, the address bar, a drop.
   if (fetchSite) return fetchSite !== 'same-origin' && fetchSite !== 'none';
   if (origin) {
     try {
-      return new URL(origin).host !== host;
+      const expected = new URL(`${protocol}://${host}`);
+      return new URL(origin).origin !== expected.origin;
     } catch {
       return true; // "null" and other opaque origins: a sandbox, never this page
     }

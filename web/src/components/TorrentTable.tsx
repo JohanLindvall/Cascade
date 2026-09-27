@@ -1,4 +1,4 @@
-import { useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
+import { useEffect, useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { bytes, duration, percent, rate, relative } from '../format';
 import { redactSecrets } from '../redact';
 import type { SelectMods } from '../selection';
@@ -289,6 +289,7 @@ function TorrentCard({
   onContextMenu: (hash: string, event: MouseEvent) => void;
 }) {
   const press = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(press.current), []);
   // Whether the long press already opened the menu; the synthesized click that
   // follows touchend must then be swallowed, or it instantly closes the menu
   // and selects the card underneath it.
@@ -297,6 +298,8 @@ function TorrentCard({
   const message = messageOf(torrent);
 
   const startPress = (event: ReactTouchEvent) => {
+    window.clearTimeout(press.current);
+    if (event.touches.length !== 1 || (event.target instanceof Element && event.target.closest('input, button'))) return;
     const touch = event.touches[0];
     pressFired.current = false;
     pressStart.current = { x: touch.clientX, y: touch.clientY };

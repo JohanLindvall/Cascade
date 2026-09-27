@@ -11,11 +11,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { HttpError } from './errors';
-import { LOG_SCOPES, PendingRestarts, RtorrentService, sanitizeLogScopes } from './service';
+import { PendingRestarts } from './pendingRestarts';
+import { LOG_SCOPES, RtorrentService, sanitizeLogScopes } from './service';
 import { FakeClient, methodList, tempStore, testConfig } from './testing/fakes';
 import { XmlRpcFault } from './xmlrpc';
 
 const HASH = 'A'.repeat(40);
+
+test('simultaneous throttle edits preserve the other limit', async () => {
+  const { service: subject, store } = service(backend());
+  await subject.saveThrottle({ name: 'group', up: 1024, down: 2048 });
+  await Promise.all([
+    subject.patchThrottle('group', { up: 4096 }),
+    subject.patchThrottle('group', { down: 8192 }),
+  ]);
+  assert.deepEqual(store.throttles(), [{ name: 'group', up: 4096, down: 8192 }]);
+});
 
 function backend(extraMethods: string[] = []): FakeClient {
   return new FakeClient({
@@ -274,18 +285,135 @@ test('data deletion can be switched off entirely', async () => {
   assert.equal(client.callsTo('d.erase').length, 1);
 });
 
+test('changing a directory closes the torrent first and leaves it stopped for a recheck', async () => {
+  const client = backend(['d.directory.set', 'd.save_full_session']);
+  const { service: svc } = service(client);
+  await svc.setDirectory(HASH, '/downloads/moved');
+  assert.deepEqual(client.calls.filter((call) => call.method.startsWith('d.')), [
+    { method: 'd.stop', params: [HASH] },
+    { method: 'd.close', params: [HASH] },
+    { method: 'd.directory.set', params: [HASH, '/downloads/moved'] },
+    { method: 'd.save_full_session', params: [HASH] },
+  ]);
+  const unsupported = backend();
+  assert.equal(await status(service(unsupported).service.setDirectory(HASH, '/downloads/moved')), 501);
+  assert.equal(unsupported.callsTo('d.stop').length, 0);
+});
+
 /* ------------------------------- throttles ------------------------------- */
 
 test('a throttle group is created in rtorrent and remembered; deleting unlimits it', async () => {
   const client = backend();
   const { service: svc, store } = service(client);
   await svc.saveThrottle({ name: 'slow', up: 1024, down: 4096 });
-  assert.deepEqual(client.callsTo('throttle.up')[0]?.params, ['', 'slow', '1024']);
+  assert.deepEqual(client.callsTo('throttle.up')[0]?.params, ['', 'slow', '1']);
   assert.deepEqual(store.throttles(), [{ name: 'slow', up: 1024, down: 4096 }]);
 
   await svc.deleteThrottle('slow');
   assert.deepEqual(client.callsTo('throttle.up')[1]?.params, ['', 'slow', '0']);
   assert.deepEqual(store.throttles(), []);
+});
+
+test('group rates round up to KiB precision, and invalid rates never reach rtorrent', async () => {
+  const client = backend();
+  const { service: svc, store } = service(client);
+  await svc.saveThrottle({ name: 'small', up: 800, down: 1025 });
+  assert.deepEqual(store.throttles(), [{ name: 'small', up: 1024, down: 2048 }]);
+  assert.deepEqual(client.callsTo('throttle.down')[0]?.params, ['', 'small', '2']);
+  for (const up of [-1, Infinity, NaN, 1.1]) {
+    assert.equal(await status(svc.saveThrottle({ name: 'bad', up, down: 0 })), 400);
+  }
+  assert.equal(await status(svc.saveThrottle({ name: 'NULL', up: 1, down: 0 })), 400);
+  assert.equal(client.callsTo('throttle.up').length, 1);
+});
+
+test('a failed throttle deletion keeps the saved group for retry', async () => {
+  const client = backend();
+  const { service: svc, store } = service(client);
+  store.upsertThrottle({ name: 'slow', up: 1024, down: 1024 });
+  client.answer('throttle.down', new XmlRpcFault(-1, 'refused'));
+  await assert.rejects(svc.deleteThrottle('slow'), /refused/);
+  assert.equal(store.throttles().length, 1);
+});
+
+test('throttle names are data even when they match an object prototype property', async () => {
+  const client = backend(['throttle.up.rate', 'throttle.down.rate'])
+    .answer('throttle.up.rate', 1024).answer('throttle.down.rate', 2048);
+  const { service: svc } = service(client);
+  await svc.saveThrottle({ name: '__proto__', up: 0, down: 0 });
+  const rates = JSON.parse(JSON.stringify(await svc.throttleRates()));
+  assert.deepEqual(Object.keys(rates), ['__proto__']);
+  assert.deepEqual(rates['__proto__'], { up: 1024, down: 2048 });
+});
+
+test('an ancestor symlink outside the delete roots is refused before erasing', async () => {
+  const client = backend();
+  const { service: svc, config } = service(client);
+  const outside = path.join(path.dirname(config.downloadDir), 'outside');
+  fs.mkdirSync(outside);
+  fs.writeFileSync(path.join(outside, 'keep'), 'important');
+  fs.symlinkSync(outside, path.join(config.downloadDir, 'link'));
+  client.answer('d.base_path', path.join(config.downloadDir, 'link', 'keep'));
+  assert.equal(await status(svc.remove(HASH, true)), 403);
+  assert.equal(client.callsTo('d.erase').length, 0);
+  assert.equal(fs.readFileSync(path.join(outside, 'keep'), 'utf8'), 'important');
+  client.answer('d.base_path', path.join(config.downloadDir, 'link', 'missing'));
+  assert.equal(await status(svc.remove(HASH, true)), 403);
+});
+
+test('a symlink alias of a data root cannot delete the root, but files within a symlinked root work', async () => {
+  const client = backend();
+  const { config, store } = service(client);
+  const alias = path.join(path.dirname(config.downloadDir), 'alias');
+  fs.symlinkSync(config.downloadDir, alias);
+  const svc = new RtorrentService({ ...config, deleteRoots: [alias] }, store, client);
+  client.answer('d.base_path', alias);
+  assert.equal(await status(svc.remove(HASH, true)), 403);
+  fs.writeFileSync(path.join(alias, 'file'), 'x');
+  client.answer('d.base_path', path.join(alias, 'file'));
+  await svc.remove(HASH, true);
+  assert.ok(!fs.existsSync(path.join(config.downloadDir, 'file')));
+});
+
+test('stopping or rechecking again cancels a pending restart', async () => {
+  for (const action of ['stop', 'pause', 'recheck']) {
+    const client = backend(['d.pause', 'd.hashing']).answer('d.hashing', 0);
+    const { service: svc } = service(client, { pollIntervalMs: 1, gamify: false });
+    await svc.action(HASH, 'recheck-restart');
+    await svc.action(HASH, action);
+    svc.startPolling();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(client.callsTo('d.start').length, 0, action);
+      assert.equal(client.callsTo('d.hashing').length, 0, action);
+    } finally { svc.stopPolling(); }
+  }
+});
+
+test('recheck clears the old message before asking rtorrent to check', async () => {
+  const client = backend();
+  await service(client).service.action(HASH, 'recheck');
+  const methods = client.calls.map((call) => call.method);
+  assert.ok(methods.indexOf('d.stop') < methods.indexOf('d.message.set'));
+  assert.ok(methods.indexOf('d.message.set') < methods.indexOf('d.check_hash'));
+});
+
+test('a failed throttle assignment restores a running torrent', async () => {
+  const client = backend(['d.is_active', 'd.throttle_name.set', 'd.save_full_session'])
+    .answer('d.is_active', 1).answer('d.throttle_name.set', new XmlRpcFault(-1, 'no such group'));
+  await assert.rejects(service(client).service.setTorrentThrottle(HASH, 'missing'), /no such group/);
+  assert.deepEqual(client.calls.filter((call) => call.method.startsWith('d.')).map((call) => call.method),
+    ['d.is_active', 'd.stop', 'd.throttle_name.set', 'd.start']);
+});
+
+test('concurrent state readers share one snapshot and one counter fold', async () => {
+  const client = backend().answer('d.multicall2', [[HASH, 'example']]);
+  const { service: svc, store } = service(client);
+  const [a, b] = await Promise.all([svc.state(), svc.state()]);
+  assert.deepEqual(a, b);
+  assert.equal(client.callsTo('d.multicall2').length, 1);
+  assert.equal(store.stats.everAdded, 1);
+  assert.equal(a.status.connected, true);
 });
 
 test('deleting a group the store never saved is a 404, not a new group in rtorrent', async () => {

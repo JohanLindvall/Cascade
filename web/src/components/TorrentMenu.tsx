@@ -114,6 +114,8 @@ export function TorrentMenu({ x, y, targets, throttles, supports, policy, action
       <MenuItem
         icon={<IconMove size={13} />}
         label="Change directory…"
+        disabled={!has('perTorrentDirectory')}
+        title={has('perTorrentDirectory') ? undefined : UNSUPPORTED}
         onClick={pick(() => actions.changeDirectory(targets))}
       />
       <MenuItem

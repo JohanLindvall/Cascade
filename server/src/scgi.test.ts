@@ -40,6 +40,8 @@ test('tcp forms', () => {
 test('describeTarget round-trips into log lines', () => {
   assert.equal(describeTarget(parseScgiTarget('unix:/a/b')), 'unix:/a/b');
   assert.equal(describeTarget(parseScgiTarget('h:1')), 'h:1');
+  assert.equal(describeTarget(parseScgiTarget('[::1]:5000')), '[::1]:5000');
+  for (const target of ['unix:', 'host:0', '65536']) assert.throws(() => parseScgiTarget(target));
 });
 
 /* ------------------------------ the wire ------------------------------- */
@@ -99,6 +101,29 @@ test('an empty reply is reported as rtorrent dropping the request', async () => 
   } finally {
     server.close();
   }
+});
+
+test('responses cannot grow past the memory bound', async () => {
+  const server = await fakeScgi(Buffer.alloc(101));
+  try {
+    await assert.rejects(scgiRequest({ kind: 'unix', path: server.path }, Buffer.from('x'),
+      { maxResponseBytes: 100 }), /response exceeds 100 bytes/);
+  } finally { server.close(); }
+});
+
+test('a trickling endpoint still reaches the total request deadline', async () => {
+  const server = net.createServer((socket) => {
+    socket.resume();
+    const timer = setInterval(() => socket.write('x'), 10);
+    socket.on('error', () => {});
+    socket.on('close', () => clearInterval(timer));
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address() as net.AddressInfo;
+  try {
+    await assert.rejects(scgiRequest({ kind: 'tcp', host: '127.0.0.1', port }, Buffer.from('x'),
+      { timeoutMs: 100 }), /timed out after 100ms/);
+  } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
 });
 
 test('a missing socket says rtorrent is not running, with the path', async () => {

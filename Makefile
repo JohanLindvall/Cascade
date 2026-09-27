@@ -142,25 +142,22 @@ version: ## Report which rtorrent the built image contains, and how it presents 
 	@printf 'peer id      : '; docker run --rm --entrypoint sh $(REF) -c \
 	  'strings /usr/local/lib/libtorrent.so 2>/dev/null | grep -oE "^-[A-Za-z]{2}[0-9A-Za-z]{4}-" | head -n1'
 
-smoke: ## Build, boot, exercise the API, then tear down
+smoke: ## Build, boot, exercise the API, then tear down (requires Python 3)
 	@$(MAKE) --no-print-directory build
-	@docker rm -f cascade-smoke >/dev/null 2>&1 || true
-	@docker run -d --name cascade-smoke -p 18999:8080 -e RT_DHT=off $(REF) >/dev/null
-	@echo "waiting for rtorrent..."
-	@for i in $$(seq 1 30); do \
-	  curl -fsS http://127.0.0.1:18999/healthz >/dev/null 2>&1 && break; sleep 1; \
-	done
-	@printf 'healthz      : '; curl -fsS http://127.0.0.1:18999/healthz || exit 1; echo
-	@printf 'backend      : '; curl -fsS http://127.0.0.1:18999/api/capabilities \
-	  | sed 's/.*"clientVersion":"\([^"]*\)".*"flavor":"\([^"]*\)".*/\1 (\2)/' | tr -d '\n'; echo
-	@printf 'settings read: '; curl -fsS http://127.0.0.1:18999/api/settings >/dev/null && echo ok || exit 1
-	@printf 'state read   : '; curl -fsS http://127.0.0.1:18999/api/state >/dev/null && echo ok || exit 1
-	@printf 'xml-rpc /RPC2: '; curl -fsS -X POST http://127.0.0.1:18999/RPC2 -H 'content-type: text/xml' \
+	@set -eu; \
+	name="cascade-smoke-$$$$"; \
+	cleanup() { \
+	  docker stop -t 20 "$$name" >/dev/null 2>&1 || true; \
+	  docker rm -v "$$name" >/dev/null 2>&1 || true; \
+	}; \
+	trap cleanup 0; trap 'exit 130' INT; trap 'exit 143' TERM; \
+	docker run -d --name "$$name" -p 127.0.0.1:18999:8080 -e RT_DHT=off $(REF) >/dev/null; \
+	python3 docker/api-smoke.py http://127.0.0.1:18999 || { docker logs "$$name"; exit 1; }; \
+	printf 'xml-rpc /RPC2: '; \
+	curl -fsS -X POST http://127.0.0.1:18999/RPC2 -H 'content-type: text/xml' \
 	  --data '<?xml version="1.0"?><methodCall><methodName>system.client_version</methodName></methodCall>' \
-	  | grep -o '<string>[^<]*</string>' || exit 1
-	@printf 'ui served    : '; curl -fsS http://127.0.0.1:18999/ | grep -o '<title>[^<]*</title>' || exit 1
-	@docker rm -f cascade-smoke >/dev/null
-	@echo "smoke test passed"
+	  | grep -o '<string>[^<]*</string>'; \
+	echo "smoke test passed"
 
 ##@ Clean
 

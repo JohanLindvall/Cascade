@@ -9,6 +9,7 @@
  */
 import { request } from './api';
 import { normalizePreferences, type Preferences } from './preferences';
+import { PreferenceSync } from './preferenceSync';
 
 export { DEFAULT_PREFERENCES, type Preferences } from './preferences';
 
@@ -33,34 +34,36 @@ function writeCache(prefs: Preferences): void {
 }
 
 export async function fetchPreferences(): Promise<Preferences> {
-  const prefs = normalizePreferences(await request<unknown>('prefs'));
+  const prefs = await sync.load(() => request<unknown>('prefs'));
   writeCache(prefs);
   return prefs;
 }
 
-let pending: Partial<Preferences> = {};
 let timer: number | undefined;
+const sync = new PreferenceSync((patch) => request('prefs', {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify(patch),
+  keepalive: true,
+}));
 
 function send(): void {
   window.clearTimeout(timer);
   timer = undefined;
-  if (Object.keys(pending).length === 0) return;
-  const body = pending;
-  pending = {};
   // keepalive lets a save fired just before the tab closes still reach the
   // server; a failure (offline, signed out) leaves the cache consistent.
-  request('prefs', {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    keepalive: true,
-  }).catch(() => {});
+  void sync.flush().catch(() => {
+    window.clearTimeout(timer);
+    timer = window.setTimeout(send, 5000);
+  });
 }
 
 // The debounce buys nothing if the tab closes inside it: a theme picked and
 // the window shut within half a second used to reach only the cache. pagehide
 // is the last reliable moment, and keepalive lets the request outlive the tab.
 window.addEventListener('pagehide', send);
+window.addEventListener('online', send);
+document.addEventListener('visibilitychange', () => { if (document.hidden) send(); });
 
 /**
  * Merge a change into the cache now and into the server file shortly,
@@ -69,7 +72,7 @@ window.addEventListener('pagehide', send);
  */
 export function savePreferences(patch: Partial<Preferences>): void {
   writeCache({ ...readCache(), ...patch });
-  pending = { ...pending, ...patch };
+  sync.update(patch);
   window.clearTimeout(timer);
   timer = window.setTimeout(send, 400);
 }

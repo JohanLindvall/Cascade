@@ -72,6 +72,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   const [pending, setPending] = useState<Pending | null>(null);
   // The request on screen, readable from the stable open functions below.
   const current = useRef<Pending | null>(null);
+  const sequence = useRef(0);
+
+  useEffect(() => () => {
+    if (current.current) cancel(current.current);
+    current.current = null;
+  }, []);
 
   const show = useCallback((next: Pending | null) => {
     // A request that arrives while another is showing replaces it, and the
@@ -79,6 +85,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     // awaiting it would wait forever.
     if (current.current && current.current !== next) cancel(current.current);
     current.current = next;
+    sequence.current += 1;
     setPending(next);
   }, []);
 
@@ -106,8 +113,8 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   return (
     <DialogContext.Provider value={api}>
       {children}
-      {pending?.kind === 'confirm' && <ConfirmDialog options={pending.options} onSettle={settle} />}
-      {pending?.kind === 'prompt' && <PromptDialog options={pending.options} onSettle={settle} />}
+      {pending?.kind === 'confirm' && <ConfirmDialog key={sequence.current} options={pending.options} onSettle={settle} />}
+      {pending?.kind === 'prompt' && <PromptDialog key={sequence.current} options={pending.options} onSettle={settle} />}
     </DialogContext.Provider>
   );
 }

@@ -40,6 +40,12 @@ test('user:password in the authority is a credential too', () => {
   assert.equal(redactUrl('https://me:hunter2@t.example/announce'), 'https://•••@t.example/announce');
 });
 
+test('encoded keys and path tokens with separators are still credentials', () => {
+  assert.equal(redactUrl('https://t.example/announce?%70asskey=secret'), 'https://t.example/announce?%70asskey=•••');
+  assert.equal(redactUrl('https://t.example/abcde-fghij_klmno.pqrst/announce'), 'https://t.example/•••/announce');
+  assert.equal(redactUrl('https://t.example/%30%31%32%33%34%35%36%37%38%39abcdefghijkl/announce'), 'https://t.example/•••/announce');
+});
+
 test('URLs are found inside log lines, and info hashes beside them survive', () => {
   const line =
     "1789826031 B990C2A0B0702327F958C1D938065E15EFED5FAA->tracker_list: received failure : url:http://scenehd.example/announce.php?passkey=865daba582d49260a3 msg:'v6 : Could not resolve hostname'";

@@ -75,7 +75,8 @@ export interface DroppedLinks {
  */
 export function linksFromDrop(text: string): DroppedLinks {
   // text/uri-list comment lines start with "#", so the scheme test drops them too.
-  const links = text.split(/\s+/).filter((word) => /^(magnet:|https?:\/\/)/i.test(word));
+  const links = text.split(/[\r\n]+/).filter((line) => !line.trimStart().startsWith('#'))
+    .join(' ').split(/\s+/).filter((word) => /^(magnet:|https?:\/\/|ftp:\/\/)/i.test(word));
   if (links.length > 0) return { links, problem: null };
   if (/^file:/i.test(text)) {
     return {

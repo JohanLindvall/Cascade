@@ -8,9 +8,10 @@
  *
  * Rather than hard-coding a version matrix we ask the running instance what it
  * supports via system.listMethods and pick command names from what is actually
- * there. Unsupported settings are reported to the UI so it can hide them.
+ * there. Unsupported settings are reported to the UI so it can disable them.
  */
 import type { RpcClient } from './rtorrent';
+import { BackendError } from './errors';
 import { SETTING_KEYS, SETTING_SPECS } from './settings';
 
 /** The slice of the client the probe needs: one call and one settled batch. */
@@ -52,17 +53,18 @@ export interface FieldLists {
 }
 
 /**
- * Feature -> command that implements it, for capabilities that are not global
+ * Feature -> required commands, for capabilities that are not global
  * settings. Every key of SETTING_SPECS additionally becomes a feature of its
  * own (true when the backend has a working setter), so the UI greys a settings
  * control out by its own field name rather than through a parallel list.
  */
 const FEATURE_METHODS: Record<string, string | string[]> = {
   labels: 'd.custom1.set',
-  throttleGroups: 'throttle.up',
+  throttleGroups: ['throttle.up', 'throttle.down'],
   perTorrentThrottle: 'd.throttle_name.set',
   perTorrentMaxUploads: 'd.uploads_max.set',
   perTorrentMaxDownloads: 'd.downloads_max.set',
+  perTorrentDirectory: ['d.directory.set', 'd.save_full_session', 'd.stop', 'd.close'],
   dhtStatistics: 'dht.statistics',
   trackerInsert: 'd.tracker.insert',
   trackerToggle: 't.is_enabled.set',
@@ -132,9 +134,10 @@ export class Capabilities {
 
   private async probe(): Promise<void> {
     const listed = await this.client.call('system.listMethods');
-    const methods = new Set<string>(
-      Array.isArray(listed) ? listed.map((name) => String(name)) : [],
-    );
+    if (!Array.isArray(listed) || listed.length === 0 || listed.some((name) => typeof name !== 'string')) {
+      throw new BackendError('rtorrent returned an invalid system.listMethods response');
+    }
+    const methods = new Set(listed as string[]);
     this.methods = methods;
 
     const probes = [
@@ -179,7 +182,7 @@ export class Capabilities {
 
     const supports: Record<string, boolean> = {};
     for (const [feature, method] of Object.entries(FEATURE_METHODS)) {
-      supports[feature] = asList(method).some((name) => methods.has(name));
+      supports[feature] = asList(method).every((name) => methods.has(name));
     }
     for (const key of SETTING_KEYS) {
       supports[key] = asList(SETTING_SPECS[key].set).some((name) => methods.has(name));

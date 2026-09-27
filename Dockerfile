@@ -44,12 +44,13 @@ RUN cd server && npm install --no-audit --no-fund --loglevel=error
 
 COPY web/ web/
 COPY server/ server/
+COPY docker/ docker/
 
 # Unit tests run inside the build, so a red suite is a failed image — the
 # same contract as the typecheck. Both use node's own runner: no frameworks,
 # no new dependencies.
 RUN cd web && npm test && npm run build
-RUN cd server && npm run build && npm test && npm prune --omit=dev
+RUN sh docker/scripts.test.sh && cd server && npm run build && npm test && npm prune --omit=dev
 
 # --------------------------------------------------------------------------
 # 2. compile libtorrent and rtorrent from upstream tags
@@ -149,7 +150,8 @@ COPY --from=build /src/server/dist       /app/server
 COPY --from=build /src/server/node_modules /app/node_modules
 COPY --from=build /src/web/dist          /app/web
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY docker/move-completed.sh /usr/local/bin/cascade-move
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/cascade-move
 
 ENV NODE_ENV=production \
     CASCADE_WEB_ROOT=/app/web \

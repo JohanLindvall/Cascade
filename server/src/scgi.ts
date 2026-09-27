@@ -6,6 +6,7 @@
  * header pairs followed by the body, answered with an HTTP-ish response.
  */
 import net from 'node:net';
+import { BackendError } from './errors';
 
 export type ScgiTarget =
   | { kind: 'unix'; path: string }
@@ -13,19 +14,25 @@ export type ScgiTarget =
 
 export function parseScgiTarget(raw: string): ScgiTarget {
   const value = raw.trim();
+  if (!value || value === 'unix:') throw new Error('SCGI endpoint must not be empty');
+  const port = (text: string) => {
+    const number = Number(text);
+    if (!Number.isInteger(number) || number < 1 || number > 65535) throw new Error('SCGI port must be from 1 to 65535');
+    return number;
+  };
   if (value.startsWith('unix:')) return { kind: 'unix', path: value.slice(5) };
   if (value.startsWith('/') || value.startsWith('./')) return { kind: 'unix', path: value };
   const match = /^(?:scgi:\/\/)?(\[[^\]]+\]|[^:]+):(\d+)$/.exec(value);
   if (match) {
     const host = match[1].startsWith('[') ? match[1].slice(1, -1) : match[1];
-    return { kind: 'tcp', host, port: Number(match[2]) };
+    return { kind: 'tcp', host, port: port(match[2]) };
   }
-  if (/^\d+$/.test(value)) return { kind: 'tcp', host: '127.0.0.1', port: Number(value) };
+  if (/^\d+$/.test(value)) return { kind: 'tcp', host: '127.0.0.1', port: port(value) };
   return { kind: 'unix', path: value };
 }
 
 export function describeTarget(target: ScgiTarget): string {
-  return target.kind === 'unix' ? `unix:${target.path}` : `${target.host}:${target.port}`;
+  return target.kind === 'unix' ? `unix:${target.path}` : `${target.host.includes(':') ? `[${target.host}]` : target.host}:${target.port}`;
 }
 
 function buildHeaders(bodyLength: number): Buffer {
@@ -56,6 +63,7 @@ function stripHttpHeaders(response: Buffer): Buffer {
 
 export interface ScgiOptions {
   timeoutMs?: number;
+  maxResponseBytes?: number;
 }
 
 export function scgiRequest(
@@ -64,9 +72,11 @@ export function scgiRequest(
   options: ScgiOptions = {},
 ): Promise<Buffer> {
   const timeoutMs = options.timeoutMs ?? 30_000;
+  const maxResponseBytes = options.maxResponseBytes ?? 64 * 1024 * 1024;
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let settled = false;
+    let size = 0;
 
     const socket =
       target.kind === 'unix'
@@ -76,12 +86,14 @@ export function scgiRequest(
     const finish = (error: Error | null, value?: Buffer) => {
       if (settled) return;
       settled = true;
+      clearTimeout(deadline);
       socket.destroy();
-      if (error) reject(error);
+      if (error) reject(new BackendError(error.message));
       else resolve(value as Buffer);
     };
 
     const complete = () => {
+      if (settled) return;
       const raw = Buffer.concat(chunks);
       if (raw.length === 0) {
         // A closed connection with no bytes is rtorrent dropping the request —
@@ -97,15 +109,22 @@ export function scgiRequest(
       finish(null, stripHttpHeaders(raw));
     };
 
-    socket.setTimeout(timeoutMs, () => {
+    // An inactivity timeout alone lets a trickling endpoint occupy a queue
+    // slot forever. Bound the entire exchange, including connection setup.
+    const deadline = setTimeout(() => {
       finish(new Error(`SCGI request to ${describeTarget(target)} timed out after ${timeoutMs}ms`));
-    });
+    }, timeoutMs);
 
     socket.on('connect', () => {
       socket.write(buildHeaders(body.length));
       socket.write(body);
     });
-    socket.on('data', (chunk) => chunks.push(chunk));
+    socket.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxResponseBytes) {
+        finish(new Error(`SCGI response exceeds ${maxResponseBytes} bytes`));
+      } else chunks.push(chunk);
+    });
     socket.on('end', complete);
     socket.on('close', complete);
     socket.on('error', (error) => {

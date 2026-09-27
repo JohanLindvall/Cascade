@@ -175,7 +175,7 @@ older backends keep working:
 
 0.16 also adds options Cascade now exposes when present: per-host HTTP connection limits, a global
 proxy, separate IPv4/IPv6 bind addresses, a DHT announce-port override, outgoing-connection
-blocking, and a random-access hint for hashing. On older backends those controls are hidden.
+blocking, and a random-access hint for hashing. On older backends unsupported controls are disabled.
 
 0.16.24 dropped rtorrent's `address%device` form of a bind address in favour of separate
 `network.bind_device` commands, so from that release `RT_BIND`, `RT_BIND_IPV4` and `RT_BIND_IPV6`
@@ -320,7 +320,7 @@ Rates are in KiB/s; 0 means unlimited.
 | `CASCADE_ALLOW_RAW_RPC` | `1` | Set 0 to disable the API console and /RPC2 |
 | `CASCADE_ALLOW_DATA_DELETE` | `1` | Set 0 to forbid deleting downloaded data |
 | `CASCADE_DELETE_ROOTS` | download + completed dirs | Extra :-separated roots data may be deleted from |
-| `CASCADE_MAX_UPLOAD_MB` | `64` | Largest accepted .torrent upload, MiB |
+| `CASCADE_MAX_UPLOAD_MB` | `64` | Maximum combined .torrent file size per upload batch, MiB |
 | `CASCADE_POLL_MS` | `1000` | Backend sampling interval for the rate graph, ms |
 | `CASCADE_GAMIFY` | `1` | Set 0 to remove levels, badges and celebrations |
 | `CASCADE_WEB_ROOT` | `/app/web` | Directory the built UI is served from |
@@ -439,6 +439,8 @@ read as "unlimited".
 
 rtorrent has no per-torrent rate limit — it throttles by *named group*. Create groups here and
 assign torrents to them from the right-click menu; deleting one asks first.
+Group limits round up to whole KiB/s, rtorrent's precision for named groups: `800 B/s` becomes
+`1 KiB/s`. Global limits retain byte precision. The dialog shows the saved value after an edit.
 
 ![Throttle groups](docs/screenshot-throttles.png)
 
@@ -498,7 +500,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/healthz` | Liveness (deliberately outside Basic auth, for healthchecks) |
+| `GET` | `/healthz` | Liveness (outside Basic auth and always available at the root, even with `WEB_BASE_PATH`) |
 | `GET` | `/api/state` | Torrents, global status, throttle groups (the UI's poll) |
 | `GET` | `/api/torrents?view=main` | Torrent list for an rtorrent view |
 | `GET` | `/api/status` | Global rates, limits, backend summary and policy on their own |
@@ -506,17 +508,19 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET` | `/api/game` | Level, XP and badge progress, each badge with its unit |
 | `GET`/`PATCH` | `/api/prefs` | UI preferences (theme, sort, layout) |
 | `GET` | `/api/torrents/:hash/files` \| `/peers` \| `/trackers` | Per-torrent detail |
-| `POST` | `/api/torrents/upload` | Multipart: `torrents[]`, `urls`, `start`, `directory`, `label` |
+| `POST` | `/api/torrents/upload` | Multipart: repeated `torrents` file fields, `urls`, `start`, `directory`, `label` |
 | `POST` | `/api/torrents/url` | Add one magnet/URL as JSON |
 | `POST` | `/api/torrents/:hash/action/:action` | `start`, `stop`, `pause`, `resume`, `recheck`, `recheck-restart`, `announce` |
 | `POST` | `/api/torrents/action/:action` | Same, for a list of hashes |
 | `PATCH` | `/api/torrents/:hash` | `priority` (0 off … 3 high), `label`, `throttle`, `directory`, `maxUploads`, `maxDownloads` |
 | `POST` | `/api/torrents/remove` | Remove hashes, optionally `deleteData` |
+| `DELETE` | `/api/torrents/:hash?deleteData=false` | Remove one torrent, optionally its data |
 | `POST` | `/api/torrents/:hash/files/:index/priority` | `0` skip, `1` normal, `2` high |
 | `POST` | `/api/torrents/:hash/trackers` | Add an announce URL: `url` (`http(s)://`, `udp://`), optional `group` |
 | `POST` | `/api/torrents/:hash/trackers/:index/enabled` | Enable/disable a tracker |
 | `GET`/`POST` | `/api/settings` | Read/write rtorrent's live settings |
-| `GET`/`POST`/`DELETE` | `/api/throttles` | Manage throttle groups |
+| `GET`/`POST` | `/api/throttles` | List or save groups: `name`, `up`, `down` (bytes/s) |
+| `PATCH`/`DELETE` | `/api/throttles/:name` | Change either limit without replacing the other, or delete a group |
 | `GET` | `/api/log` | Tail of the rtorrent log |
 | `GET`/`POST` | `/api/log/scopes` | Log verbosity: raise scopes live, on top of `RT_LOG_LEVEL` |
 | `GET` | `/api/rpc/methods`, `POST` `/api/rpc` | Every rtorrent command, as JSON |
@@ -525,11 +529,18 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 
 Malformed input — a hash that is not forty hex digits, a priority outside its range, a file
 index that is not a number, a tracker that is not an announce URL — is answered with a `400`
-naming the field rather than forwarded to rtorrent; the bulk routes apply their action per hash
-and return the failures by hash in `errors` instead of stopping at the first.
+naming the field. Bulk routes validate every hash before applying anything, normalize case and
+deduplicate, then return runtime failures by hash in `errors`. Numeric settings reject null,
+booleans, fractions, unsafe integers and malformed strings; a typo cannot become unlimited.
+
+Uploads accept up to 50 files and URLs combined. `CASCADE_MAX_UPLOAD_MB` bounds the combined
+file bytes in a batch. The response contains `added`, `errors`, `failedFiles` and `failedUrls`;
+the last two are zero-based indices into the submitted files and non-empty URL lines. The Add
+dialog keeps failed items for retry and removes successful ones. Uploaded v1 and hybrid torrents
+are structurally validated before loading; v2-only torrents are rejected with an explanation.
 
 A browser only gets to change things from the UI's own origin. A `POST`, `PATCH` or `DELETE` that
-the browser marks as cross-site — by `Sec-Fetch-Site`, or an `Origin` naming another host — is
+the browser marks as cross-site — by `Sec-Fetch-Site`, or an `Origin` with another scheme, host or port — is
 refused with a `403` before auth is even considered, so a page elsewhere cannot use a signed-in
 browser (Basic credentials ride along automatically) to add torrents or change settings. Requests
 without those headers — `curl`, scripts, other tools — are unaffected. Every response also carries
@@ -561,15 +572,18 @@ private network, or prefer `/RPC2`, which sits behind Basic auth.
   Thai, CJK or emoji-heavy title of ~85 characters used to fail with *"Hash check I/O error at
   chunk 0: Filename too long"* and never start. The rtorrent in the image is built with a small
   libtorrent patch (`docker/patches/`) that cuts such a name at a character boundary, keeps the
-  extension, and appends `~` plus a short tag of the original so two long names cannot collide;
+  extension, and appends `~` plus a short hash of the original to distinguish long names;
   the torrent keeps its own names in the list and the Files tab, which notes *on disk as …*
   where the two differ.
 - Global settings changed in the UI are not persisted to `rtorrent.rc`; the environment is the
   source of truth on restart.
-- "Change directory" updates rtorrent's session only. Move already-downloaded files yourself, or
-  recheck afterwards.
+- "Change directory" stops the torrent and updates its saved path. Move already-downloaded files
+  yourself, then use **Recheck & restart** before transferring at the new location.
 - Deleting torrent data is confined to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and any
-  `CASCADE_DELETE_ROOTS`; requests outside those are refused.
+  `CASCADE_DELETE_ROOTS`. Paths are checked before removing metadata and again before deleting
+  data; symlink ancestors cannot escape the roots, and a root itself cannot be deleted.
+- Completion moves use the actual on-disk filename, refuse existing destinations, and reopen
+  the torrent at its new location. A failed move leaves the source data in place.
 - Throttle groups cannot be removed from a running rtorrent — deleting one sets it to unlimited
   and drops it from the UI list.
 - rtorrent runs inside a detached `screen` session, so `docker exec -it cascade screen -r rtorrent`
@@ -579,6 +593,8 @@ private network, or prefer `/RPC2`, which sits behind Basic auth.
   entrypoint clears a lock that no live process in the container holds; set
   `RT_SESSION_LOCK_KEEP=1` if you deliberately share a session directory and want the check to
   refuse instead. Stop the container with `docker stop` (as `make stop` does) to avoid it entirely.
+  The same lock check runs before an automatic in-container rtorrent restart. Saved log scopes
+  unsupported by a different rtorrent version are skipped with a container-log message.
 
 ## Development
 
@@ -590,13 +606,19 @@ make build                  # build the image (typechecks + unit tests, both hal
 make run PORT=8080          # run it, mounting ./data, then open it in a browser
 make run OPEN=0             # ...without launching a browser
 make open                   # wait for it to answer, then open it
-make smoke                  # build, boot, exercise the API, tear down
+make smoke                  # build, boot, exercise the API, tear down (Python 3 required)
 make matrix                 # build against 0.9.8, 0.15.2 and the default
 make build RTORRENT_VERSION=0.9.8
 make bump-rtorrent          # move the default to the newest upstream release
 make attach                 # attach to rtorrent's curses UI
 make logs / shell / stop
+python3 docker/api-smoke.py http://127.0.0.1:18080  # extra checks on a disposable running container
 ```
+
+The smoke script uses Python 3's standard library, checks real setting and throttle round trips,
+and restores their original values. `make smoke` cleans up its container even when a check fails.
+CI and release builds run it too. `docker/scripts.test.sh` covers release-bump failures, custom
+User-Agent escaping and completion moves, and runs inside every Docker build.
 
 Both halves carry unit tests beside their sources (`server/src/*.test.ts`, `web/src/*.test.ts`),
 written for node's built-in test runner — no frameworks, no new dependencies. The server suite

@@ -16,6 +16,7 @@ import {
   type RefObject,
 } from 'react';
 import { useLatest } from '../hooks';
+import { redactSecrets } from '../redact';
 import { IconAlert, IconCheck, IconClose, IconInfo, IconTrophy } from './icons';
 
 /* ------------------------------ focus care ------------------------------ */
@@ -49,13 +50,13 @@ function useReturnFocus(): void {
 }
 
 const FOCUSABLE =
-  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'a[href], button:not(:disabled), input:not(:disabled):not([type="hidden"]), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"]):not(:disabled)';
 
 /** Keep Tab and Shift-Tab cycling inside `container` instead of wandering behind it. */
 function trapTab(event: ReactKeyboardEvent, container: HTMLElement | null): void {
   if (event.key !== 'Tab' || !container) return;
   const focusable = [...container.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(
-    (element) => element.getClientRects().length > 0,
+    (element) => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden',
   );
   if (focusable.length === 0) {
     event.preventDefault();
@@ -412,7 +413,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const push = useCallback(
     (kind: ToastKind, message: string) => {
       const id = nextId.current++;
-      setToasts((current) => [...current.slice(-4), { id, kind, message }]);
+      setToasts((current) => [...current.slice(-4), { id, kind, message: redactSecrets(message) }]);
       const linger = kind === 'error' ? 8000 : kind === 'achievement' ? 6500 : 4000;
       window.setTimeout(() => remove(id), linger);
     },

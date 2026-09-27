@@ -11,61 +11,72 @@ type Bencode = number | Buffer | Bencode[] | { [key: string]: Bencode };
 
 class BencodeError extends Error {}
 
-function decode(buf: Buffer, start: number): [Bencode, number] {
+interface Decoded {
+  value: Bencode;
+  end: number;
+  infoSpan?: [number, number];
+}
+
+function decode(buf: Buffer, start: number, depth = 0): Decoded {
+  if (depth > 100) throw new BencodeError('nesting too deep');
   if (start >= buf.length) throw new BencodeError('truncated');
   const marker = buf[start];
 
-  // Integer: i<digits>e
   if (marker === 0x69) {
-    const end = buf.indexOf(0x65, start);
+    const end = buf.indexOf(0x65, start + 1);
     if (end < 0) throw new BencodeError('unterminated integer');
-    const value = Number(buf.subarray(start + 1, end).toString('latin1'));
-    if (!Number.isFinite(value)) throw new BencodeError('bad integer');
-    return [value, end + 1];
+    const text = buf.subarray(start + 1, end).toString('latin1');
+    if (!/^(0|-?[1-9]\d*)$/.test(text) || !Number.isSafeInteger(Number(text))) {
+      throw new BencodeError('bad integer');
+    }
+    return { value: Number(text), end: end + 1 };
   }
 
-  // List: l<items>e
   if (marker === 0x6c) {
     const items: Bencode[] = [];
     let offset = start + 1;
     while (buf[offset] !== 0x65) {
-      const [item, next] = decode(buf, offset);
-      items.push(item);
-      offset = next;
+      const item = decode(buf, offset, depth + 1);
+      items.push(item.value);
+      offset = item.end;
     }
-    return [items, offset + 1];
+    return { value: items, end: offset + 1 };
   }
 
-  // Dictionary: d<key><value>...e
   if (marker === 0x64) {
-    // Null-prototyped, so a key that happens to be "__proto__" stays an
-    // ordinary entry instead of rewiring the object it lands in.
     const result: Record<string, Bencode> = Object.create(null) as Record<string, Bencode>;
+    let infoSpan: [number, number] | undefined;
+    let previous: Buffer | undefined;
     let offset = start + 1;
     while (buf[offset] !== 0x65) {
-      const [key, afterKey] = decode(buf, offset);
-      if (!Buffer.isBuffer(key)) throw new BencodeError('non-string dictionary key');
-      const [value, afterValue] = decode(buf, afterKey);
-      result[key.toString('utf8')] = value;
-      // Remember where each value sits so the info dict can be hashed verbatim.
-      Object.defineProperty(result, `__span_${key.toString('utf8')}`, {
-        value: [afterKey, afterValue],
-        enumerable: false,
-      });
-      offset = afterValue;
+      const key = decode(buf, offset, depth + 1);
+      if (!Buffer.isBuffer(key.value)) throw new BencodeError('non-string dictionary key');
+      if (previous && Buffer.compare(previous, key.value) >= 0) {
+        throw new BencodeError('duplicate or unsorted dictionary key');
+      }
+      previous = key.value;
+      const item = decode(buf, key.end, depth + 1);
+      // Dictionary keys are bytes. Latin-1 preserves them one-to-one, while
+      // UTF-8 replacement characters can collapse distinct keys together.
+      const name = key.value.toString('latin1');
+      result[name] = item.value;
+      if (depth === 0 && name === 'info') infoSpan = [key.end, item.end];
+      offset = item.end;
     }
-    return [result, offset + 1];
+    return { value: result, end: offset + 1, infoSpan };
   }
 
-  // Byte string: <length>:<bytes>
+  if (marker < 0x30 || marker > 0x39) throw new BencodeError('bad string length');
   const colon = buf.indexOf(0x3a, start);
   if (colon < 0) throw new BencodeError('unterminated string');
-  const length = Number(buf.subarray(start, colon).toString('latin1'));
-  if (!Number.isInteger(length) || length < 0) throw new BencodeError('bad string length');
+  const text = buf.subarray(start, colon).toString('latin1');
+  const length = Number(text);
+  if (!/^(0|[1-9]\d*)$/.test(text) || !Number.isSafeInteger(length)) {
+    throw new BencodeError('bad string length');
+  }
   const from = colon + 1;
-  const to = from + length;
-  if (to > buf.length) throw new BencodeError('string past end of data');
-  return [buf.subarray(from, to), to];
+  if (length > buf.length - from) throw new BencodeError('string past end of data');
+  return { value: buf.subarray(from, from + length), end: from + length };
 }
 
 export interface TorrentFileInfo {
@@ -79,11 +90,17 @@ export interface TorrentFileInfo {
  * load can be confirmed the same way an uploaded file is.
  */
 export function magnetInfoHash(link: string): string | undefined {
-  const match = /xt=urn:btih:([A-Za-z0-9]+)/i.exec(link);
-  if (!match) return undefined;
-  const value = match[1];
-  if (/^[0-9a-f]{40}$/i.test(value)) return value.toUpperCase();
-  if (/^[A-Za-z2-7]{32}$/.test(value)) return base32ToHex(value);
+  let url: URL;
+  try { url = new URL(link); } catch { return undefined; }
+  if (url.protocol.toLowerCase() !== 'magnet:') return undefined;
+  for (const [key, topic] of url.searchParams) {
+    if (key.toLowerCase() !== 'xt') continue;
+    const match = /^urn:btih:([A-Za-z0-9]+)$/i.exec(topic);
+    if (!match) continue;
+    const value = match[1];
+    if (/^[0-9a-f]{40}$/i.test(value)) return value.toUpperCase();
+    if (/^[A-Za-z2-7]{32}$/.test(value)) return base32ToHex(value);
+  }
   return undefined;
 }
 
@@ -103,46 +120,64 @@ function base32ToHex(value: string): string | undefined {
 
 /** Validate a .torrent and derive its info hash; throws with the reason when it is not one. */
 export function parseTorrentFile(data: Buffer): TorrentFileInfo {
-  let root: Bencode;
   try {
-    [root] = decode(data, 0);
+    const decoded = decode(data, 0);
+    if (decoded.end !== data.length) throw new BencodeError('trailing data');
+    const root = dictionary(decoded.value, 'expected a dictionary');
+    const info = dictionary(root.info, 'no info dictionary');
+    const span = decoded.infoSpan;
+    if (!span) throw new BencodeError('no info dictionary');
+    if (info['meta version'] === 2 && !Buffer.isBuffer(info.pieces)) {
+      throw new BencodeError('v2-only torrents are not supported by rtorrent');
+    }
+    const name = component(info.name);
+    const pieceLength = info['piece length'];
+    if (typeof pieceLength !== 'number' || pieceLength <= 0) throw new BencodeError('invalid piece length');
+    if (!Buffer.isBuffer(info.pieces) || info.pieces.length % 20 !== 0) {
+      throw new BencodeError('invalid pieces');
+    }
+    if ((info.length !== undefined) === (info.files !== undefined)) {
+      throw new BencodeError('expected either length or files');
+    }
+    let size = 0;
+    if (info.length !== undefined) size = fileLength(info.length);
+    else {
+      if (!Array.isArray(info.files) || info.files.length === 0) throw new BencodeError('invalid file list');
+      for (const value of info.files) {
+        const file = dictionary(value, 'invalid file entry');
+        size += fileLength(file.length);
+        if (!Number.isSafeInteger(size)) throw new BencodeError('torrent is too large');
+        if (!Array.isArray(file.path) || file.path.length === 0) throw new BencodeError('invalid file path');
+        file.path.forEach(component);
+      }
+    }
+    if (info.pieces.length / 20 !== Math.ceil(size / pieceLength)) {
+      throw new BencodeError('piece count does not match torrent size');
+    }
+    const infoHash = crypto.createHash('sha1').update(data.subarray(...span)).digest('hex').toUpperCase();
+    return { infoHash, name, size };
   } catch (error) {
     throw new Error(`not a valid .torrent file (${(error as Error).message})`);
   }
-  if (!root || typeof root !== 'object' || Array.isArray(root) || Buffer.isBuffer(root)) {
-    throw new Error('not a valid .torrent file (expected a dictionary)');
+}
+
+function dictionary(value: Bencode | undefined, message: string): Record<string, Bencode> {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Buffer.isBuffer(value)) {
+    throw new BencodeError(message);
   }
+  return value;
+}
 
-  const record = root as Record<string, Bencode>;
-  const span = (record as unknown as Record<string, [number, number]>).__span_info;
-  const info = record.info;
-  if (!span || !info || typeof info !== 'object' || Array.isArray(info) || Buffer.isBuffer(info)) {
-    throw new Error('not a valid .torrent file (no info dictionary)');
+function fileLength(value: Bencode | undefined): number {
+  if (typeof value !== 'number' || value < 0) throw new BencodeError('invalid file length');
+  return value;
+}
+
+function component(value: Bencode | undefined): string {
+  if (!Buffer.isBuffer(value) || value.length === 0 || value.includes(0) || value.includes(0x2f)) {
+    throw new BencodeError('invalid path component');
   }
-
-  const infoRecord = info as Record<string, Bencode>;
-  const name = Buffer.isBuffer(infoRecord.name) ? infoRecord.name.toString('utf8') : '';
-  const length = typeof infoRecord.length === 'number' ? infoRecord.length : 0;
-  const files = Array.isArray(infoRecord.files) ? infoRecord.files : [];
-  const total =
-    length ||
-    files.reduce<number>((sum, entry) => {
-      if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Buffer.isBuffer(entry)) {
-        return sum;
-      }
-      const size = (entry as Record<string, Bencode>).length;
-      return sum + (typeof size === 'number' ? size : 0);
-    }, 0);
-
-  if (!Buffer.isBuffer(infoRecord.pieces) && files.length === 0 && !length) {
-    throw new Error('not a valid .torrent file (info dictionary is incomplete)');
-  }
-
-  const infoHash = crypto
-    .createHash('sha1')
-    .update(data.subarray(span[0], span[1]))
-    .digest('hex')
-    .toUpperCase();
-
-  return { infoHash, name, size: total };
+  const text = value.toString('utf8');
+  if (text === '.' || text === '..') throw new BencodeError('invalid path component');
+  return text;
 }

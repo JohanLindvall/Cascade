@@ -5,6 +5,7 @@
  * strings, so we keep the parser permissive: unknown/absent type tags decode as
  * strings, faults decode into XmlRpcFault.
  */
+import { BackendError } from './errors';
 
 export type XValue =
   | string
@@ -51,6 +52,7 @@ function serializeValue(value: XValue, out: string[]): void {
   } else if (typeof value === 'boolean') {
     out.push('<boolean>', value ? '1' : '0', '</boolean>');
   } else if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new Error('XML-RPC numbers must be finite');
     if (Number.isInteger(value)) {
       if (value <= INT32_MAX && value >= INT32_MIN) out.push('<i4>', String(value), '</i4>');
       else out.push('<i8>', String(value), '</i8>');
@@ -97,15 +99,16 @@ const NAMED_ENTITIES: Record<string, string> = {
 
 function decodeEntities(text: string): string {
   if (text.indexOf('&') === -1) return text;
-  return text.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
+  return text.replace(/&(#(?:[xX][0-9a-fA-F]+|[0-9]+)|[a-zA-Z]+);/g, (match, body: string) => {
     if (body[0] === '#') {
       const code =
         body[1] === 'x' || body[1] === 'X'
           ? parseInt(body.slice(2), 16)
           : parseInt(body.slice(1), 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : match;
+      return Number.isInteger(code) && code >= 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)
+        ? String.fromCodePoint(code) : match;
     }
-    const named = NAMED_ENTITIES[body];
+    const named = Object.hasOwn(NAMED_ENTITIES, body) ? NAMED_ENTITIES[body] : undefined;
     return named === undefined ? match : named;
   });
 }
@@ -172,6 +175,16 @@ function tokenize(xml: string): Token[] {
     }
     i = gt + 1;
   }
+  const stack: string[] = [];
+  for (const token of tokens) {
+    if (token.kind === Kind.Open) {
+      stack.push(token.name);
+      if (stack.length > 100) throw new Error('malformed XML-RPC response: nesting too deep');
+    } else if (token.kind === Kind.Close && stack.pop() !== token.name) {
+      throw new Error('malformed XML-RPC response: mismatched closing tag');
+    }
+  }
+  if (stack.length > 0) throw new Error('malformed XML-RPC response: truncated document');
   return tokens;
 }
 
@@ -240,7 +253,9 @@ class ValueParser {
   parseValue(): XValue {
     this.skipBlankText();
     const token = this.tokens[this.index];
-    if (!token || token.kind !== Kind.Open || token.name !== 'value') return '';
+    if (!token || token.kind !== Kind.Open || token.name !== 'value') {
+      throw new Error('malformed XML-RPC response: expected <value>');
+    }
     this.index++;
 
     let raw = '';
@@ -297,26 +312,38 @@ class ValueParser {
             this.index++;
             key = this.readTextUntilClose('name');
           }
-          result[key] = this.parseValue();
+          // Assignment to __proto__ is a setter on ordinary objects. Define
+          // an own property so every XML struct key remains inert data.
+          Object.defineProperty(result, key, {
+            value: this.parseValue(), enumerable: true, configurable: true, writable: true,
+          });
           this.consumeClose('member');
         }
         return result;
       }
       case 'base64':
         return Buffer.from(this.readTextUntilClose(type), 'base64');
-      case 'boolean':
-        return this.readTextUntilClose(type).trim() === '1';
+      case 'boolean': {
+        const text = this.readTextUntilClose(type).trim();
+        if (text !== '0' && text !== '1') throw new Error('invalid XML-RPC boolean');
+        return text === '1';
+      }
       case 'int':
       case 'i4':
       case 'i8':
       case 'ex.i8': {
         const text = this.readTextUntilClose(type).trim();
         const value = Number(text);
-        return Number.isFinite(value) ? value : 0;
+        if (!/^[+-]?\d+$/.test(text) || !Number.isFinite(value)) throw new Error('invalid XML-RPC integer');
+        return value;
       }
       case 'double': {
-        const value = Number(this.readTextUntilClose(type).trim());
-        return Number.isFinite(value) ? value : 0;
+        const text = this.readTextUntilClose(type).trim();
+        const value = Number(text);
+        if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?$/.test(text) || !Number.isFinite(value)) {
+          throw new Error('invalid XML-RPC double');
+        }
+        return value;
       }
       case 'nil':
         this.consumeClose(type);
@@ -344,6 +371,14 @@ class ValueParser {
 
 /** Decode a <methodResponse>. Throws XmlRpcFault when the response is a fault. */
 export function parseResponse(xml: string): XValue {
+  try { return readResponse(xml); }
+  catch (error) {
+    if (error instanceof XmlRpcFault) throw error;
+    throw new BackendError((error as Error).message);
+  }
+}
+
+function readResponse(xml: string): XValue {
   const parser = new ValueParser(tokenize(xml));
   if (parser.seekFault()) {
     const fault = parser.parseValue();
@@ -373,6 +408,6 @@ export function isFaultStruct(value: XValue): boolean {
     typeof value === 'object' &&
     !Array.isArray(value) &&
     !Buffer.isBuffer(value) &&
-    'faultCode' in (value as Record<string, XValue>)
+    Object.hasOwn(value, 'faultCode')
   );
 }

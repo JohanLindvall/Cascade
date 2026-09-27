@@ -12,19 +12,23 @@
       // does not get a dark flash while the bundle loads. Mirrors theme.ts;
       // the cache key must match prefs.ts.
       (function () {
+        var mode = 'system';
         try {
           var prefs = JSON.parse(localStorage.getItem('cascade.prefs') || '{}');
-          var mode = prefs.theme || 'system';
-          var resolved =
+          if (prefs && ['system', 'light', 'dark', 'retro', 'blackmetal'].includes(prefs.theme)) {
+            mode = prefs.theme;
+          }
+        } catch (error) { /* unreadable cache follows the operating system */ }
+        var resolved =
             mode === 'system'
               ? window.matchMedia('(prefers-color-scheme: dark)').matches
                 ? 'dark'
                 : 'light'
               : mode;
-          document.documentElement.dataset.theme = resolved;
-        } catch (error) {
-          /* keep the data-theme="dark" default */
-        }
+        document.documentElement.dataset.theme = resolved;
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', {
+          light: '#f4f6fb', dark: '#0b0d13', retro: '#12082a', blackmetal: '#000000'
+        }[resolved]);
       })();
     </script>
   </head>

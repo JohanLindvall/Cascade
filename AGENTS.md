@@ -16,15 +16,23 @@ server/src/
                   everything above it depends on (a Transport can be injected)
   capabilities.ts probes system.listMethods, picks a command dialect
   model.ts        rtorrent fields -> Torrent/File/Peer/Tracker
+  contracts.ts    HTTP data shapes shared with the browser
   settings.ts     every rtorrent global setting as one declarative table
   options.ts      every environment variable as one catalog; renders --help
   optionsdoc.ts   dev/CI only: checks that catalog against the container + README
+  bootSettings.ts catalog environment mappings -> validated startup JSON
   config.ts       loadConfig(env) -> Config, defaults taken from options.ts
   service.ts      all application behaviour
+  serialTasks.ts  serialize mutations per torrent or throttle group
+  pendingRestarts.ts pure state machine for recheck & restart
+  dataPaths.ts    lexical and realpath checks for delete-data
+  throttles.ts    name/rate validation and KiB/s command encoding
+  validation.ts  strict API and startup-setting primitives
+  uploads.ts     bounds combined in-memory upload size
   store.ts        the one JSON state file
   achievements.ts badge definitions, XP and level curve
   torrentfile.ts  bencode parse: reject non-torrents, derive the info hash
-  prefs.ts        UI preference shape and validation
+  prefs.ts        UI preference shape and validation, also imported by the browser
   auth.ts         optional HTTP Basic
   crossSite.ts    refuses browser writes that come from another origin
   errors.ts       HttpError
@@ -40,6 +48,9 @@ web/src/          React UI: components/, one styles.css of design tokens,
                   format.ts, selection.ts, redact.ts and preferences.ts are
                   the pure logic the node runner can reach
 docker/entrypoint.sh      renders rtorrent.rc, supervises rtorrent + node
+docker/move-completed.sh validates completion moves and refuses destination collisions
+docker/api-smoke.py       real backend setting and throttle round trips
+docker/scripts.test.sh    shell regression checks, also run in the image build
 docker/bump-rtorrent.sh   moves the default rtorrent to a newer upstream release
 .github/workflows/ci.yml  typecheck, options check, Docker build + API smoke
 .github/workflows/release.yml  multi-arch GHCR publish, tags every main push
@@ -140,7 +151,10 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    "try_outgoing")`, not one comma-joined string.
 
 3. **Throttle groups.** rtorrent has no per-torrent rate limit; it has named groups created with
-   `throttle.up("", name, rate)` and assigned with `d.throttle_name.set`. Groups do not survive an
+   `throttle.up("", name, rate)` and assigned with `d.throttle_name.set`. The group setters take
+   **whole KiB/s strings**, unlike global setters' bytes/s. `throttles.ts` rounds a positive
+   fractional KiB up and stores the actual byte value; never feed API bytes directly to these
+   setters. Groups do not survive an
    rtorrent restart, so they are persisted in `store.ts` and re-applied on reconnect. They also
    cannot be deleted at runtime — deleting sets them to unlimited.
 
@@ -189,7 +203,8 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    and a torrent that can never start. The image patches libtorrent at build time
    (`docker/patches/`): `path_fit.h` shortens an over-long component to fit — stem cut at a
    UTF-8 boundary, `~` plus an 8-hex FNV-1a tag of the original so two names differing past the
-   cut cannot collide, extension kept — and `apply-libtorrent.sh` wires it into the three
+   cut usually remain distinct (a finite hash cannot guarantee no collisions), extension kept —
+   and `apply-libtorrent.sh` wires it into the three
    places that turn names into filesystem paths: `Path::as_string` (the file), 
    `FileList::make_directory` (each directory), and `FileList::set_root_dir` (the root rtorrent
    composes from the download directory and the torrent's *name* — for a multi-file torrent
@@ -293,7 +308,9 @@ theme or sort key falls back to the default instead of reaching the UI. The brow
 localStorage copy of the preferences, but only as a cache so the theme can apply on first paint;
 the file always wins once it loads, and the cache is repaired on read (`normalizePreferences`)
 because a browser's storage can hold anything. Browser-side writes are debounced and flushed on
-`pagehide` with `keepalive`, so a theme picked just before the tab closes still reaches the file.
+`pagehide` with `keepalive`. `web/src/preferenceSync.ts` orders saves, retries failures without
+dropping newer edits, and protects edits made while the initial server copy is loading. The
+browser re-exports the pure server preference schema rather than maintaining a second validator.
 
 ## Themes
 
@@ -331,6 +348,9 @@ directory or label, or for magnets and URLs. Because the drop path has no dialog
   in the session. `load.*` is queued, not immediate, so "the call returned" is not "it loaded".
 
 Failures come back per file in the upload response and are toasted by the UI.
+The response also identifies failed file and URL indices, so the Add dialog retains only failures
+for retry. The upload ceiling is for the combined file bytes, including chunked requests; the
+per-file multer limit alone cannot bound a 50-file batch's memory use.
 
 Two things about the drop handling are load-bearing:
 
@@ -409,6 +429,9 @@ Two other things are easy to get wrong here:
   faults become 502 with rtorrent's own message, prefixed with the command that failed when it
   came out of a multicall).
 - Anything that deletes data must stay inside `config.deleteRoots`.
+- A per-torrent directory change stops and closes the torrent before setting its path, and leaves
+  it stopped for the owner to move the data and recheck it. Keep those lifecycle commands separate
+  and in the per-torrent mutation queue, as for recheck and throttle changes.
 - Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes
   `<epoch seconds> <level letter> <text>` for the severity scopes and `<epoch seconds> <text>`
   (no level) for the subsystem scopes such as `tracker_events` — the same two shapes on 0.9.8,

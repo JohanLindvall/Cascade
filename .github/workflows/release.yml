@@ -148,6 +148,7 @@ jobs:
           curl -fsS http://127.0.0.1:18080/api/capabilities | grep -o '"clientVersion":"[^"]*"'
           curl -fsS http://127.0.0.1:18080/api/state >/dev/null
           curl -fsS http://127.0.0.1:18080/ | grep -o '<title>[^<]*</title>'
+          python3 docker/api-smoke.py http://127.0.0.1:18080
           docker stop -t 20 verify >/dev/null
 
       - name: Container log on failure

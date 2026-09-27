@@ -119,3 +119,28 @@ test('isFaultStruct tells multicall faults from results', () => {
   assert.equal(isFaultStruct('ok'), false);
   assert.equal(isFaultStruct(Buffer.from('x')), false);
 });
+
+test('struct keys and named entities cannot access object prototypes', () => {
+  const result = roundTrip(JSON.parse('{"__proto__":{"faultCode":99},"constructor":"x"}'));
+  assert.ok(result && typeof result === 'object');
+  assert.ok(Object.hasOwn(result, '__proto__'));
+  assert.equal(isFaultStruct(result), false);
+  assert.equal(parseResponse(respond('<string>&constructor;&toString;</string>')), '&constructor;&toString;');
+});
+
+test('bad character references stay text, and hexadecimal entities accept uppercase X', () => {
+  assert.equal(parseResponse(respond('<string>&#X1F600;&#99999999;&#xD800;</string>')), '😀&#99999999;&#xD800;');
+});
+
+test('truncated, mismatched and deeply nested responses fail instead of becoming data', () => {
+  assert.throws(() => parseResponse(respond('<string>x</string>').slice(0, -10)), /malformed/);
+  assert.throws(() => parseResponse(respond('<string>x</i4>')), /malformed/);
+  assert.throws(() => parseResponse('<methodResponse><params><param/></params></methodResponse>'), /expected <value>/);
+  assert.throws(() => parseResponse('<value>'.repeat(200) + '</value>'.repeat(200)), /nesting too deep/);
+  assert.throws(() => serializeCall('x', [Infinity]), /finite/);
+});
+test('invalid typed values do not become zero or false', () => {
+  for (const value of ['<i4>1.5</i4>', '<i8>bad</i8>', '<double>Infinity</double>', '<double></double>', '<boolean>yes</boolean>']) {
+    assert.throws(() => parseResponse(`<methodResponse><params><param><value>${value}</value></param></params></methodResponse>`), /invalid XML-RPC/);
+  }
+});

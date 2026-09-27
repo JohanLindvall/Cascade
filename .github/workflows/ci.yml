@@ -42,6 +42,8 @@ jobs:
       - name: Server unit tests
         working-directory: server
         run: npm test
+      - name: Container script tests
+        run: sh docker/scripts.test.sh
       # Fails if the entrypoint reads an option the catalog does not list, or
       # if the README's generated tables have drifted from it.
       - name: Options catalog and generated docs are in step
@@ -93,6 +95,8 @@ jobs:
       # The libtorrent patch in docker/patches: a torrent whose file name is
       # longer than Linux allows must start (and create a shortened file)
       # rather than stop with "Filename too long".
+      - name: Settings and throttle round trips
+        run: python3 docker/api-smoke.py http://127.0.0.1:18080
       - name: A file name over 255 bytes is shortened, not refused
         run: |
           python3 - <<'EOF'
@@ -165,6 +169,7 @@ jobs:
           curl -fsS http://127.0.0.1:18080/api/capabilities | grep -o '"clientVersion":"[^"]*"'
           curl -fsS http://127.0.0.1:18080/api/state >/dev/null
           curl -fsS http://127.0.0.1:18080/api/settings >/dev/null
+          python3 docker/api-smoke.py http://127.0.0.1:18080
       - name: Container log on failure
         if: failure()
         run: docker logs cascade-compat 2>&1 | tail -50 || true

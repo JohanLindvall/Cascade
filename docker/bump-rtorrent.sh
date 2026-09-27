@@ -22,7 +22,8 @@ cd "$(dirname "$0")/.."
 
 # Stable release tags only (vX.Y.Z), no release candidates.
 tags() {
-  git ls-remote --tags --refs "https://github.com/rakshasa/$1.git" 'v*' |
+  refs="$(git ls-remote --tags --refs "https://github.com/rakshasa/$1.git" 'v*')" || return 1
+  printf '%s\n' "$refs" |
     sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p'
 }
 
@@ -38,9 +39,11 @@ current="$(sed -n 's/^ARG RTORRENT_VERSION=//p' Dockerfile)"
 }
 
 # Tagged in both repositories: uniq -d keeps what appears in each list.
-released="$( { tags rtorrent; tags libtorrent; } | sort | uniq -d)"
+rtorrent_tags="$(tags rtorrent)" || exit 1
+libtorrent_tags="$(tags libtorrent)" || exit 1
+released="$(printf '%s\n%s\n' "$rtorrent_tags" "$libtorrent_tags" | sort | uniq -d)"
 target="${1:-$(printf '%s\n' "$released" | highest)}"
-printf '%s\n' "$released" | grep -qx "$(printf '%s' "$target" | sed 's/\./\\./g')" || {
+printf '%s\n' "$released" | grep -Fxq -- "$target" || {
   echo "bump-rtorrent: ${target:-no release} is not tagged in both rtorrent and libtorrent" >&2
   exit 1
 }
@@ -51,6 +54,13 @@ if [ "$(printf '%s\n%s\n' "$current" "$target" | highest)" = "$current" ]; then
 fi
 
 old="$(printf '%s' "$current" | sed 's/\./\\./g')"
+# Check the documentation before changing either file; drift used to leave a
+# half-applied bump behind even though the command reported failure.
+if ! grep -Fq "**rtorrent $current, compiled from source**" README.md ||
+  ! grep -Fq "The default is **$current**" README.md; then
+  echo "bump-rtorrent: README does not name the current default in both expected places" >&2
+  exit 1
+fi
 sed -i.bak "s/^ARG RTORRENT_VERSION=$old\$/ARG RTORRENT_VERSION=$target/" Dockerfile
 sed -i.bak \
   -e "s/\*\*rtorrent $old, compiled from source\*\*/**rtorrent $target, compiled from source**/" \

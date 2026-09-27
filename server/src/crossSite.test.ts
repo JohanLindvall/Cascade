@@ -43,3 +43,8 @@ test('browser extensions pass on their unforgeable origin', () => {
     assert.equal(post({ origin, fetchSite: 'cross-site' }), false, origin);
   }
 });
+
+test('Origin fallback compares scheme and normalises default ports', () => {
+  assert.equal(isCrossSiteRequest({ method: 'POST', origin: 'http://example.com', host: 'example.com', protocol: 'https' }), true);
+  assert.equal(isCrossSiteRequest({ method: 'POST', origin: 'https://example.com', host: 'example.com:443', protocol: 'https' }), false);
+});

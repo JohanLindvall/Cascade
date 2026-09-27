@@ -3,14 +3,17 @@
  * rtorrent commands chosen through the capability probe.
  */
 import fs from 'node:fs/promises';
-import path from 'node:path';
 import {
   buildGameState,
   newlyUnlocked,
-  type GameState,
 } from './achievements';
 import { Capabilities } from './capabilities';
 import type { Config } from './config';
+import type {
+  BackendSummary, GameState, GlobalStatus, LoadOptions, LogScopeState, Peer,
+  RateSample, StateResponse, ThrottleGroup, Torrent, TorrentFile, Tracker,
+} from './contracts';
+import { assertDeletable } from './dataPaths';
 import { HttpError } from './errors';
 import {
   FILE_FIELDS,
@@ -22,17 +25,15 @@ import {
   mapTorrent,
   mapTracker,
   trackerHost,
-  type Peer,
-  type Torrent,
-  type TorrentFile,
-  type Tracker,
 } from './model';
+import { PendingRestarts } from './pendingRestarts';
 import {
   RtorrentClient,
   settledNumber,
   type MulticallEntry,
   type RpcClient,
 } from './rtorrent';
+import { SerialTasks } from './serialTasks';
 import {
   decodeSettingValue,
   readableSettings,
@@ -40,86 +41,19 @@ import {
   unsupportedSettingKeys,
   type GlobalSettings,
 } from './settings';
-import { Store, type ThrottleGroup } from './store';
+import { Store } from './store';
+import { normalizeThrottle, throttleEntries } from './throttles';
 import { magnetInfoHash, parseTorrentFile } from './torrentfile';
+import { requireRecord } from './validation';
 import type { XValue } from './xmlrpc';
 
 export type { GlobalSettings };
-
-export interface GlobalStatus {
-  connected: boolean;
-  error?: string;
-  downRate: number;
-  upRate: number;
-  downTotal: number;
-  upTotal: number;
-  downLimit: number;
-  upLimit: number;
-  torrentCount: number;
-  activeCount: number;
-  dhtNodes: number;
-  listenPort: number;
-  /** Free bytes on the download volume; null when it cannot be determined. */
-  diskFree: number | null;
-  /** rtorrent's default download directory, shown as the Add dialog's default. */
-  downloadDir: string;
-  /** What this server allows, so the UI stops offering what it would refuse. */
-  policy: Policy;
-  backend: BackendSummary;
-  history: RateSample[];
-}
-
-/** The CASCADE_ALLOW_* switches, as the UI needs them. */
-export interface Policy {
-  /** The API console and /RPC2. */
-  rawRpc: boolean;
-  /** Removing a torrent together with its downloaded data. */
-  deleteData: boolean;
-}
-
-export interface BackendSummary {
-  clientVersion: string;
-  libraryVersion: string;
-  apiVersion: string;
-  flavor: string;
-  methodCount: number;
-  rpcFacility: string;
-  endpoint: string;
-  supports: Record<string, boolean>;
-}
-
-export interface RateSample {
-  t: number;
-  down: number;
-  up: number;
-}
-
-export interface StateResponse {
-  status: GlobalStatus;
-  torrents: Torrent[];
-  throttles: ThrottleGroup[];
-  game: GameState;
-}
-
-/** How a torrent is added: started or not, and where and under what label. */
-export interface LoadOptions {
-  start: boolean;
-  directory?: string;
-  label?: string;
-}
-
-/** The log-verbosity state the dialog shows. */
-export interface LogScopeState {
-  /** Baked into rtorrent.rc by RT_LOG_LEVEL; fixed until the container restarts. */
-  boot: string[];
-  /** Raised from the UI on top of that; live, persisted, re-applied. */
-  extra: string[];
-  available: string[];
-  supported: boolean;
-}
+export type {
+  GlobalStatus, Policy, BackendSummary, RateSample, StateResponse,
+  LoadOptions, LogScopeState,
+} from './contracts';
 
 const HISTORY_LENGTH = 180;
-const THROTTLE_NAME_RE = /^[A-Za-z0-9_.-]{1,32}$/;
 
 /**
  * The log scopes the UI may attach at runtime, which is also the input
@@ -159,85 +93,21 @@ export function sanitizeLogScopes(input: unknown): string[] {
   return LOG_SCOPES.filter((scope) => wanted.has(scope));
 }
 
-/**
- * Torrents to start again once their hash check finishes.
- *
- * "Recheck & restart" exists for rtorrent's own dead end: "Download
- * registered as completed, but hash check returned unfinished chunks" stops
- * the torrent, and a plain recheck leaves it stopped when the check ends —
- * so fixing it by hand is two actions timed around a progress bar. The
- * check itself can run for however long the disk takes, far past any HTTP
- * request, so the action only *registers* the wish here and the poll tick
- * feeds readings in until one of them says start.
- *
- * The decision is pure so it can be tested: feed it d.hashing readings and
- * it answers wait, start or drop. A reading above zero proves the check is
- * running (rtorrent marks even a queued check); the first zero after that
- * means it finished. A check so fast every poll missed it entirely is
- * covered by the zero-reading floor — after a few polls of nothing, the
- * only explanation left is that it already ran.
- */
-export class PendingRestarts {
-  private readonly entries = new Map<
-    string,
-    { sawHashing: boolean; zeroReads: number; since: number }
-  >();
-
-  /** How long a pending restart may wait: a full rehash of a huge torrent
-   *  on a slow disk is hours, so the ceiling is generous. */
-  static readonly MAX_AGE_MS = 24 * 60 * 60 * 1000;
-  /** Zero readings that mean "the check came and went between polls". */
-  static readonly ZERO_READS_FLOOR = 3;
-
-  add(hash: string, now = Date.now()): void {
-    this.entries.set(hash, { sawHashing: false, zeroReads: 0, since: now });
-  }
-
-  get size(): number {
-    return this.entries.size;
-  }
-
-  hashes(): string[] {
-    return [...this.entries.keys()];
-  }
-
-  /**
-   * Fold one d.hashing reading in. null means the torrent could not be
-   * asked (erased, or the call faulted): nothing left to restart.
-   */
-  step(hash: string, hashing: number | null, now = Date.now()): 'wait' | 'start' | 'drop' {
-    const entry = this.entries.get(hash);
-    if (!entry) return 'drop';
-    if (hashing === null || now - entry.since > PendingRestarts.MAX_AGE_MS) {
-      this.entries.delete(hash);
-      return 'drop';
-    }
-    if (hashing > 0) {
-      entry.sawHashing = true;
-      entry.zeroReads = 0;
-      return 'wait';
-    }
-    entry.zeroReads += 1;
-    if (entry.sawHashing || entry.zeroReads >= PendingRestarts.ZERO_READS_FLOOR) {
-      this.entries.delete(hash);
-      return 'start';
-    }
-    return 'wait';
-  }
-}
-
 export class RtorrentService {
   readonly client: RpcClient;
   readonly capabilities: Capabilities;
   private readonly history: RateSample[] = [];
-  private lastError: string | undefined;
-  private connected = false;
   private pollTimer: NodeJS.Timeout | null = null;
   private polling = false;
   private throttlesApplied = false;
   private bootSettingsApplied = false;
   private lastGameUpdate = 0;
   private readonly pendingRestarts = new PendingRestarts();
+  private readonly torrentWrites = new SerialTasks();
+  private readonly throttleWrites = new SerialTasks();
+  private readonly loads = new SerialTasks();
+  private torrentRead: Promise<Torrent[]> | null = null;
+  private stateRead: Promise<StateResponse> | null = null;
   /** Scopes attached to the log during this rtorrent session. Reset when the
    *  connection drops: a restarted rtorrent has forgotten them. */
   private attachedScopes = new Set<string>();
@@ -271,24 +141,20 @@ export class RtorrentService {
     const tick = async () => {
       try {
         await this.sampleRates();
-        this.connected = true;
-        this.lastError = undefined;
         if (!this.bootSettingsApplied) await this.applyBootSettings();
         if (!this.throttlesApplied) await this.reapplyThrottles();
         if (!this.logScopesApplied) await this.reapplyLogScopes();
         await this.processPendingRestarts();
         // Keep lifetime counters moving even when no browser is watching.
         if (this.config.gamify && Date.now() - this.lastGameUpdate > 30_000) {
-          this.updateGame(await this.torrents());
+          await this.torrents();
         }
-      } catch (error) {
-        this.connected = false;
+      } catch {
         this.throttlesApplied = false;
         this.bootSettingsApplied = false;
         this.logScopesApplied = false;
         this.attachedScopes.clear();
         this.capabilities.invalidate();
-        this.lastError = (error as Error).message;
       }
       if (!this.polling) return;
       this.pollTimer = setTimeout(tick, this.config.pollIntervalMs);
@@ -333,7 +199,7 @@ export class RtorrentService {
     }
     let patch: Partial<GlobalSettings>;
     try {
-      patch = JSON.parse(raw) as Partial<GlobalSettings>;
+      patch = requireRecord(JSON.parse(raw), 'startup settings');
     } catch (error) {
       console.warn(`[cascade] ignoring malformed ${this.config.bootSettingsFile}:`, (error as Error).message);
       return;
@@ -366,12 +232,10 @@ export class RtorrentService {
     }
     const groups = this.store.throttles();
     if (groups.length > 0) {
-      const entries: MulticallEntry[] = [];
-      for (const group of groups) {
-        entries.push({ methodName: 'throttle.up', params: ['', group.name, `${group.up}`] });
-        entries.push({ methodName: 'throttle.down', params: ['', group.name, `${group.down}`] });
-      }
-      await this.client.multicallSettled(entries);
+      await Promise.all(groups.map(({ name }) => this.throttleWrites.run(name, async () => {
+        const group = this.store.throttles().find((item) => item.name === name);
+        if (group) await this.client.multicall(throttleEntries(group));
+      })));
     }
     this.throttlesApplied = true;
   }
@@ -397,7 +261,7 @@ export class RtorrentService {
       // What RT_LOG_LEVEL baked into rtorrent.rc at container start — shown
       // as fixed, since the rc reasserts it on every rtorrent start.
       boot: this.config.logLevel
-        .split(',')
+        .split(/[,\s]+/)
         .map((scope) => scope.trim())
         .filter(Boolean),
       extra: sanitizeLogScopes(this.store.logScopes()),
@@ -452,11 +316,19 @@ export class RtorrentService {
 
   /* ------------------------------- reads -------------------------------- */
 
-  async state(): Promise<StateResponse> {
+  state(): Promise<StateResponse> {
+    // Several browsers can poll together; share the expensive snapshot and
+    // never fold the same, delayed counters into the store out of order.
+    if (!this.stateRead) {
+      this.stateRead = this.readState().finally(() => { this.stateRead = null; });
+    }
+    return this.stateRead;
+  }
+
+  private async readState(): Promise<StateResponse> {
     await this.capabilities.ensure();
     const torrents = await this.torrents();
     const status = await this.status(torrents);
-    this.updateGame(torrents);
     return {
       status,
       torrents,
@@ -485,7 +357,15 @@ export class RtorrentService {
     );
   }
 
-  async torrents(view = 'main'): Promise<Torrent[]> {
+  torrents(view = 'main'): Promise<Torrent[]> {
+    if (view !== 'main') return this.readTorrents(view);
+    if (!this.torrentRead) {
+      this.torrentRead = this.readTorrents(view).finally(() => { this.torrentRead = null; });
+    }
+    return this.torrentRead;
+  }
+
+  private async readTorrents(view: string): Promise<Torrent[]> {
     await this.capabilities.ensure();
     const dialect = this.capabilities.dialect;
     const rows = await this.client.fieldMulticall(
@@ -501,7 +381,10 @@ export class RtorrentService {
     });
     // Only the complete list may drive pruning: a filtered view would look
     // like every other torrent had been removed and erase its bookkeeping.
-    if (view === 'main') this.store.prune(hashes);
+    if (view === 'main') {
+      this.store.prune(hashes);
+      this.updateGame(torrents);
+    }
     return torrents;
   }
 
@@ -535,8 +418,9 @@ export class RtorrentService {
     const directory = answer('directory.default');
 
     return {
-      connected: this.connected,
-      error: this.lastError,
+      // A successful read proves the connection is up even before the first
+      // background tick or just after recovery.
+      connected: true,
       downRate: number('throttle.global_down.rate'),
       upRate: number('throttle.global_up.rate'),
       downTotal: number('throttle.global_down.total'),
@@ -644,7 +528,11 @@ export class RtorrentService {
 
   /* ------------------------------- writes ------------------------------- */
 
-  async addTorrentFile(data: Buffer, options: LoadOptions): Promise<void> {
+  addTorrentFile(data: Buffer, options: LoadOptions): Promise<void> {
+    return this.loads.run('session', () => this.loadTorrentFile(data, options));
+  }
+
+  private async loadTorrentFile(data: Buffer, options: LoadOptions): Promise<void> {
     await this.capabilities.ensure();
 
     // rtorrent reports success for anything, so reject junk before handing it
@@ -684,7 +572,13 @@ export class RtorrentService {
     }
   }
 
-  async addTorrentUrl(url: string, options: LoadOptions): Promise<void> {
+  addTorrentUrl(url: string, options: LoadOptions): Promise<void> {
+    // URL loads have no known hash. Concurrent additions through this service
+    // must not satisfy another URL's "a new torrent appeared" confirmation.
+    return this.loads.run('session', () => this.loadTorrentUrl(url, options));
+  }
+
+  private async loadTorrentUrl(url: string, options: LoadOptions): Promise<void> {
     await this.capabilities.ensure();
     // load.* silently queues whatever it is given; a link rtorrent cannot fetch
     // would just vanish, so refuse anything that is not fetchable up front.
@@ -703,6 +597,9 @@ export class RtorrentService {
     // For a fetched URL there is nothing to compare against, so note what the
     // session held first and watch for something new to appear.
     const wanted = magnetInfoHash(link);
+    if (/^magnet:/i.test(link) && !wanted) {
+      throw new HttpError(400, 'magnet link must contain a valid xt=urn:btih: info hash');
+    }
     if (wanted) {
       await this.client.call(method, ['', link, ...this.loadCommands(options)]);
       if (await this.waitForTorrent(wanted)) return;
@@ -759,7 +656,11 @@ export class RtorrentService {
     return commands;
   }
 
-  async action(hash: string, action: string): Promise<void> {
+  action(hash: string, action: string): Promise<void> {
+    return this.torrentWrites.run(hash, () => this.performAction(hash, action));
+  }
+
+  private async performAction(hash: string, action: string): Promise<void> {
     await this.capabilities.ensure();
     const entries: MulticallEntry[] = [];
     switch (action) {
@@ -780,7 +681,6 @@ export class RtorrentService {
       case 'recheck':
       case 'recheck-restart':
         entries.push({ methodName: 'd.stop', params: [hash] });
-        entries.push({ methodName: 'd.check_hash', params: [hash] });
         // A stale error ("registered as completed, but hash check returned
         // unfinished chunks") outranks everything in the status derivation,
         // so left in place it hides the very check the user just started.
@@ -788,6 +688,7 @@ export class RtorrentService {
         if (this.capabilities.has('d.message.set')) {
           entries.push({ methodName: 'd.message.set', params: [hash, ''] });
         }
+        entries.push({ methodName: 'd.check_hash', params: [hash] });
         break;
       case 'announce':
         if (!this.capabilities.supports('trackerAnnounce')) {
@@ -798,7 +699,12 @@ export class RtorrentService {
       default:
         throw new HttpError(400, `unknown action "${action}"`);
     }
-    await this.client.multicall(entries);
+    const missing = entries.find((entry) => !this.capabilities.has(entry.methodName));
+    if (missing) throw new HttpError(501, `this rtorrent build does not expose ${missing.methodName}`);
+    if (action !== 'announce') this.pendingRestarts.cancel(hash);
+    // Lifecycle commands must be separate, ordered requests (rtorrent 0.15.2
+    // can crash when lifecycle changes and setters share a multicall).
+    for (const entry of entries) await this.client.call(entry.methodName, entry.params);
     // The restart half cannot happen here: the check runs for as long as the
     // disk takes, far past this request. The poll tick watches for the end.
     if (action === 'recheck-restart') this.pendingRestarts.add(hash);
@@ -806,21 +712,17 @@ export class RtorrentService {
 
   /**
    * Start whatever finished its recheck since the last tick — the second
-   * half of "recheck & restart". One read-only multicall for every pending
-   * hash; the starts go out as their own calls, never batched with anything
-   * else (quirk 5: lifecycle mixes in one multicall have segfaulted
-   * rtorrent).
+   * half of "recheck & restart". Reads and starts share the torrent's mutation
+   * queue so a later stop cannot be overtaken. Starts remain separate calls
+   * (quirk 5: lifecycle mixes in one multicall have segfaulted rtorrent).
    */
   private async processPendingRestarts(): Promise<void> {
     if (this.pendingRestarts.size === 0) return;
-    const hashes = this.pendingRestarts.hashes();
-    const readings = await this.client.multicallSettled(
-      hashes.map((hash) => ({ methodName: 'd.hashing', params: [hash] })),
-    );
-    for (const [index, hash] of hashes.entries()) {
-      const value = readings[index];
+    for (const hash of this.pendingRestarts.hashes()) await this.torrentWrites.run(hash, async () => {
+      if (!this.pendingRestarts.has(hash)) return;
+      const [value] = await this.client.multicallSettled([{ methodName: 'd.hashing', params: [hash] }]);
       const hashing = value instanceof Error ? null : settledNumber(value);
-      if (this.pendingRestarts.step(hash, hashing) !== 'start') continue;
+      if (this.pendingRestarts.step(hash, hashing) !== 'start') return;
       try {
         await this.client.call('d.open', [hash]);
         await this.client.call('d.start', [hash]);
@@ -831,10 +733,14 @@ export class RtorrentService {
           (error as Error).message,
         );
       }
-    }
+    });
   }
 
-  async remove(hash: string, deleteData: boolean): Promise<void> {
+  remove(hash: string, deleteData: boolean): Promise<void> {
+    return this.torrentWrites.run(hash, () => this.removeTorrent(hash, deleteData));
+  }
+
+  private async removeTorrent(hash: string, deleteData: boolean): Promise<void> {
     await this.capabilities.ensure();
     let dataPath: string | undefined;
     if (deleteData) {
@@ -846,29 +752,15 @@ export class RtorrentService {
       // left the metadata gone and the data behind — the one combination the
       // user did not ask for. An empty base path (never started) has nothing
       // to check or delete.
-      if (basePath) dataPath = this.assertDeletable(basePath);
+      if (basePath) dataPath = await assertDeletable(basePath, this.config.deleteRoots);
     }
     await this.client.call('d.erase', [hash]);
+    this.pendingRestarts.cancel(hash);
     this.store.forget(hash);
-    if (dataPath) await fs.rm(dataPath, { recursive: true, force: true });
-  }
-
-  /** Only ever unlink paths that live inside a configured data root. */
-  private assertDeletable(basePath: string): string {
-    const resolved = path.resolve(basePath);
-    const allowed = this.config.deleteRoots.some(
-      (root) => resolved === root || resolved.startsWith(`${root}${path.sep}`),
-    );
-    if (!allowed) {
-      throw new HttpError(
-        403,
-        `refusing to delete "${resolved}": it is outside the permitted data roots (${this.config.deleteRoots.join(', ') || 'none'})`,
-      );
+    if (dataPath) {
+      await assertDeletable(dataPath, this.config.deleteRoots);
+      await fs.rm(dataPath, { recursive: true, force: true });
     }
-    if (this.config.deleteRoots.includes(resolved)) {
-      throw new HttpError(403, `refusing to delete the data root itself (${resolved})`);
-    }
-    return resolved;
   }
 
   async setPriority(hash: string, priority: number): Promise<void> {
@@ -883,7 +775,11 @@ export class RtorrentService {
     await this.client.call('d.custom1.set', [hash, encodeURIComponent(label)]);
   }
 
-  async setTorrentThrottle(hash: string, name: string): Promise<void> {
+  setTorrentThrottle(hash: string, name: string): Promise<void> {
+    return this.torrentWrites.run(hash, () => this.changeTorrentThrottle(hash, name));
+  }
+
+  private async changeTorrentThrottle(hash: string, name: string): Promise<void> {
     await this.capabilities.ensure();
     if (!this.capabilities.supports('perTorrentThrottle')) {
       throw new HttpError(501, 'this rtorrent build does not expose d.throttle_name');
@@ -895,7 +791,12 @@ export class RtorrentService {
     const state = await this.client.call('d.is_active', [hash]);
     const wasActive = Number(state) !== 0;
     if (wasActive) await this.client.call('d.stop', [hash]);
-    await this.client.call('d.throttle_name.set', [hash, name]);
+    try {
+      await this.client.call('d.throttle_name.set', [hash, name]);
+    } catch (error) {
+      if (wasActive) await this.client.call('d.start', [hash]).catch(() => {});
+      throw error;
+    }
     if (wasActive) await this.client.call('d.start', [hash]);
     await this.client.call('d.save_full_session', [hash]);
   }
@@ -903,20 +804,32 @@ export class RtorrentService {
   async setTorrentSlots(hash: string, uploads?: number, downloads?: number): Promise<void> {
     await this.capabilities.ensure();
     const entries: MulticallEntry[] = [];
-    if (uploads !== undefined && this.capabilities.supports('perTorrentMaxUploads')) {
+    if ((uploads !== undefined && !this.capabilities.supports('perTorrentMaxUploads')) ||
+        (downloads !== undefined && !this.capabilities.supports('perTorrentMaxDownloads'))) {
+      throw new HttpError(501, 'this rtorrent build does not support the requested per-torrent slot setting');
+    }
+    if (uploads !== undefined) {
       entries.push({ methodName: 'd.uploads_max.set', params: [hash, uploads] });
     }
-    if (downloads !== undefined && this.capabilities.supports('perTorrentMaxDownloads')) {
+    if (downloads !== undefined) {
       entries.push({ methodName: 'd.downloads_max.set', params: [hash, downloads] });
     }
     if (entries.length > 0) await this.client.multicall(entries);
   }
 
-  async moveDirectory(hash: string, directory: string): Promise<void> {
-    await this.client.multicall([
-      { methodName: 'd.directory.set', params: [hash, directory] },
-      { methodName: 'd.save_full_session', params: [hash] },
-    ]);
+  setDirectory(hash: string, directory: string): Promise<void> {
+    return this.torrentWrites.run(hash, async () => {
+      await this.capabilities.ensure();
+      if (!this.capabilities.supports('perTorrentDirectory')) {
+        throw new HttpError(501, 'this rtorrent build does not support changing a torrent directory');
+      }
+      // Close before changing paths: rtorrent refuses an open download whose
+      // files were moved, and frozen file paths must be rebuilt on next open.
+      // Leave it stopped so the owner can move the data and recheck it first.
+      await this.performAction(hash, 'stop');
+      await this.client.call('d.directory.set', [hash, directory]);
+      await this.client.call('d.save_full_session', [hash]);
+    });
   }
 
   async setFilePriority(hash: string, index: number, priority: number): Promise<void> {
@@ -971,22 +884,33 @@ export class RtorrentService {
 
   /* ---------------------------- throttle groups -------------------------- */
 
-  async saveThrottle(group: ThrottleGroup): Promise<void> {
+  saveThrottle(group: ThrottleGroup): Promise<void> {
+    return this.throttleWrites.run(group.name, () => this.writeThrottle(group));
+  }
+
+  patchThrottle(name: string, patch: Partial<Pick<ThrottleGroup, 'up' | 'down'>>): Promise<void> {
+    return this.throttleWrites.run(name, async () => {
+      const group = this.store.throttles().find((item) => item.name === name);
+      if (!group) throw new HttpError(404, `no throttle group named "${name}"`);
+      await this.writeThrottle({ ...group, ...patch });
+    });
+  }
+
+  private async writeThrottle(group: ThrottleGroup): Promise<void> {
+    const normalized = normalizeThrottle(group);
     await this.capabilities.ensure();
     if (!this.capabilities.supports('throttleGroups')) {
       throw new HttpError(501, 'this rtorrent build does not support throttle groups');
     }
-    if (!THROTTLE_NAME_RE.test(group.name)) {
-      throw new HttpError(400, 'throttle name must be 1-32 chars of [A-Za-z0-9_.-]');
-    }
-    await this.client.multicall([
-      { methodName: 'throttle.up', params: ['', group.name, `${Math.max(0, group.up)}`] },
-      { methodName: 'throttle.down', params: ['', group.name, `${Math.max(0, group.down)}`] },
-    ]);
-    this.store.upsertThrottle(group);
+    await this.client.multicall(throttleEntries(normalized));
+    this.store.upsertThrottle(normalized);
   }
 
-  async deleteThrottle(name: string): Promise<void> {
+  deleteThrottle(name: string): Promise<void> {
+    return this.throttleWrites.run(name, () => this.removeThrottle(name));
+  }
+
+  private async removeThrottle(name: string): Promise<void> {
     await this.capabilities.ensure();
     // throttle.up creates a group it does not know, so unlimiting a name the
     // store never saved would conjure one up rather than remove anything.
@@ -996,7 +920,7 @@ export class RtorrentService {
     if (this.capabilities.supports('throttleGroups')) {
       // rtorrent cannot drop a throttle group at runtime; unlimit it instead so
       // torrents still assigned to it are no longer restricted.
-      await this.client.multicallSettled([
+      await this.client.multicall([
         { methodName: 'throttle.up', params: ['', name, '0'] },
         { methodName: 'throttle.down', params: ['', name, '0'] },
       ]);
@@ -1007,14 +931,15 @@ export class RtorrentService {
   async throttleRates(): Promise<Record<string, { up: number; down: number }>> {
     await this.capabilities.ensure();
     const groups = this.store.throttles();
-    if (groups.length === 0 || !this.capabilities.has('throttle.up.rate')) return {};
+    if (groups.length === 0 || !this.capabilities.has('throttle.up.rate') ||
+        !this.capabilities.has('throttle.down.rate')) return {};
     const entries: MulticallEntry[] = [];
     for (const group of groups) {
       entries.push({ methodName: 'throttle.up.rate', params: ['', group.name] });
       entries.push({ methodName: 'throttle.down.rate', params: ['', group.name] });
     }
     const results = await this.client.multicallSettled(entries);
-    const rates: Record<string, { up: number; down: number }> = {};
+    const rates: Record<string, { up: number; down: number }> = Object.create(null);
     groups.forEach((group, index) => {
       rates[group.name] = {
         up: settledNumber(results[index * 2]),
@@ -1040,8 +965,8 @@ export class RtorrentService {
       const { size } = await handle.stat();
       const start = Math.max(0, size - TAIL_BYTES);
       const buffer = Buffer.alloc(size - start);
-      await handle.read(buffer, 0, buffer.length, start);
-      const rows = buffer.toString('utf8').split('\n').filter(Boolean);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+      const rows = buffer.subarray(0, bytesRead).toString('utf8').split('\n').filter(Boolean);
       if (start > 0) rows.shift(); // The first row is almost certainly cut mid-line.
       return rows.slice(-lines);
     } finally {

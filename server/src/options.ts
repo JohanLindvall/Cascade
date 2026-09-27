@@ -1,3 +1,5 @@
+import type { GlobalSettings } from './contracts';
+
 /**
  * Every environment variable Cascade understands, in one place.
  *
@@ -15,6 +17,9 @@
 
 export interface OptionDef {
   name: string;
+  /** Live setting applied at startup, validated through SETTING_SPECS. */
+  setting?: keyof GlobalSettings;
+  kib?: boolean;
   section: string;
   summary: string;
   /** The value the code falls back to when unset. */
@@ -139,49 +144,49 @@ export const OPTIONS: OptionDef[] = [
 
   /* --------------------------- bandwidth and slots ------------------------- */
   {
-    name: 'RT_DOWNLOAD_RATE',
+    name: 'RT_DOWNLOAD_RATE', setting: 'downloadRate', kib: true,
     section: 'Bandwidth and slots',
     summary: 'Global download limit',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_UPLOAD_RATE',
+    name: 'RT_UPLOAD_RATE', setting: 'uploadRate', kib: true,
     section: 'Bandwidth and slots',
     summary: 'Global upload limit',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MAX_UPLOADS',
+    name: 'RT_MAX_UPLOADS', setting: 'maxUploads',
     section: 'Bandwidth and slots',
     summary: 'Upload slots per torrent',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MIN_UPLOADS',
+    name: 'RT_MIN_UPLOADS', setting: 'minUploads',
     section: 'Bandwidth and slots',
     summary: 'Minimum upload slots per torrent',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MAX_UPLOADS_GLOBAL',
+    name: 'RT_MAX_UPLOADS_GLOBAL', setting: 'maxUploadsGlobal',
     section: 'Bandwidth and slots',
     summary: 'Upload slots across all torrents',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MAX_DOWNLOADS',
+    name: 'RT_MAX_DOWNLOADS', setting: 'maxDownloads',
     section: 'Bandwidth and slots',
     summary: 'Download slots per torrent',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MIN_DOWNLOADS',
+    name: 'RT_MIN_DOWNLOADS', setting: 'minDownloads',
     section: 'Bandwidth and slots',
     summary: 'Minimum download slots per torrent',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MAX_DOWNLOADS_GLOBAL',
+    name: 'RT_MAX_DOWNLOADS_GLOBAL', setting: 'maxDownloadsGlobal',
     section: 'Bandwidth and slots',
     summary: 'Download slots across all torrents',
     note: RTORRENT_DEFAULT,
@@ -189,31 +194,31 @@ export const OPTIONS: OptionDef[] = [
 
   /* --------------------------------- peers --------------------------------- */
   {
-    name: 'RT_MIN_PEERS',
+    name: 'RT_MIN_PEERS', setting: 'minPeers',
     section: 'Peers',
     summary: 'Minimum peers while leeching',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MAX_PEERS',
+    name: 'RT_MAX_PEERS', setting: 'maxPeers',
     section: 'Peers',
     summary: 'Maximum peers while leeching',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MIN_PEERS_SEED',
+    name: 'RT_MIN_PEERS_SEED', setting: 'minPeersSeed',
     section: 'Peers',
     summary: 'Minimum peers while seeding (-1 disables)',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MAX_PEERS_SEED',
+    name: 'RT_MAX_PEERS_SEED', setting: 'maxPeersSeed',
     section: 'Peers',
     summary: 'Maximum peers while seeding (-1 disables)',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_PEX',
+    name: 'RT_PEX', setting: 'pex',
     section: 'Peers',
     summary: 'Peer exchange, yes/no',
     note: RTORRENT_DEFAULT,
@@ -233,56 +238,56 @@ export const OPTIONS: OptionDef[] = [
     default: 'no',
   },
   {
-    name: 'RT_PORT_OPEN',
+    name: 'RT_PORT_OPEN', setting: 'portOpen',
     section: 'Network',
     summary: 'Open the listening port, yes/no (removed in rtorrent 0.16)',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_ENCRYPTION',
+    name: 'RT_ENCRYPTION', setting: 'encryption',
     section: 'Network',
     summary: 'e.g. allow_incoming,try_outgoing,enable_retry',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_BIND',
+    name: 'RT_BIND', setting: 'bindAddress',
     section: 'Network',
     summary: 'Bind address for outgoing connections',
     note: 'unset',
   },
-  { name: 'RT_IP', section: 'Network', summary: 'Address reported to trackers', note: 'unset' },
+  { name: 'RT_IP', setting: 'localAddress', section: 'Network', summary: 'Address reported to trackers', note: 'unset' },
   {
-    name: 'RT_BIND_IPV4',
+    name: 'RT_BIND_IPV4', setting: 'bindAddressV4',
     section: 'Network',
     summary: 'IPv4 bind address (rtorrent 0.16+)',
     note: 'unset',
   },
   {
-    name: 'RT_BIND_IPV6',
+    name: 'RT_BIND_IPV6', setting: 'bindAddressV6',
     section: 'Network',
     summary: 'IPv6 bind address (rtorrent 0.16+)',
     note: 'unset',
   },
   {
-    name: 'RT_PROXY',
+    name: 'RT_PROXY', setting: 'proxyAddress',
     section: 'Network',
     summary: 'HTTP proxy for tracker announces',
     note: 'unset',
   },
   {
-    name: 'RT_PROXY_HTTP',
+    name: 'RT_PROXY_HTTP', setting: 'proxyHttp',
     section: 'Network',
     summary: 'Proxy for all HTTP traffic (rtorrent 0.16+)',
     note: 'unset',
   },
   {
-    name: 'RT_PROXY_GLOBAL',
+    name: 'RT_PROXY_GLOBAL', setting: 'proxyGlobal',
     section: 'Network',
     summary: 'Proxy for all traffic (rtorrent 0.16+)',
     note: 'unset',
   },
   {
-    name: 'RT_BLOCK_OUTGOING',
+    name: 'RT_BLOCK_OUTGOING', setting: 'blockOutgoing',
     section: 'Network',
     summary: 'yes refuses outgoing connections (rtorrent 0.16+)',
     note: RTORRENT_DEFAULT,
@@ -290,55 +295,55 @@ export const OPTIONS: OptionDef[] = [
 
   /* ----------------------------- trackers and DHT --------------------------- */
   {
-    name: 'RT_DHT',
+    name: 'RT_DHT', setting: 'dhtMode',
     section: 'Trackers and DHT',
     summary: 'disable, off, auto or on',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_DHT_PORT',
+    name: 'RT_DHT_PORT', setting: 'dhtPort',
     section: 'Trackers and DHT',
     summary: 'DHT UDP port',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_DHT_OVERRIDE_PORT',
+    name: 'RT_DHT_OVERRIDE_PORT', setting: 'dhtOverridePort',
     section: 'Trackers and DHT',
     summary: 'Announce a different DHT port (rtorrent 0.16+)',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_UDP_TRACKERS',
+    name: 'RT_UDP_TRACKERS', setting: 'udpTrackers',
     section: 'Trackers and DHT',
     summary: 'Allow UDP trackers, yes/no',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_TRACKER_NUMWANT',
+    name: 'RT_TRACKER_NUMWANT', setting: 'trackersNumwant',
     section: 'Trackers and DHT',
     summary: 'Peers requested per announce (-1 leaves it to the tracker)',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_HTTP_CAPATH',
+    name: 'RT_HTTP_CAPATH', setting: 'httpCapath',
     section: 'Trackers and DHT',
     summary: 'Directory of CA certificates for tracker TLS',
     note: 'unset',
   },
   {
-    name: 'RT_HTTP_CACERT',
+    name: 'RT_HTTP_CACERT', setting: 'httpCacert',
     section: 'Trackers and DHT',
     summary: 'CA bundle file for tracker TLS',
     note: 'unset',
   },
   {
-    name: 'RT_SSL_VERIFY_PEER',
+    name: 'RT_SSL_VERIFY_PEER', setting: 'sslVerifyPeer',
     section: 'Trackers and DHT',
     summary: 'Verify tracker TLS certificates, yes/no',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_SSL_VERIFY_HOST',
+    name: 'RT_SSL_VERIFY_HOST', setting: 'sslVerifyHost',
     section: 'Trackers and DHT',
     summary: 'Verify tracker TLS hostnames, yes/no',
     note: RTORRENT_DEFAULT,
@@ -346,55 +351,55 @@ export const OPTIONS: OptionDef[] = [
 
   /* -------------------------------- storage -------------------------------- */
   {
-    name: 'RT_PREALLOCATE',
+    name: 'RT_PREALLOCATE', setting: 'preallocate',
     section: 'Storage',
     summary: 'Preallocate files, yes/no',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_HASH_ON_COMPLETION',
+    name: 'RT_HASH_ON_COMPLETION', setting: 'checkHashOnCompletion',
     section: 'Storage',
     summary: 'Re-verify on completion, yes/no',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_ADVISE_RANDOM_HASHING',
+    name: 'RT_ADVISE_RANDOM_HASHING', setting: 'adviseRandomHashing',
     section: 'Storage',
     summary: 'Random-access hint while hashing, yes/no (rtorrent 0.16+)',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MEMORY_MAX',
+    name: 'RT_MEMORY_MAX', setting: 'memoryMax',
     section: 'Storage',
     summary: 'Piece memory cap, bytes',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MAX_FILE_SIZE',
+    name: 'RT_MAX_FILE_SIZE', setting: 'maxFileSize',
     section: 'Storage',
     summary: 'Largest accepted file, bytes',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_SYNC_TIMEOUT',
+    name: 'RT_SYNC_TIMEOUT', setting: 'syncTimeout',
     section: 'Storage',
     summary: 'Piece disk-sync timeout, seconds',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_PRELOAD_TYPE',
+    name: 'RT_PRELOAD_TYPE', setting: 'preloadType',
     section: 'Storage',
     summary: 'Piece preload: 0 off, 1 madvise, 2 direct paging',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_PRELOAD_MIN_SIZE',
+    name: 'RT_PRELOAD_MIN_SIZE', setting: 'preloadMinSize',
     section: 'Storage',
     summary: 'Only preload torrents above this piece size, bytes',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_PRELOAD_MIN_RATE',
+    name: 'RT_PRELOAD_MIN_RATE', setting: 'preloadMinRate',
     section: 'Storage',
     summary: 'Only preload above this upload rate, bytes/s',
     note: RTORRENT_DEFAULT,
@@ -402,43 +407,43 @@ export const OPTIONS: OptionDef[] = [
 
   /* ----------------------------- resource limits ---------------------------- */
   {
-    name: 'RT_MAX_OPEN_FILES',
+    name: 'RT_MAX_OPEN_FILES', setting: 'maxOpenFiles',
     section: 'Resource limits',
     summary: 'Open file handle cap',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MAX_OPEN_SOCKETS',
+    name: 'RT_MAX_OPEN_SOCKETS', setting: 'maxOpenSockets',
     section: 'Resource limits',
     summary: 'Open socket cap',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_MAX_HTTP_OPEN',
+    name: 'RT_MAX_HTTP_OPEN', setting: 'maxHttpOpen',
     section: 'Resource limits',
     summary: 'Concurrent HTTP requests (read-only on rtorrent 0.16+)',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_HTTP_MAX_HOST',
+    name: 'RT_HTTP_MAX_HOST', setting: 'httpMaxHostConnections',
     section: 'Resource limits',
     summary: 'HTTP connections per host (rtorrent 0.16+)',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_DNS_CACHE_TIMEOUT',
+    name: 'RT_DNS_CACHE_TIMEOUT', setting: 'dnsCacheTimeout',
     section: 'Resource limits',
     summary: 'DNS cache lifetime, seconds',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_RECEIVE_BUFFER',
+    name: 'RT_RECEIVE_BUFFER', setting: 'receiveBuffer',
     section: 'Resource limits',
     summary: 'Socket receive buffer, bytes',
     note: RTORRENT_DEFAULT,
   },
   {
-    name: 'RT_SEND_BUFFER',
+    name: 'RT_SEND_BUFFER', setting: 'sendBuffer',
     section: 'Resource limits',
     summary: 'Socket send buffer, bytes',
     note: RTORRENT_DEFAULT,
@@ -464,7 +469,7 @@ export const OPTIONS: OptionDef[] = [
     default: '127.0.0.1',
   },
   {
-    name: 'RT_XMLRPC_SIZE_LIMIT',
+    name: 'RT_XMLRPC_SIZE_LIMIT', setting: 'xmlrpcSizeLimit',
     section: 'RPC',
     summary: 'Max XML-RPC request size, bytes (raises the .torrent upload ceiling)',
     default: '16777216',
@@ -518,7 +523,7 @@ export const OPTIONS: OptionDef[] = [
   {
     name: 'CASCADE_MAX_UPLOAD_MB',
     section: 'Web server',
-    summary: 'Largest accepted .torrent upload, MiB',
+    summary: 'Maximum combined .torrent file size per upload batch, MiB',
     default: '64',
   },
   {

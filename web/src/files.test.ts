@@ -65,10 +65,10 @@ test('a drop without files reads its link list first, then its plain text', () =
   assert.equal(dropText(null), '');
 });
 
-test('dropped text yields its magnet and http(s) links, and nothing else', () => {
-  const text = '# a comment\nmagnet:?xt=urn:btih:abc\r\nhttps://tracker.example/x.torrent  ftp://no http:nope words';
+test('dropped text yields supported links and ignores complete comment lines', () => {
+  const text = '# a comment with https://ignored.example/a\nmagnet:?xt=urn:btih:abc\r\nhttps://tracker.example/x.torrent  ftp://files.example/a.torrent http:nope words';
   assert.deepEqual(linksFromDrop(text), {
-    links: ['magnet:?xt=urn:btih:abc', 'https://tracker.example/x.torrent'],
+    links: ['magnet:?xt=urn:btih:abc', 'https://tracker.example/x.torrent', 'ftp://files.example/a.torrent'],
     problem: null,
   });
 });

@@ -15,6 +15,16 @@ export function useLatest<T>(value: T): MutableRefObject<T> {
   return ref;
 }
 
+/** Async actions may finish after their dialog closes; don't close a newer dialog. */
+export function useMounted(): MutableRefObject<boolean> {
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  return mounted;
+}
+
 /**
  * Run `task` now and then every `intervalMs` after it settles.
  *
@@ -40,19 +50,20 @@ export function usePolling(
 
     const tick = async () => {
       window.clearTimeout(timer);
-      if (running) return; // The tick in flight schedules the next one.
+      if (running || !alive || document.hidden) return;
       running = true;
       try {
-        if (!document.hidden) await task(isCurrent);
+        await task(isCurrent);
       } catch {
         // The task reports its own failures; the loop must outlive them.
       } finally {
         running = false;
       }
-      if (alive) timer = window.setTimeout(() => void tick(), intervalMs);
+      if (alive && !document.hidden) timer = window.setTimeout(() => void tick(), intervalMs);
     };
 
     const onVisible = () => {
+      window.clearTimeout(timer);
       if (!document.hidden && alive) void tick();
     };
 

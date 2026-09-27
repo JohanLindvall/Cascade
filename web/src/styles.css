@@ -1442,6 +1442,26 @@ table.grid {
   table-layout: fixed;
 }
 
+.files-grid { min-width: 540px; }
+.files-grid .col-size { width: 12%; }
+.files-grid .col-progress { width: 20%; }
+.files-grid .col-priority { width: 16%; }
+.peers-grid, .trackers-grid { min-width: 1000px; }
+.peers-grid .col-address { width: 18%; }
+.peers-grid .col-progress { width: 14%; }
+.peers-grid .col-down, .peers-grid .col-up, .peers-grid .col-swarm { width: 8%; }
+.peers-grid .col-down-total, .peers-grid .col-up-total { width: 9%; }
+.peers-grid .col-flags { width: 12%; }
+.trackers-grid .col-type { width: 6%; }
+.trackers-grid .col-state { width: 12%; }
+.trackers-grid .col-seeders, .trackers-grid .col-leechers, .trackers-grid .col-peers,
+.trackers-grid .col-attempts, .trackers-grid .col-enabled { width: 7%; }
+.trackers-grid .col-downloaded { width: 9%; }
+.trackers-grid .col-next { width: 10%; }
+.throttle-grid { min-width: 680px; }
+.throttle-grid .col-limit { width: 22%; }
+.throttle-grid .col-delete { width: 6%; }
+
 table.grid th {
   position: sticky;
   top: -12px;
@@ -1474,6 +1494,17 @@ table.grid tbody tr:hover {
 }
 
 /* ------------------------ expandable detail rows ------------------------ */
+
+.row-toggle {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
 
 table.grid tr.expandable {
   cursor: pointer;
@@ -1662,6 +1693,12 @@ table.grid tr.detail-row > td {
   gap: 16px;
 }
 
+.modal-body > .form-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
 .modal-foot {
   display: flex;
   align-items: center;
@@ -1688,7 +1725,8 @@ table.grid tr.detail-row > td {
   background: var(--panel);
 }
 
-.section > h3 {
+.section > h3,
+.section > .form-fields > h3 {
   margin: 0 0 12px;
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -2089,17 +2127,17 @@ body {
 
 /* Wide desktop keeps every column; below that they drop by usefulness. */
 @media (max-width: 1280px) {
-  td.col-added,
-  th.col-added {
+  .torrents td.col-added,
+  .torrents th.col-added {
     display: none;
   }
 }
 
 @media (max-width: 1140px) {
-  td.col-ratio,
-  th.col-ratio,
-  td.col-eta,
-  th.col-eta {
+  .torrents td.col-ratio,
+  .torrents th.col-ratio,
+  .torrents td.col-eta,
+  .torrents th.col-eta {
     display: none;
   }
   .search .input {
@@ -2111,8 +2149,8 @@ body {
   :root {
     --sidebar-w: 200px;
   }
-  td.col-peers,
-  th.col-peers {
+  .torrents td.col-peers,
+  .torrents th.col-peers {
     display: none;
   }
   .rate-cluster .spark {
@@ -2155,7 +2193,7 @@ body {
 
   .app,
   .app.no-sidebar {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
       'header'
       'main';
@@ -2175,12 +2213,14 @@ body {
     border-right: 1px solid var(--border-strong);
     box-shadow: var(--shadow);
     transform: translateX(-101%);
-    transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1);
+    visibility: hidden;
+    transition: transform 0.22s cubic-bezier(0.2, 0.9, 0.3, 1), visibility 0.22s;
     padding-bottom: calc(14px + env(safe-area-inset-bottom));
   }
 
   .sidebar.open {
     transform: none;
+    visibility: visible;
   }
 
   .scrim {
@@ -2314,15 +2354,10 @@ body {
     grid-template-columns: 1fr;
   }
 
-  /* Wide detail tables scroll inside their own pane. */
-  .detail-body > table.grid {
-    display: block;
-    overflow-x: auto;
-    white-space: nowrap;
-  }
-
   .mini-kv {
     grid-template-columns: 1fr;
+    /* Expanded details remain readable beside the left edge of a wide table. */
+    max-width: calc(100vw - 60px);
   }
 
   /* Dialogs take the whole screen. */
@@ -2409,6 +2444,20 @@ body {
   gap: 8px;
   padding: 10px;
   padding-bottom: calc(10px + env(safe-area-inset-bottom));
+}
+
+.header .rate-value {
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  /* Two fixed-width lines leave room for the wordmark and theme button even
+     at 360px; live values cannot resize the header between polls. */
+  .rate-cluster {
+    flex-direction: column;
+    gap: 2px;
+    padding: 3px 6px;
+  }
 }
 
 .torrent-card {
@@ -4031,4 +4080,11 @@ table.grid th.right {
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+/* A form can be frozen during submission without changing its layout. */
+.form-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
 }

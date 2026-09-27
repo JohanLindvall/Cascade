@@ -37,9 +37,10 @@ target="$(grep -rl 'set_user_agent(USER_AGENT)' src 2>/dev/null | head -n1 || tr
   exit 1
 }
 
-sed -i "s|set_user_agent(USER_AGENT)|set_user_agent(std::string(\"${USER_AGENT}\"))|" "$target"
+replacement="$(printf '%s' "$USER_AGENT" | sed 's/[&|]/\\&/g')"
+sed -i "s|set_user_agent(USER_AGENT)|set_user_agent(std::string(\"${replacement}\"))|" "$target"
 
-grep -q "set_user_agent(std::string(\"${USER_AGENT}\"))" "$target" || {
+grep -Fq "set_user_agent(std::string(\"${USER_AGENT}\"))" "$target" || {
   echo "apply-rtorrent: the User-Agent edit did not take in $target" >&2
   exit 1
 }

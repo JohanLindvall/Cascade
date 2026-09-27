@@ -11,66 +11,11 @@
  * against `system.listMethods` first, so a setting this backend lacks simply
  * disappears instead of faulting.
  */
+import type { GlobalSettings } from './contracts';
+export type { GlobalSettings } from './contracts';
 import type { MulticallEntry } from './rtorrent';
 import type { XValue } from './xmlrpc';
-
-export interface GlobalSettings {
-  downloadRate: number;
-  uploadRate: number;
-  maxUploads: number;
-  minUploads: number;
-  maxDownloads: number;
-  minDownloads: number;
-  maxUploadsGlobal: number;
-  maxDownloadsGlobal: number;
-  maxUploadsDiv: number;
-  maxDownloadsDiv: number;
-  maxPeers: number;
-  minPeers: number;
-  maxPeersSeed: number;
-  minPeersSeed: number;
-  maxOpenFiles: number;
-  maxOpenSockets: number;
-  maxHttpOpen: number;
-  httpMaxHostConnections: number;
-  dnsCacheTimeout: number;
-  memoryMax: number;
-  syncTimeout: number;
-  preloadType: number;
-  preloadMinSize: number;
-  preloadMinRate: number;
-  portRange: string;
-  portRandom: boolean;
-  portOpen: boolean;
-  dhtMode: string;
-  dhtPort: number;
-  dhtOverridePort: number;
-  pex: boolean;
-  udpTrackers: boolean;
-  trackersNumwant: number;
-  encryption: string;
-  preallocate: boolean;
-  checkHashOnCompletion: boolean;
-  adviseRandomHashing: boolean;
-  directory: string;
-  sessionDirectory: string;
-  bindAddress: string;
-  bindAddressV4: string;
-  bindAddressV6: string;
-  localAddress: string;
-  proxyAddress: string;
-  proxyHttp: string;
-  proxyGlobal: string;
-  httpCapath: string;
-  httpCacert: string;
-  sslVerifyPeer: boolean;
-  sslVerifyHost: boolean;
-  xmlrpcSizeLimit: number;
-  receiveBuffer: number;
-  sendBuffer: number;
-  maxFileSize: number;
-  blockOutgoing: boolean;
-}
+import { requireBool, requireInt, requireRecord, requireString } from './validation';
 
 /** How a value is coerced on its way to (and from) rtorrent. */
 type SettingKind =
@@ -286,25 +231,25 @@ export function decodeSettingValue(key: keyof GlobalSettings, value: XValue): XV
   }
 }
 
-function coerce(kind: SettingKind, value: unknown): XValue[] {
+function coerce(kind: SettingKind, value: unknown, key: string): XValue[] {
   switch (kind) {
     case 'uint':
-      return [Math.max(0, Math.trunc(Number(value) || 0))];
+      return [requireInt(value, key)];
     case 'int':
-      return [Math.max(-1, Math.trunc(Number(value) || 0))];
+      return [requireInt(value, key, -1)];
     case 'bool':
-      return [value ? 1 : 0];
+      return [requireBool(value, key) ? 1 : 0];
     case 'flags': {
       // rtorrent takes each flag as its own argument, mirroring the
       // comma-separated form used in rtorrent.rc.
-      const flags = String(value)
+      const flags = requireString(value, key, true)
         .split(',')
         .map((flag) => flag.trim())
         .filter(Boolean);
       return flags.length > 0 ? flags : ['none'];
     }
     default:
-      return [String(value)];
+      return [requireString(value, key, true)];
   }
 }
 
@@ -316,17 +261,18 @@ function coerce(kind: SettingKind, value: unknown): XValue[] {
  * target and fault with -503 "Wrong object type".
  */
 export function settingEntries(
-  patch: Partial<GlobalSettings>,
+  patch: unknown,
   resolve: ResolveMethod,
 ): MulticallEntry[] {
   const entries: MulticallEntry[] = [];
+  const values = requireRecord(patch, 'settings');
   for (const key of SETTING_KEYS) {
-    if (patch[key] === undefined) continue;
+    if (values[key] === undefined) continue;
     const spec = SETTING_SPECS[key];
     if (!spec.set) continue;
     const method = resolve(spec.set);
     if (!method) continue;
-    entries.push({ methodName: method, params: ['', ...coerce(spec.kind, patch[key])] });
+    entries.push({ methodName: method, params: ['', ...coerce(spec.kind, values[key], key)] });
   }
   return entries;
 }

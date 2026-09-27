@@ -1,61 +1,55 @@
-/**
- * UI preference shape and validation.
- *
- * Persistence belongs to the state store — preferences, gamification progress
- * and the per-torrent bookkeeping all live in the same JSON file so there is a
- * single thing to back up or delete.
- */
+/** Shared preference schema and repair, used for both persisted state and the browser cache. */
+export const THEMES = ['system', 'light', 'dark', 'retro', 'blackmetal'] as const;
+export type ThemeMode = (typeof THEMES)[number];
+export const SORT_KEYS = [
+  'name', 'size', 'progress', 'status', 'downRate', 'upRate', 'ratio', 'eta', 'peers', 'addedAt', 'label',
+] as const;
+export type SortKey = (typeof SORT_KEYS)[number];
+export type SortDir = 'asc' | 'desc';
+export const DETAIL_HEIGHT = { min: 140, max: 2000 } as const;
+
 export interface Preferences {
-  /** system | light | dark | retro | blackmetal */
-  theme: string;
-  sortKey: string;
-  sortDir: 'asc' | 'desc';
+  theme: ThemeMode;
+  sortKey: SortKey;
+  sortDir: SortDir;
   detailHeight: number;
   /** Badge ids the user has already been shown a toast for. */
   seenBadges: string[];
 }
 
 export const DEFAULT_PREFERENCES: Preferences = {
-  theme: 'system',
-  sortKey: 'addedAt',
-  sortDir: 'desc',
-  detailHeight: 280,
-  seenBadges: [],
+  theme: 'system', sortKey: 'addedAt', sortDir: 'desc', detailHeight: 280, seenBadges: [],
 };
 
-const SORT_KEYS = new Set([
-  'name',
-  'size',
-  'progress',
-  'status',
-  'downRate',
-  'upRate',
-  'ratio',
-  'eta',
-  'peers',
-  'addedAt',
-  'label',
-]);
-const THEMES = new Set(['system', 'light', 'dark', 'retro', 'blackmetal']);
+export function isThemeMode(value: unknown): value is ThemeMode {
+  return (THEMES as readonly unknown[]).includes(value);
+}
 
-/** Merge a patch over the current values, dropping anything malformed. */
-export function sanitizePreferences(
-  current: Preferences,
-  patch: Partial<Preferences>,
-): Preferences {
-  const merged = { ...current, ...patch };
+export function isSortKey(value: unknown): value is SortKey {
+  return (SORT_KEYS as readonly unknown[]).includes(value);
+}
+
+/** Merge a patch over current values, repairing invalid fields without retaining unknown keys. */
+export function sanitizePreferences(current: Preferences, patch: unknown): Preferences {
+  const raw = patch && typeof patch === 'object' && !Array.isArray(patch)
+    ? patch as Record<string, unknown> : {};
+  const merged: Record<string, unknown> = { ...current, ...raw };
+  const height = typeof merged.detailHeight === 'number' ||
+    (typeof merged.detailHeight === 'string' && merged.detailHeight.trim() !== '')
+    ? Number(merged.detailHeight) : NaN;
   return {
-    theme: THEMES.has(String(merged.theme)) ? String(merged.theme) : DEFAULT_PREFERENCES.theme,
-    sortKey: SORT_KEYS.has(String(merged.sortKey))
-      ? String(merged.sortKey)
-      : DEFAULT_PREFERENCES.sortKey,
+    theme: isThemeMode(merged.theme) ? merged.theme : DEFAULT_PREFERENCES.theme,
+    sortKey: isSortKey(merged.sortKey) ? merged.sortKey : DEFAULT_PREFERENCES.sortKey,
     sortDir: merged.sortDir === 'asc' ? 'asc' : 'desc',
-    detailHeight: Math.min(
-      2000,
-      Math.max(140, Math.round(Number(merged.detailHeight) || DEFAULT_PREFERENCES.detailHeight)),
-    ),
+    detailHeight: Number.isFinite(height)
+      ? Math.min(DETAIL_HEIGHT.max, Math.max(DETAIL_HEIGHT.min, Math.round(height)))
+      : DEFAULT_PREFERENCES.detailHeight,
     seenBadges: Array.isArray(merged.seenBadges)
-      ? [...new Set(merged.seenBadges.map(String))].slice(0, 200)
+      ? [...new Set(merged.seenBadges.filter((item) => typeof item === 'string' || typeof item === 'number').map(String))].slice(0, 200)
       : [],
   };
+}
+
+export function normalizePreferences(value: unknown): Preferences {
+  return sanitizePreferences(DEFAULT_PREFERENCES, value);
 }

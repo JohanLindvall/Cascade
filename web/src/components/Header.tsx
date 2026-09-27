@@ -50,7 +50,7 @@ export function Header({
         </span>
       </div>
 
-      <button className="btn primary add-torrent" onClick={onAdd} title="Add torrent (n)">
+      <button className="btn primary add-torrent" onClick={onAdd} title="Add torrent (n)" aria-label="Add torrent">
         <IconPlus size={15} />
         <span>Add torrent</span>
       </button>

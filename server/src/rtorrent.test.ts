@@ -113,4 +113,12 @@ test('settledNumber reads faults and junk as zero', () => {
   assert.equal(settledNumber(new XmlRpcFault(-1, 'x')), 0);
   assert.equal(settledNumber('junk'), 0);
   assert.equal(settledNumber(undefined), 0);
+  assert.equal(settledNumber('Infinity'), 0);
+});
+
+test('malformed multicalls cannot masquerade as an empty session or successful writes', async () => {
+  const client = new RtorrentClient(TARGET, async () => respond('not a list'));
+  await assert.rejects(client.fieldMulticall('d.multicall2', ['', 'main'], ['d.hash']), /non-array/);
+  const short = new RtorrentClient(TARGET, async () => respond([]));
+  await assert.rejects(short.multicall([{ methodName: 'd.start', params: ['A'] }]), /number of results/);
 });

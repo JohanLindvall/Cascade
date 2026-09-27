@@ -2,7 +2,8 @@
  * Theme selection. "system" follows the OS preference; the rest are explicit.
  * The resolved value is written to <html data-theme> and drives the CSS tokens.
  */
-export type ThemeMode = 'system' | 'light' | 'dark' | 'retro' | 'blackmetal';
+import type { ThemeMode } from '../../server/src/prefs.ts';
+export { isThemeMode, type ThemeMode } from '../../server/src/prefs.ts';
 export type ResolvedTheme = 'light' | 'dark' | 'retro' | 'blackmetal';
 
 export const THEME_MODES: Array<{ mode: ThemeMode; label: string; hint: string }> = [
@@ -12,10 +13,6 @@ export const THEME_MODES: Array<{ mode: ThemeMode; label: string; hint: string }
   { mode: 'retro', label: 'Retro 8-bit', hint: 'CRT phosphor and hard pixels' },
   { mode: 'blackmetal', label: 'Black Metal', hint: 'Grim, frostbitten, monochrome' },
 ];
-
-export function isThemeMode(value: unknown): value is ThemeMode {
-  return THEME_MODES.some((item) => item.mode === value);
-}
 
 export function prefersDark(): boolean {
   return window.matchMedia('(prefers-color-scheme: dark)').matches;

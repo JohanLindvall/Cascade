@@ -80,6 +80,20 @@ test('supports covers features and every setting key', async () => {
   assert.equal(caps.has('d.custom1.set'), true);
 });
 
+test('composite features require all their commands and malformed probes are not cached', async () => {
+  const client = backend(['throttle.up']);
+  const caps = new Capabilities(client, FIELDS);
+  await caps.ensure();
+  assert.equal(caps.supports('throttleGroups'), false);
+  client.answer('system.listMethods', 'broken');
+  caps.invalidate();
+  await assert.rejects(caps.ensure(), /invalid system.listMethods/);
+  assert.equal(caps.ready, false);
+  client.answer('system.listMethods', ['throttle.up', 'throttle.down']);
+  await caps.ensure();
+  assert.equal(caps.supports('throttleGroups'), true);
+});
+
 test('system.capabilities (0.16) fills in the RPC facility', async () => {
   const caps = new Capabilities(
     backend(['d.multicall2', 'system.capabilities'], {

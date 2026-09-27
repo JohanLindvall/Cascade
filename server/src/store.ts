@@ -11,13 +11,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { EMPTY_STATS, type GameStats } from './achievements';
 import { DEFAULT_PREFERENCES, sanitizePreferences, type Preferences } from './prefs';
+import { normalizeThrottle, type ThrottleGroup } from './throttles';
 
-export interface ThrottleGroup {
-  name: string;
-  /** Bytes per second; 0 means unlimited. */
-  up: number;
-  down: number;
-}
+export type { ThrottleGroup } from './throttles';
 
 /** Last-seen totals per torrent, used to accumulate lifetime counters. */
 interface SeenTorrent {
@@ -53,6 +49,57 @@ function emptyData(): StoreData {
   };
 }
 
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+}
+
+function nonnegative(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function counters(value: unknown): Record<string, number> {
+  return Object.fromEntries(Object.entries(record(value)).filter((entry): entry is [string, number] => nonnegative(entry[1])));
+}
+
+function strings(value: unknown): string[] {
+  return Array.isArray(value) ? [...new Set(value.filter((item): item is string => typeof item === 'string'))] : [];
+}
+
+/** JSON can be well-formed while individual fields are corrupt or from an older version. */
+function restoreData(value: unknown): StoreData {
+  const parsed = record(value);
+  const stats = { ...EMPTY_STATS };
+  const savedStats = record(parsed.stats);
+  for (const key of Object.keys(stats) as Array<keyof GameStats>) {
+    if (nonnegative(savedStats[key])) stats[key] = savedStats[key];
+  }
+  const seen = Object.fromEntries(Object.entries(record(parsed.seen)).flatMap(([hash, value]) => {
+    const item = record(value);
+    return nonnegative(item.up) && nonnegative(item.down) && typeof item.complete === 'boolean'
+      ? [[hash, { up: item.up, down: item.down, complete: item.complete }]] : [];
+  }));
+  const throttles = new Map<string, ThrottleGroup>();
+  if (Array.isArray(parsed.throttles)) for (const value of parsed.throttles) {
+    const group = record(value);
+    if (typeof group.name === 'string' && typeof group.up === 'number' && typeof group.down === 'number') {
+      try {
+        throttles.set(group.name, normalizeThrottle({ name: group.name, up: group.up, down: group.down }));
+      } catch { /* Keep valid groups when another persisted entry is corrupt. */ }
+    }
+  }
+  return {
+    addedAt: counters(parsed.addedAt),
+    throttles: [...throttles.values()],
+    stats,
+    seen,
+    achievements: counters(parsed.achievements),
+    everCompleted: strings(parsed.everCompleted),
+    prefs: sanitizePreferences(DEFAULT_PREFERENCES, record(parsed.prefs)),
+    logScopes: strings(parsed.logScopes),
+  };
+}
+
 export class Store {
   private data: StoreData = emptyData();
   private completedSet = new Set<string>();
@@ -66,17 +113,7 @@ export class Store {
   private load(): void {
     try {
       const raw = fs.readFileSync(this.file, 'utf8');
-      const parsed = JSON.parse(raw) as Partial<StoreData>;
-      this.data = {
-        addedAt: parsed.addedAt ?? {},
-        throttles: parsed.throttles ?? [],
-        stats: { ...EMPTY_STATS, ...(parsed.stats ?? {}) },
-        seen: parsed.seen ?? {},
-        achievements: parsed.achievements ?? {},
-        everCompleted: parsed.everCompleted ?? [],
-        prefs: sanitizePreferences(DEFAULT_PREFERENCES, parsed.prefs ?? {}),
-        logScopes: Array.isArray(parsed.logScopes) ? parsed.logScopes.map(String) : [],
-      };
+      this.data = restoreData(JSON.parse(raw));
     } catch {
       // First run, or an unreadable/corrupt file: start clean.
       this.data = emptyData();
@@ -96,14 +133,18 @@ export class Store {
 
   flush(): void {
     if (!this.dirty) return;
-    this.dirty = false;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
     try {
       fs.mkdirSync(path.dirname(this.file), { recursive: true });
       const tmp = `${this.file}.tmp`;
       fs.writeFileSync(tmp, JSON.stringify(this.data, null, 2));
       fs.renameSync(tmp, this.file);
+      this.dirty = false;
     } catch (error) {
       console.warn(`[cascade] could not persist state to ${this.file}:`, (error as Error).message);
+      // Keep the unsaved state dirty and retry even if the session is idle.
+      this.scheduleFlush();
     }
   }
 
@@ -147,20 +188,23 @@ export class Store {
     return { ...this.data.prefs, seenBadges: [...this.data.prefs.seenBadges] };
   }
 
-  updatePreferences(patch: Partial<Preferences>): Preferences {
-    this.data.prefs = sanitizePreferences(this.data.prefs, patch);
-    this.scheduleFlush();
+  updatePreferences(patch: unknown): Preferences {
+    const prefs = sanitizePreferences(this.data.prefs, patch);
+    if (JSON.stringify(prefs) !== JSON.stringify(this.data.prefs)) {
+      this.data.prefs = prefs;
+      this.scheduleFlush();
+    }
     return this.preferences();
   }
 
   /* ------------------------------ game state ----------------------------- */
 
   get stats(): GameStats {
-    return this.data.stats;
+    return { ...this.data.stats };
   }
 
   get unlockedAchievements(): Record<string, number> {
-    return this.data.achievements;
+    return { ...this.data.achievements };
   }
 
   unlock(id: string, at = Math.floor(Date.now() / 1000)): void {
@@ -289,6 +333,7 @@ export class Store {
   }
 
   setLogScopes(scopes: string[]): void {
+    if (JSON.stringify(scopes) === JSON.stringify(this.data.logScopes)) return;
     this.data.logScopes = [...scopes];
     this.scheduleFlush();
   }
@@ -299,12 +344,15 @@ export class Store {
 
   upsertThrottle(group: ThrottleGroup): void {
     const index = this.data.throttles.findIndex((item) => item.name === group.name);
-    if (index >= 0) this.data.throttles[index] = group;
-    else this.data.throttles.push(group);
+    const previous = this.data.throttles[index];
+    if (previous?.up === group.up && previous.down === group.down) return;
+    if (index >= 0) this.data.throttles[index] = { ...group };
+    else this.data.throttles.push({ ...group });
     this.scheduleFlush();
   }
 
   removeThrottle(name: string): void {
+    if (!this.data.throttles.some((group) => group.name === name)) return;
     this.data.throttles = this.data.throttles.filter((item) => item.name !== name);
     this.scheduleFlush();
   }

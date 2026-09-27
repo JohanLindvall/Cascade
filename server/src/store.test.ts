@@ -18,7 +18,7 @@ function tempStore(): { store: Store; file: string } {
   return { store: new Store(file), file };
 }
 
-function torrent(over: Record<string, unknown> = {}) {
+function torrent(over: Partial<Parameters<Store['recordTorrents']>[0][number]> = {}) {
   return {
     hash: 'A'.repeat(40),
     upTotal: 0,
@@ -30,7 +30,7 @@ function torrent(over: Record<string, unknown> = {}) {
     label: '',
     finishedAt: 0,
     ...over,
-  } as never;
+  };
 }
 
 test('totals accumulate as deltas and survive removal', () => {
@@ -170,4 +170,59 @@ test('an unlocked badge keeps its first timestamp', () => {
   store.unlock('touchdown', 10);
   store.unlock('touchdown', 20);
   assert.equal(store.unlockedAchievements.touchdown, 10);
+});
+
+test('a failed flush is retried without another mutation', () => {
+  const { store, file } = tempStore();
+  fs.mkdirSync(file); // rename over a directory fails, even as root
+  store.updatePreferences({ theme: 'retro' });
+  store.flush();
+  fs.rmdirSync(file);
+  store.flush();
+  assert.equal(new Store(file).preferences().theme, 'retro');
+});
+
+test('valid JSON with malformed fields repairs only the affected fields', () => {
+  const { file } = tempStore();
+  fs.writeFileSync(file, JSON.stringify({
+    addedAt: [], throttles: [null, { name: 'slow', up: 1024, down: 2048 }],
+    stats: { lifetimeUp: 'bad', completed: 7 }, seen: { bad: null },
+    achievements: { touchdown: 42, broken: 'no' }, everCompleted: 42,
+    prefs: { theme: 'retro' },
+  }));
+  const store = new Store(file);
+  assert.equal(store.stats.lifetimeUp, 0);
+  assert.equal(store.stats.completed, 7);
+  assert.equal(store.preferences().theme, 'retro');
+  assert.deepEqual(store.throttles(), [{ name: 'slow', up: 1024, down: 2048 }]);
+  assert.deepEqual(store.unlockedAchievements, { touchdown: 42 });
+  store.recordTorrents([torrent()]);
+});
+
+test('identical preference, throttle and scope writes do not dirty the store', () => {
+  const { store, file } = tempStore();
+  const group = { name: 'slow', up: 1024, down: 2048 };
+  store.upsertThrottle(group);
+  store.setLogScopes(['debug']);
+  store.updatePreferences({ theme: 'retro' });
+  store.flush();
+  fs.rmSync(file);
+  store.upsertThrottle(group);
+  store.setLogScopes(['debug']);
+  store.updatePreferences({ theme: 'retro' });
+  store.removeThrottle('missing');
+  store.flush();
+  assert.ok(!fs.existsSync(file));
+  group.up = 99;
+  assert.equal(store.throttles()[0].up, 1024, 'caller cannot mutate saved state');
+});
+
+test('saved throttle limits migrate to representable KiB rates without losing valid groups', () => {
+  const { file } = tempStore();
+  fs.writeFileSync(file, JSON.stringify({ throttles: [
+    { name: 'small', up: 1, down: 1025 },
+    { name: 'bad', up: -1, down: 0 },
+    { name: 'NULL', up: 0, down: 0 },
+  ] }));
+  assert.deepEqual(new Store(file).throttles(), [{ name: 'small', up: 1024, down: 2048 }]);
 });

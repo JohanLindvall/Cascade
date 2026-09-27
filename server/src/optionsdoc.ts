@@ -66,7 +66,10 @@ function main(): void {
   const write = process.argv.includes('--write');
   const problems: string[] = [];
 
-  const used = new Set([...envNamesIn(ENTRYPOINT), ...envNamesIn(CONFIG_TS)]);
+  const used = new Set([
+    ...envNamesIn(ENTRYPOINT), ...envNamesIn(CONFIG_TS),
+    ...OPTIONS.filter((option) => option.setting).map((option) => option.name),
+  ]);
   const catalogued = new Set(OPTIONS.map((option) => option.name));
 
   for (const name of [...used].sort()) {

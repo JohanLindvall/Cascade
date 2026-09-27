@@ -35,6 +35,7 @@ import { magnetLink, nameErrors } from './format';
 import { grimAchievement, grimGame } from './grim';
 import { useLatest, usePolling } from './hooks';
 import { fetchPreferences, readCache, savePreferences, type Preferences } from './prefs';
+import { redactSecrets } from './redact';
 import {
   EMPTY_SELECTION,
   actionTargets,
@@ -134,14 +135,18 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let alive = true;
     fetchPreferences()
       .then((stored) => {
+        if (!alive) return;
         setPrefs(stored);
         seenBadgesRef.current = stored.seenBadges;
       })
       .catch(() => {
+        if (!alive) return;
         seenBadgesRef.current = readCache().seenBadges;
       });
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {
@@ -185,11 +190,11 @@ export function App() {
     [grimRef, toast, updatePrefs],
   );
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (isCurrent: () => boolean = () => true) => {
     const seq = ++stateSeq.current.issued;
     /** Whether a newer answer is already on screen; if not, this one takes its place. */
     const superseded = () => {
-      if (seq < stateSeq.current.shown) return true;
+      if (!isCurrent() || seq < stateSeq.current.shown) return true;
       stateSeq.current.shown = seq;
       return false;
     };
@@ -444,11 +449,11 @@ export function App() {
       title: 'Change directory',
       label: 'Directory',
       message:
-        'rtorrent updates its session only — move the files yourself if they are already downloaded, or recheck afterwards.',
+        'The torrent will be stopped and its download path changed. Move any downloaded files yourself, then use Recheck & restart.',
       items: hashes.map((hash) => nameOf(hash) ?? hash),
       initial: shared(hashes, (torrent) => torrent.directory),
       placeholder: status?.downloadDir || '/downloads',
-      confirmLabel: 'Move',
+      confirmLabel: 'Change directory',
     });
     if (!directory?.trim()) return;
     await patchTorrents({ directory: directory.trim() }, hashes);
@@ -535,6 +540,8 @@ export function App() {
    * the dropped file, which throws the UI away mid-drop.
    */
   const onDragOver = (event: DragEvent) => {
+    if (isTextEntry(event.target) && !Array.from(event.dataTransfer.types).includes('Files') &&
+        !Array.from(event.dataTransfer.items).some((item) => item.kind === 'file')) return;
     event.preventDefault();
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
   };
@@ -577,7 +584,7 @@ export function App() {
     const { accepted, ignored } = acceptTorrents(dropped);
     if (ignored) toast.push('info', ignored);
     const launch = (count: number) =>
-      setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count, flavor });
+      game?.enabled && setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count, flavor });
 
     if (accepted.length > 0) {
       launch(accepted.length);
@@ -603,7 +610,8 @@ export function App() {
   // navigate to the file, discarding the UI.
   useEffect(() => {
     const block = (event: globalThis.DragEvent) => {
-      if (isTextEntry(event.target) && !event.dataTransfer?.types.includes('Files')) return;
+      if (isTextEntry(event.target) && !event.dataTransfer?.types.includes('Files') &&
+          !Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === 'file')) return;
       event.preventDefault();
     };
     window.addEventListener('dragover', block);
@@ -631,6 +639,7 @@ export function App() {
     // modal listens for itself) and must not also clear the selection
     // behind it, and Delete must not stack a second confirmation.
     if (modalOpen) return;
+    if (drawerOpen && event.key !== 'Escape') return;
     if (menu || (event.target instanceof Element && event.target.closest('[role="menu"]'))) {
       if (event.key === 'Escape') setMenu(null);
       return;
@@ -758,7 +767,7 @@ export function App() {
         {connectionError && (
           <div className="banner" role="alert">
             <IconAlert size={15} />
-            <span className="grow">{connectionError}</span>
+            <span className="grow">{redactSecrets(connectionError)}</span>
             <button className="btn sm ghost" onClick={() => void refresh()}>
               <IconRefresh size={13} />
               <span>Retry</span>
@@ -776,15 +785,15 @@ export function App() {
           >
             <IconFilter size={14} />
           </button>
-          <button className="btn sm" onClick={() => void runAction('start')} disabled={none}>
+          <button className="btn sm" aria-label="Start" onClick={() => void runAction('start')} disabled={none}>
             <IconPlay size={12} />
             <span>Start</span>
           </button>
-          <button className="btn sm" onClick={() => void runAction('pause')} disabled={none}>
+          <button className="btn sm" aria-label="Pause" onClick={() => void runAction('pause')} disabled={none}>
             <IconPause size={13} />
             <span>Pause</span>
           </button>
-          <button className="btn sm" onClick={() => void runAction('stop')} disabled={none}>
+          <button className="btn sm" aria-label="Stop" onClick={() => void runAction('stop')} disabled={none}>
             <IconStop size={12} />
             <span>Stop</span>
           </button>
@@ -793,6 +802,7 @@ export function App() {
             onClick={() => void removeTorrents(false)}
             disabled={none}
             title="Remove (Delete)"
+            aria-label="Remove"
           >
             <IconTrash size={13} />
             <span>Remove</span>
@@ -800,13 +810,14 @@ export function App() {
 
           <div className="divider" />
 
-          <button className="btn sm" onClick={() => void runAction('recheck')} disabled={none}>
+          <button className="btn sm" aria-label="Recheck" onClick={() => void runAction('recheck')} disabled={none}>
             <IconRefresh size={13} />
             <span>Recheck</span>
           </button>
           <button
             className="btn sm"
             onClick={() => void promptLabel()}
+            aria-label="Label"
             disabled={none || !labelsSupported}
             title={labelsSupported ? undefined : 'Not supported by this rtorrent build'}
           >
@@ -858,7 +869,7 @@ export function App() {
 
           <div className="header-spacer" />
 
-          <button className="btn sm" onClick={() => setDialog('log')} title="rtorrent log">
+          <button className="btn sm" onClick={() => setDialog('log')} title="rtorrent log" aria-label="rtorrent log">
             <IconList size={13} />
             <span>Log</span>
           </button>

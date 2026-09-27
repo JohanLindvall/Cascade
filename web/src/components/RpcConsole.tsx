@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { redactSecrets } from '../redact';
 import { IconTerminal } from './icons';
 import { Field, Modal, useToast } from './ui';
 
@@ -35,6 +36,7 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
   }, [methods, filter]);
 
   const run = async () => {
+    if (busy) return;
     setBusy(true);
     setFault(false);
     try {
@@ -47,14 +49,14 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
       }
       const result = await api.rpc(method.trim(), parsed);
       if (result.ok) {
-        setOutput(JSON.stringify(result.result, null, 2));
+        setOutput(redactSecrets(JSON.stringify(result.result, null, 2) ?? 'null'));
       } else {
         setFault(true);
-        setOutput(`fault ${result.fault?.code}: ${result.fault?.message}`);
+        setOutput(redactSecrets(`fault ${result.fault?.code}: ${result.fault?.message}`));
       }
     } catch (error) {
       setFault(true);
-      setOutput(error instanceof Error ? error.message : String(error));
+      setOutput(redactSecrets(error instanceof Error ? error.message : String(error)));
     } finally {
       setBusy(false);
     }

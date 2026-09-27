@@ -25,6 +25,7 @@ export function percent(value: number, digits = 1): string {
 
 export function duration(seconds: number | null): string {
   if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return '∞';
+  seconds = Math.round(seconds);
   if (seconds === 0) return '—';
   if (seconds < 60) return `${Math.round(seconds)}s`;
   const minutes = Math.floor(seconds / 60);
@@ -78,7 +79,9 @@ export function parseRate(input: string): number | null {
   const match = /^(\d+(?:\.\d+)?|\.\d+)\s*(?:([kmg])(?:i?b)?|(b))?(?:\/s)?$/i.exec(text);
   if (!match) return null;
   const factor = match[3] ? 1 : RATE_FACTORS[(match[2] ?? 'k').toLowerCase()];
-  return Math.round(Number(match[1]) * factor);
+  const value = Number(match[1]) * factor;
+  const rounded = value > 0 ? Math.max(1, Math.round(value)) : 0;
+  return Number.isSafeInteger(rounded) ? rounded : null;
 }
 
 /**
@@ -97,7 +100,8 @@ export function parseWholeNumber(input: string, min = 0): number | null {
 export function formatRateInput(value: number): string {
   if (!value) return '';
   if (value % 1024 ** 2 === 0) return `${value / 1024 ** 2}M`;
-  return `${Math.round(value / 1024)}k`;
+  if (value % 1024 === 0) return `${value / 1024}k`;
+  return `${value} B/s`;
 }
 
 /**

@@ -6,6 +6,7 @@ import type {
   ThrottleGroup,
   TorrentFile,
   Tracker,
+  UploadResult,
 } from './types';
 
 // Resolve against the document base so the UI works under any WEB_BASE_PATH.
@@ -37,7 +38,7 @@ function timeoutSignal(ms: number): AbortSignal | undefined {
  * when it fails. Everything that talks to /api goes through here.
  */
 export async function request<T>(path: string, init?: RequestInitEx): Promise<T> {
-  const { timeoutMs = 15_000, ...rest } = init ?? {};
+  const { timeoutMs = 35_000, ...rest } = init ?? {};
   let response: Response;
   try {
     response = await fetch(`${API_BASE}${path}`, {
@@ -100,11 +101,12 @@ export const api = {
   },
 
   upload: (form: FormData) =>
-    request<{ added: number; errors: string[] }>('torrents/upload', {
+    request<UploadResult>('torrents/upload', {
       method: 'POST',
       body: form,
       // Uploads carry payloads and wait for rtorrent to confirm each load.
-      timeoutMs: 120_000,
+      timeoutMs: Math.max(120_000, 30_000 + 12_000 * (form.getAll('torrents').length +
+        String(form.get('urls') ?? '').split(/[\r\n]+/).filter((line) => line.trim()).length)),
     }),
 
   bulkAction: (hashes: string[], action: string) =>
@@ -145,6 +147,8 @@ export const api = {
       'throttles',
     ),
   saveThrottle: (group: ThrottleGroup) => json<{ ok: boolean }>('throttles', 'POST', group),
+  patchThrottle: (name: string, patch: Partial<Pick<ThrottleGroup, 'up' | 'down'>>) =>
+    json<{ ok: boolean }>(`throttles/${encodeURIComponent(name)}`, 'PATCH', patch),
   deleteThrottle: (name: string) =>
     json<{ ok: boolean }>(`throttles/${encodeURIComponent(name)}`, 'DELETE'),
 

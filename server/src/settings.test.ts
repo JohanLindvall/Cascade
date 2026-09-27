@@ -28,13 +28,13 @@ test('every setter is invoked against the empty-string target', () => {
   }
 });
 
-test('coercion by kind: clamps, booleans, flags', () => {
+test('coercion by kind: valid integers, booleans, flags', () => {
   const entry = (patch: Record<string, unknown>) =>
     settingEntries(patch, resolveAll)[0];
 
-  assert.deepEqual(entry({ downloadRate: -5 })?.params, ['', 0]); // uint clamps at 0
+  assert.throws(() => entry({ downloadRate: -5 }), /downloadRate/);
   assert.deepEqual(entry({ maxPeersSeed: -1 })?.params, ['', -1]); // int keeps -1
-  assert.deepEqual(entry({ maxPeersSeed: -9 })?.params, ['', -1]);
+  assert.throws(() => entry({ maxPeersSeed: -9 }), /maxPeersSeed/);
   assert.deepEqual(entry({ pex: true })?.params, ['', 1]);
   assert.deepEqual(entry({ pex: false })?.params, ['', 0]);
   // One argument per flag — quirk 2: a joined string is refused by rtorrent.
@@ -44,6 +44,17 @@ test('coercion by kind: clamps, booleans, flags', () => {
     'try_outgoing',
   ]);
   assert.deepEqual(entry({ encryption: '' })?.params, ['', 'none']);
+});
+
+test('malformed values never become zero, unlimited or truthy booleans', () => {
+  for (const value of [null, '', 'fast', false, [], {}, Infinity, NaN, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => settingEntries({ downloadRate: value }, resolveAll), /downloadRate/);
+  }
+  for (const value of [null, '', [], {}, 'perhaps']) {
+    assert.throws(() => settingEntries({ pex: value }, resolveAll), /pex/);
+  }
+  assert.deepEqual(settingEntries({ pex: 'false' }, resolveAll)[0].params, ['', 0]);
+  for (const value of [null, [], 1]) assert.throws(() => settingEntries(value, resolveAll), /object/);
 });
 
 test('a key with no setter never produces an entry', () => {
