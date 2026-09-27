@@ -33,7 +33,7 @@ import { acceptTorrents, dropText, droppedFiles, linksFromDrop } from './files';
 import { filterTorrents, type Filter } from './filter';
 import { magnetLink, nameErrors } from './format';
 import { grimAchievement, grimGame } from './grim';
-import { useLatest, usePolling } from './hooks';
+import { useLatest } from './hooks';
 import { fetchPreferences, readCache, savePreferences, type Preferences } from './prefs';
 import { redactSecrets } from './redact';
 import {
@@ -48,8 +48,9 @@ import {
 } from './selection';
 import { defaultSortDir, sortTorrents, type SortKey, type SortState } from './sort';
 import { applyTheme, fxFlavor, resolveTheme, type ResolvedTheme, type ThemeMode } from './theme';
-import type { GameState, GlobalStatus, ThrottleGroup, Torrent } from './types';
+import type { GameState, ThrottleGroup, Torrent } from './types';
 import { COMPACT_QUERY, useMediaQuery } from './useMediaQuery';
+import { useStateStream } from './useStateStream';
 
 type Dialog = 'add' | 'settings' | 'throttles' | 'console' | 'log' | 'progress' | null;
 
@@ -60,7 +61,10 @@ interface MenuState {
   hash: string;
 }
 
-const REFRESH_MS = 1500;
+// Stable stand-ins until the first snapshot: a fresh [] on every render
+// would recompute everything keyed on the list.
+const NO_TORRENTS: Torrent[] = [];
+const NO_THROTTLES: ThrottleGroup[] = [];
 
 /** Fields that take typing, and dropped text, for themselves. A checkbox does not. */
 const TEXT_ENTRY =
@@ -75,12 +79,17 @@ const NO_DATA_DELETE =
   'Deleting data is switched off on this server (CASCADE_ALLOW_DATA_DELETE) — Delete alone removes the torrent and keeps its data.';
 
 export function App() {
-  const [torrents, setTorrents] = useState<Torrent[]>([]);
-  const [status, setStatus] = useState<GlobalStatus | null>(null);
-  const [throttles, setThrottles] = useState<ThrottleGroup[]>([]);
-  const [game, setGame] = useState<GameState | null>(null);
+  // The server's state, kept current by the stream: every change made through
+  // the API is read back at once, so nothing here asks for it again.
+  const stream = useStateStream();
+  const loaded = stream.state !== null;
+  const torrents = stream.state?.torrents ?? NO_TORRENTS;
+  const status = stream.state?.status ?? null;
+  const throttles = stream.state?.throttles ?? NO_THROTTLES;
+  const game = stream.state?.game ?? null;
+  const connectionError =
+    stream.error ?? (status && !status.connected ? (status.error ?? 'rtorrent is not responding') : null);
   const [trackerHosts, setTrackerHosts] = useState<Record<string, string>>({});
-  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   const [filter, setFilter] = useState<Filter>({ kind: 'status', value: 'all' });
   const [search, setSearch] = useState('');
@@ -112,12 +121,10 @@ export function App() {
   const dragDepth = useRef(0);
   const completedRef = useRef<Set<string> | null>(null);
   const seenBadgesRef = useRef<string[] | null>(null);
-  // Read by badge toasts without re-subscribing the poll to theme changes.
+  // Set once the stored preferences say which badges were already toasted.
+  const [badgesKnown, setBadgesKnown] = useState(false);
+  // Read by badge toasts without re-running them on theme changes.
   const grimRef = useLatest(grim);
-  // A refresh after an action and the poll's own tick can be in flight
-  // together; an answer older than the one on screen is dropped, or the
-  // pre-action state would flash back until the next tick.
-  const stateSeq = useRef({ issued: 0, shown: 0 });
   // Any modal — the app's own dialogs or a confirm/prompt — takes the keyboard.
   const modalOpen = dialog !== null || dialogs.open;
 
@@ -141,10 +148,12 @@ export function App() {
         if (!alive) return;
         setPrefs(stored);
         seenBadgesRef.current = stored.seenBadges;
+        setBadgesKnown(true);
       })
       .catch(() => {
         if (!alive) return;
         seenBadgesRef.current = readCache().seenBadges;
+        setBadgesKnown(true);
       });
     return () => { alive = false; };
   }, []);
@@ -159,7 +168,7 @@ export function App() {
     return () => media.removeEventListener('change', sync);
   }, [themeMode]);
 
-  /* ------------------------------ polling ------------------------------ */
+  /* ------------------------------- state -------------------------------- */
 
   /** Toast badges the user has not been told about yet. */
   const announceBadges = useCallback(
@@ -190,53 +199,29 @@ export function App() {
     [grimRef, toast, updatePrefs],
   );
 
-  const refresh = useCallback(async (isCurrent: () => boolean = () => true) => {
-    const seq = ++stateSeq.current.issued;
-    /** Whether a newer answer is already on screen; if not, this one takes its place. */
-    const superseded = () => {
-      if (!isCurrent() || seq < stateSeq.current.shown) return true;
-      stateSeq.current.shown = seq;
-      return false;
-    };
-    try {
-      const state = await api.state();
-      if (superseded()) return;
+  // Celebrate anything that finished since the last state. The first state
+  // only seeds the baseline so a page load does not fire off confetti. The
+  // list keeps its identity through a delta that touches no torrent (the
+  // global rates, the history), so this runs when a torrent changed, not on
+  // every delta.
+  const gameEnabled = game?.enabled === true;
+  useEffect(() => {
+    if (!loaded) return;
+    const done = new Set(torrents.filter((torrent) => torrent.progress >= 1).map((torrent) => torrent.hash));
+    const before = completedRef.current;
+    completedRef.current = done;
+    if (!before) return;
+    const fresh = torrents.filter((torrent) => torrent.progress >= 1 && !before.has(torrent.hash));
+    if (fresh.length === 0) return;
+    // The toast is plain feedback and fires for everyone; only the confetti
+    // belongs to the gamification layer and its flag.
+    if (gameEnabled) setCelebration((value) => value + 1);
+    for (const torrent of fresh) toast.push('success', `Finished — ${torrent.name}`);
+  }, [loaded, torrents, gameEnabled, toast]);
 
-      // Celebrate anything that finished since the last poll. The first poll
-      // only seeds the baseline so a page load does not fire off confetti.
-      const done = new Set(
-        state.torrents.filter((torrent) => torrent.progress >= 1).map((torrent) => torrent.hash),
-      );
-      if (completedRef.current) {
-        const fresh = state.torrents.filter(
-          (torrent) => torrent.progress >= 1 && !completedRef.current?.has(torrent.hash),
-        );
-        if (fresh.length > 0) {
-          // The toast is plain feedback and fires for everyone; only the
-          // confetti belongs to the gamification layer and its flag.
-          if (state.game?.enabled) setCelebration((value) => value + 1);
-          for (const torrent of fresh) {
-            toast.push('success', `Finished — ${torrent.name}`);
-          }
-        }
-      }
-      completedRef.current = done;
-
-      setTorrents(state.torrents);
-      setStatus(state.status);
-      setThrottles(state.throttles);
-      setGame(state.game ?? null);
-      announceBadges(state.game);
-      setConnectionError(
-        state.status.connected ? null : (state.status.error ?? 'rtorrent is not responding'),
-      );
-    } catch (error) {
-      if (superseded()) return;
-      setConnectionError(error instanceof Error ? error.message : String(error));
-    }
-  }, [announceBadges, toast]);
-
-  usePolling(refresh, REFRESH_MS);
+  useEffect(() => {
+    if (badgesKnown) announceBadges(game);
+  }, [game, badgesKnown, announceBadges]);
 
   // Tracker hosts change rarely; refresh them only when the torrent set changes.
   const hashKey = torrents.map((torrent) => torrent.hash).join(',');
@@ -355,15 +340,13 @@ export function App() {
     async (action: string, hashes: string[] = targets): Promise<boolean> => {
       if (hashes.length === 0) return false;
       try {
-        const ok = report(await api.bulkAction(hashes, action));
-        await refresh();
-        return ok;
+        return report(await api.bulkAction(hashes, action));
       } catch (error) {
         toast.error(error);
         return false;
       }
     },
-    [targets, report, refresh, toast],
+    [targets, report, toast],
   );
 
   /**
@@ -410,21 +393,19 @@ export function App() {
         }
         setSelection(EMPTY_SELECTION);
         setFocused(null);
-        await refresh();
       } catch (error) {
         toast.error(error);
       }
     },
-    [targets, policy, dialogs, nameOf, report, refresh, toast],
+    [targets, policy, dialogs, nameOf, report, toast],
   );
 
   const patchTorrents = useCallback(
     async (patch: Record<string, unknown>, hashes: string[] = targets) => {
       if (hashes.length === 0) return;
       report(await api.patchEach(hashes, patch));
-      await refresh();
     },
-    [targets, report, refresh],
+    [targets, report],
   );
 
   const promptLabel = async (hashes: string[] = targets) => {
@@ -551,7 +532,6 @@ export function App() {
     try {
       const result = await api.upload(form);
       for (const error of result.errors) toast.push('error', error);
-      if (result.added > 0) await refresh();
     } catch (error) {
       toast.error(error);
     }
@@ -768,7 +748,7 @@ export function App() {
           <div className="banner" role="alert">
             <IconAlert size={15} />
             <span className="grow">{redactSecrets(connectionError)}</span>
-            <button className="btn sm ghost" onClick={() => void refresh()}>
+            <button className="btn sm ghost" onClick={stream.retry}>
               <IconRefresh size={13} />
               <span>Retry</span>
             </button>
@@ -963,7 +943,6 @@ export function App() {
       {dialog === 'add' && (
         <AddDialog
           onClose={() => setDialog(null)}
-          onAdded={() => void refresh()}
           defaultDirectory={status?.downloadDir ?? ''}
           labels={labels}
         />
@@ -972,7 +951,13 @@ export function App() {
         <AchievementsDialog game={displayGame} grim={grim} onClose={() => setDialog(null)} />
       )}
       {dialog === 'settings' && (
-        <SettingsDialog onClose={() => setDialog(null)} backend={status?.backend ?? null} />
+        <SettingsDialog
+          onClose={() => setDialog(null)}
+          backend={status?.backend ?? null}
+          statePollMs={prefs.statePollMs}
+          statePollDefaultMs={status?.statePollDefaultMs ?? null}
+          onStatePollChange={(statePollMs) => updatePrefs({ statePollMs })}
+        />
       )}
       {dialog === 'throttles' && (
         <ThrottleDialog onClose={() => setDialog(null)} backend={status?.backend ?? null} />

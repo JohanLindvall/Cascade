@@ -6,8 +6,8 @@
  */
 import type { Torrent } from './types';
 
-import type { SortKey, SortDir } from '../../server/src/prefs.ts';
-export { SORT_KEYS, isSortKey, type SortKey, type SortDir } from '../../server/src/prefs.ts';
+import type { SortKey, SortDir } from './preferences.ts';
+export { SORT_KEYS, isSortKey, type SortKey, type SortDir } from './preferences.ts';
 
 export interface SortState {
   key: SortKey;

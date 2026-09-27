@@ -1,6 +1,6 @@
 # Cascade — build, run and test targets.
 #
-# Everything runs through Docker: no local Node toolchain is required.
+# Everything runs through Docker: no local Go or Node toolchain is required.
 
 IMAGE            ?= cascade
 TAG              ?= latest
@@ -61,7 +61,7 @@ help: ## Show this help
 
 ##@ Build
 
-build: ## Build the image (also typechecks both TypeScript halves)
+build: ## Build the image (also tests the Go server, typechecks and tests the web)
 	docker build $(BUILD_ARGS) -t $(REF) .
 
 matrix: ## Build the rtorrent versions the UI is tested against

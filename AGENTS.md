@@ -4,106 +4,123 @@ Guidance for working in this repository.
 
 ## What this is
 
-A web UI for rtorrent, shipped as one Docker image that also contains rtorrent. TypeScript on
-both sides. The backend talks XML-RPC over SCGI to a local rtorrent; the frontend is a React SPA
-served by that same backend.
+A web UI for rtorrent, shipped as one Docker image that also contains rtorrent. The server is Go,
+the UI TypeScript and React. The server talks XML-RPC over SCGI to a local rtorrent, serves the
+SPA, and streams the state to every open page as deltas.
 
 ```
-server/src/
-  xmlrpc.ts       XML-RPC encode/decode, hand-written (no dependency)
-  scgi.ts         SCGI framing over a unix socket or TCP
-  rtorrent.ts     request queue + multicall helpers; RpcClient, the interface
-                  everything above it depends on (a Transport can be injected)
-  capabilities.ts probes system.listMethods, picks a command dialect
-  model.ts        rtorrent fields -> Torrent/File/Peer/Tracker
-  contracts.ts    HTTP data shapes shared with the browser
-  settings.ts     every rtorrent global setting as one declarative table
-  options.ts      every environment variable as one catalog; renders --help
-  optionsdoc.ts   dev/CI only: checks that catalog against the container + README
-  bootSettings.ts catalog environment mappings -> validated startup JSON
-  config.ts       loadConfig(env) -> Config, defaults taken from options.ts
-  service.ts      all application behaviour
-  serialTasks.ts  serialize mutations per torrent or throttle group
-  pendingRestarts.ts pure state machine for recheck & restart
-  dataPaths.ts    lexical and realpath checks for delete-data
-  throttles.ts    name/rate validation and KiB/s command encoding
-  validation.ts  strict API and startup-setting primitives
-  uploads.ts     bounds combined in-memory upload size
-  store.ts        the one JSON state file
-  achievements.ts badge definitions, XP and level curve
-  torrentfile.ts  bencode parse: reject non-torrents, derive the info hash
-  prefs.ts        UI preference shape and validation, also imported by the browser
-  auth.ts         optional HTTP Basic
-  crossSite.ts    refuses browser writes that come from another origin
-  errors.ts       HttpError
-  api.ts          REST routes + /RPC2 passthrough, input validation
-  app.ts          express wiring: auth, API, static SPA, error mapping
-  index.ts        --help, then config + store + service + app + poller
-  testing/        test doubles (FakeClient, testConfig, tempStore); not built
-web/src/          React UI: components/, one styles.css of design tokens,
-                  theme.ts (themes + effect flavors), grim.ts (black metal
-                  copy), assets/ (the retro and black metal wordmarks),
-                  hooks.ts (usePolling, useLatest), prefs.ts (the server
-                  copy and the cache); sort.ts, filter.ts, files.ts,
-                  format.ts, selection.ts, redact.ts and preferences.ts are
-                  the pure logic the node runner can reach
-docker/entrypoint.sh      renders rtorrent.rc, supervises rtorrent + node
+server/                   the Go module: main.go serves, and answers the entrypoint's
+                          subcommands (help, boot-settings, log-scopes, options-docs)
+  internal/xmlrpc/        XML-RPC encode/decode, hand-written: a single-pass fast path for
+                          rtorrent's plain answers, a permissive parser for everything else
+  internal/scgi/          SCGI framing over a unix socket or TCP
+  internal/rtorrent/      client.go: request queue + multicall helpers; Client, the interface
+                          everything above it depends on (a Transport can be injected).
+                          capabilities.go: probes system.listMethods, picks a command dialect.
+                          settings.go: every rtorrent global setting as one declarative table.
+                          model.go: rtorrent fields -> Torrent/File/Peer/Tracker
+  internal/rtorrent/rtorrenttest/  FakeClient, the scripted rtorrent the tests use
+  internal/contracts/     the HTTP data shapes (web/src/contracts.ts mirrors them)
+  internal/options/       every environment variable as one catalog; renders --help and the
+                          README's generated regions, and checks both against the container
+  internal/config/        Load(env) -> Config, defaults taken from the catalog; the validated
+                          startup settings the entrypoint stages for the server
+  internal/service/       all application behaviour, with the per-torrent and per-group
+                          mutation queues, the recheck & restart state machine and the
+                          delete-data path checks
+  internal/store/         the one JSON state file; throttle group validation
+  internal/game/          badge definitions, XP and level curve
+  internal/torrentfile/   bencode parse: reject non-torrents, derive the info hash
+  internal/prefs/         UI preference shape and repair (web/src/preferences.ts mirrors it)
+  internal/stream/        the delta stream: the state held as raw leaves, diffs, and the hub
+                          that reads it once for every open page
+  internal/httpapi/       routes, /api/stream, /RPC2, the static SPA, auth, the cross-site
+                          guard, uploads, compression (zstd/gzip), error mapping
+  internal/httperr/, validate/  errors that carry an HTTP status; input checks at the edge
+  internal/jsnum/         the browser's Number(), for values defined in its terms
+web/src/                  React UI: components/, one styles.css of design tokens,
+                          theme.ts (themes + effect flavors), grim.ts (black metal
+                          copy), assets/ (the retro and black metal wordmarks),
+                          useStateStream.ts (the live state), hooks.ts (usePolling,
+                          useLatest), prefs.ts (the fetch and the cache); stream.ts,
+                          sort.ts, filter.ts, files.ts, format.ts, selection.ts,
+                          redact.ts and preferences.ts are the pure logic the node
+                          runner can reach
+docker/entrypoint.sh      renders rtorrent.rc, supervises rtorrent + the server
 docker/move-completed.sh validates completion moves and refuses destination collisions
-docker/api-smoke.py       real backend setting and throttle round trips
+docker/api-smoke.py       real backend setting, throttle and stream round trips
 docker/scripts.test.sh    shell regression checks, also run in the image build
 docker/bump-rtorrent.sh   moves the default rtorrent to a newer upstream release
-.github/workflows/ci.yml  typecheck, options check, Docker build + API smoke
+.github/workflows/ci.yml  Go and web tests, options check, Docker build + API smoke
 .github/workflows/release.yml  multi-arch GHCR publish, tags every main push
 .github/workflows/rtorrent-update.yml  daily: a pull request per new rtorrent
-.github/dependabot.yml    npm packages and Actions (rtorrent is the workflow's)
+.github/dependabot.yml    Go modules, npm packages and Actions (rtorrent is the workflow's)
 ```
 
-There are no runtime dependencies beyond express and multer on the server, and react on the
-client. Keep it that way unless there is a real reason.
+The server has two dependencies, both chosen by the owner:
+[lightning](https://github.com/JohanLindvall/lightning) (the owner's own), through whose
+`pkg/json` every JSON decode goes — request bodies, the state and boot-settings files, and above
+all the stream's reads of the state — while encoding stays with `encoding/json`; and
+[klauspost/compress](https://github.com/klauspost/compress), whose `gzhttp` compresses every
+response. The client's only runtime dependency is react. Keep it that way unless there is a real
+reason.
 
 ## Build and test
 
-No local Node is needed — the toolchain lives in the image:
+No local Go or Node is needed — the toolchains live in the image:
 
 ```bash
-docker build -t cascade:test .        # typechecks server and web, fails the build on errors
+docker build -t cascade:test .        # vets and tests the server, typechecks and tests the web
 ```
 
-Both `tsc` runs are strict, with `noUnusedLocals` and `noUnusedParameters` on each side, so a
-build is a real typecheck — and it also runs both unit suites (`server/src/*.test.ts`,
-`web/src/*.test.ts`, node's built-in runner, no frameworks), so a red test is a failed build.
-The server suite compiles through `tsconfig.test.json` into `dist-test/` and runs an explicit
-`dist-test/*.test.js` glob — never point `node --test` at the directory, because it would also
-load `index.js`, which starts the server and hangs the run. The web suite runs the `.ts` files
-directly under `--experimental-strip-types`; those files are excluded from each side's build
-tsconfig, which is why the runtime `dist/` stays clean and the DOM-flavoured web typecheck does
-not need node types. Pure logic belongs where the runner can reach it — sorting, filtering, the `.torrent` file check
-and drop parsing, the selection rules, redaction and the preference shape live in
-`web/src/sort.ts`, `filter.ts`, `files.ts`, `selection.ts`, `redact.ts` and `preferences.ts`
-rather than in the components for exactly that reason, and `grim.test.ts` imports the server's
-achievement table directly to check every badge and title has a black metal entry. A pure module
-that imports another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`): the
-runner resolves specifiers literally, and Vite and tsc accept either. A module that touches
-`window` or `document` at load time cannot be imported by a test at all, which is why
-`preferences.ts` (the shape and its repair) is apart from `prefs.ts` (the fetch, the cache, the
-`pagehide` flush).
+The web's `tsc` is strict, with `noUnusedLocals` and `noUnusedParameters`, so a build is a real
+typecheck — and it also runs both unit suites (`go test ./...` in `server/`, `web/src/*.test.ts`
+under node's built-in runner, no frameworks), so a red test is a failed build. The web suite
+runs the `.ts` files directly under `--experimental-strip-types`; those files are excluded from
+the build tsconfig, which is why the DOM-flavoured web typecheck does not need node types. Pure
+logic belongs where the runner can reach it — sorting, filtering, the `.torrent` file check and
+drop parsing, the selection rules, redaction, the preference shape and the stream's patching live
+in `web/src/sort.ts`, `filter.ts`, `files.ts`, `selection.ts`, `redact.ts`, `preferences.ts` and
+`stream.ts` rather than in the components for exactly that reason. A pure module that imports
+another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`): the runner resolves
+specifiers literally, and Vite and tsc accept either. A module that touches `window` or
+`document` at load time cannot be imported by a test at all, which is why `preferences.ts` (the
+shape and its repair) is apart from `prefs.ts` (the fetch, the cache, the `pagehide` flush).
 
-The server suite reaches everything above the socket without one: `RtorrentClient` takes an
-optional `Transport`, and `RtorrentService` and `Capabilities` depend on the `RpcClient`
-interface rather than the class, so `src/testing/fakes.ts` hands them a `FakeClient` that
-answers from a table and records every call. A command the fake lists in `system.listMethods`
+Go runs in Docker too, as uid 1000 so the files it writes keep their owner:
+
+```bash
+docker run --rm --user 1000:1000 -e HOME=/tmp -v "$PWD":/r -w /r/server golang:1.26-alpine \
+  sh -c 'gofmt -l . ; go vet ./... && go test ./... && go run . options-docs'
+```
+
+(`golang:1.26`, the Debian image, for `go test -race`, which needs cgo.) The whole repository is
+mounted because the server's tests read beyond `server/`: the option catalog is checked against
+`docker/entrypoint.sh` and the README, and `internal/game` keeps `web/src/game-catalog.json` —
+the badge ids and level titles `grim.test.ts` checks for a black metal entry — in step with its
+table (`go test ./internal/game -run Catalog -update` rewrites it). The image's build stage copies
+those files in for the same reason.
+
+The server suite reaches everything above the socket without one: `rtorrent.NewClient` takes an
+optional `Transport`, and `service.Service` and `Capabilities` depend on the `rtorrent.Client`
+interface rather than the concrete client, so `rtorrenttest.FakeClient` stands in for rtorrent —
+it answers from a table and records every call. A command the fake lists in `system.listMethods`
 but has no answer for returns `0`, as rtorrent's setters do; an unlisted one faults. Most
 service tests assert on what did *not* reach rtorrent — an erase before the data path was
-checked, a load of something unfetchable — which is the property that matters. `createApp`
-(`app.ts`) mounts on port 0 in `api.test.ts` with a stub service, so the HTTP contract
-(validation, bulk error collection, auth, JSON 404s) is tested end to end with `fetch`.
+checked, a load of something unfetchable — which is the property that matters. `httpapi.New`
+mounts on an `httptest` server with a stub `Service`, so the HTTP contract (validation, bulk
+error collection, auth, JSON 404s, the stream) is tested end to end over real requests. The
+suite was ported case for case from the TypeScript server it replaced, and the two were run side
+by side against one rtorrent and answered every route alike; keep new behaviour tested at that
+level.
 
 Run it and exercise the API:
 
 ```bash
 docker run -d --name cascade-test -p 18080:8080 cascade:test
 curl -s localhost:18080/api/capabilities        # which backend am I talking to
-curl -s localhost:18080/api/state               # what the UI polls
+curl -s localhost:18080/api/state               # the whole state at once
+curl -sN --compressed localhost:18080/api/stream # what the UI watches: a snapshot, then deltas
 ```
 
 rtorrent is always compiled from an upstream tag; there is no distro-package path. To test against
@@ -118,7 +135,7 @@ is **X**" — which `docker/bump-rtorrent.sh` rewrites along with the Dockerfile
 reword either and the script has to follow. That script is `make bump-rtorrent`, and it is what
 `.github/workflows/rtorrent-update.yml` runs every morning to open a pull request per new upstream
 release (Dependabot cannot follow a git tag compiled from source; `.github/dependabot.yml` covers
-the npm packages and the Actions). When such a pull request comes in, read the release notes for
+the Go modules, the npm packages and the Actions). When such a pull request comes in, read the release notes for
 renamed commands and check settings still round-trip (quirk 7) before merging.
 
 Old tags need `-include algorithm -include cstdint` to compile against a current libstdc++; the
@@ -143,7 +160,7 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
 1. **Commands take a target argument.** Global setters are
    `throttle.global_up.max_rate.set("", value)`, not `(value)`. Passing the value alone makes
    rtorrent read it as a target and fault with `-503 Wrong object type` (or `-501 Could not find
-   info-hash`). `settingEntries` in `settings.ts` adds the `''` for you. Getters are fine with no
+   info-hash`). `SettingEntries` in `internal/rtorrent/settings.go` adds the `""` for you. Getters are fine with no
    arguments. Per-torrent commands take the info hash as that target, and file/tracker commands
    take `"<hash>:f<index>"` / `"<hash>:t<index>"`.
 
@@ -152,24 +169,24 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
 
 3. **Throttle groups.** rtorrent has no per-torrent rate limit; it has named groups created with
    `throttle.up("", name, rate)` and assigned with `d.throttle_name.set`. The group setters take
-   **whole KiB/s strings**, unlike global setters' bytes/s. `throttles.ts` rounds a positive
-   fractional KiB up and stores the actual byte value; never feed API bytes directly to these
-   setters. Groups do not survive an
-   rtorrent restart, so they are persisted in `store.ts` and re-applied on reconnect. They also
+   **whole KiB/s strings**, unlike global setters' bytes/s. `store.NormalizeThrottle` rounds a
+   positive fractional KiB up and stores the actual byte value; never feed API bytes directly to
+   these setters. Groups do not survive an rtorrent restart, so they are persisted in the store
+   and re-applied on reconnect. They also
    cannot be deleted at runtime — deleting sets them to unlimited.
 
 4. **A running download rejects a throttle change** ("Cannot set throttle on active download"), so
-   `setTorrentThrottle` stops it, sets, and restarts.
+   `SetTorrentThrottle` stops it, sets, and restarts.
 
 5. **Do not batch stop/set/start into one `system.multicall`** — it segfaults rtorrent 0.15.2.
-   `setTorrentThrottle` deliberately issues separate requests. Be suspicious of any multicall that
+   `SetTorrentThrottle` deliberately issues separate requests. Be suspicious of any multicall that
    mixes lifecycle changes with other commands.
 
 6. **`rtorrent.rc` must only contain commands that exist in every supported version** — rtorrent
    aborts on an unknown command in its config file. That is why the entrypoint writes a minimal rc
    (paths, port, scgi, log, watch dir) and hands everything else to the server as
-   `/run/cascade/boot-settings.json`, which goes through the same capability-filtered
-   `updateSettings` path. **Add new tunables there, not to the rc.**
+   `/run/cascade/boot-settings.json` (written by `cascade boot-settings`), which goes through
+   the same capability-filtered `UpdateSettings` path. **Add new tunables there, not to the rc.**
 
    The listening port is the exception: it has to be right before rtorrent binds, and applying it
    over XML-RPC afterwards does not rebind. 0.16 renamed those commands, so the entrypoint asks
@@ -205,7 +222,7 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    setter refuses, so neither value can round-trip and the UI shows "(leave unchanged)" instead.
 
 11. **Labels live in `d.custom1`**, URL-encoded (the ruTorrent convention), which is why
-   `mapTorrent` decodes and `setLabel` encodes.
+   `MapTorrent` decodes and `SetLabel` encodes.
 
 12. **libtorrent opens files under the exact name in the torrent, and Linux caps a path
    component at 255 bytes** — so a Thai or CJK title of ~85 characters fails every open with
@@ -225,7 +242,7 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    `d.name` and `f.path` keep the torrent's own names (rtorrent joins `f.path` from the
    components itself, deliberately left alone); `frozen_path`, `d.base_path` and `d.directory`
    are the on-disk truth, so delete-data is right. The Files tab fetches `f.frozen_path` and
-   shows "on disk as …" when the two differ (`mapFile.onDisk`). `docker/patches/apply-<repo>.sh`
+   shows "on disk as …" when the two differ (`MapFile`'s `OnDisk`). `docker/patches/apply-<repo>.sh`
    is the general hook — one per repository, run after clone and before configure.
 
 13. **What the client calls itself is compile-time, in two places.** The HTTP `User-Agent`
@@ -246,33 +263,33 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
 
 Never call a command unconditionally.
 
-- **A global setting** is one entry in `SETTING_SPECS` (`settings.ts`) — getter, setter (with
+- **A global setting** is one entry in the table in `internal/rtorrent/settings.go` — getter, setter (with
   alternates, newest first, when a release renamed it), and a coercion kind — plus a form field in
   `SettingsDialog.tsx`. The table drives `/api/settings` reads, writes, the boot-settings warning,
   and the `supports` map: every setting key automatically becomes a feature that is true when the
   backend has a working setter, and the dialog greys the control out by that same key. Remember
   quirk 7: set the value and read it back on the oldest and newest rtorrent before trusting it.
-- **Anything else** (per-torrent commands, probes) goes in `FEATURE_METHODS` in `capabilities.ts`,
-  guarded with `capabilities.supports('yourFeature')`.
+- **Anything else** (per-torrent commands, probes) goes in `featureMethods` in
+  `internal/rtorrent/capabilities.go`, guarded with `caps.Supports("yourFeature")`.
 
-Field commands in `model.ts` are filtered against `system.listMethods` automatically — a field the
+Field commands in `model.go` are filtered against `system.listMethods` automatically — a field the
 backend lacks simply maps to `0`/`''`.
 
 ## The gamification layer
 
-Levels and badges are derived from lifetime counters in `store.ts`, not from anything invented.
+Levels and badges are derived from lifetime counters in the store, not from anything invented.
 Three things are worth knowing before touching it:
 
-- **Totals accumulate as deltas.** `recordTorrents` compares each torrent's `up.total`/`down.total`
+- **Totals accumulate as deltas.** `RecordTorrents` compares each torrent's `up.total`/`down.total`
   against the last seen value, so removing a torrent does not erase the traffic it contributed. A
   torrent seen for the first time contributes its whole total, which credits a pre-existing
   rtorrent session.
 - **Completions are counted once**, via the `everCompleted` tombstone list — otherwise removing
   and re-adding a torrent would inflate the count.
 - **Counters keep moving with no browser open**: the poll tick refreshes them every 30s, and
-  `state()` refreshes them on every UI poll.
+  every read of the state refreshes them while a page is open.
 
-Badges are pure functions of the stats (`ACHIEVEMENTS` in `achievements.ts`), so adding one is a
+Badges are pure functions of the stats (`game.Achievements` in `internal/game`), so adding one is a
 single entry — with a `unit` (`count`, `bytes`, `rate`, `ratio`, `duration`), which is how the UI
 formats its progress (`progressText` in `format.ts`) instead of guessing from the id — but the
 unlock timestamp is persisted, so a badge whose condition later stops holding stays earned. `CASCADE_GAMIFY=0` disables the whole layer; the UI keys off
@@ -281,46 +298,58 @@ unlock timestamp is persisted, so a badge whose condition later stops holding st
 The black metal theme re-carves all gamification copy client-side (`web/src/grim.ts`, keyed by
 achievement id and level title). It is a pure text skin — never branch unlock logic on it — and a
 new badge or level title needs a matching entry there or it shows its plain name in that theme.
+`grim.test.ts` checks every id and title in `web/src/game-catalog.json`, which the Go test in
+`internal/game` fails on when it drifts from the table and rewrites with `-update` — so a new
+badge is: the entry, `go test ./internal/game -run Catalog -update`, and the grim copy.
 
 ## Options and their documentation
 
-Every environment variable the container understands is declared once, in `server/src/options.ts`.
-That catalog is load-bearing rather than descriptive:
+Every environment variable the container understands is declared once, in
+`server/internal/options/options.go`. That catalog is load-bearing rather than descriptive:
 
-- `config.ts` looks each default up **by name**, and the lookup throws for a name the catalog does
-  not list — so the server cannot read an undocumented variable.
+- `internal/config` looks each default up **by name** (through its `str`, `num`, `flag` and
+  `optional` readers), and the lookup panics for a name the catalog does not list — so the
+  server cannot read an undocumented variable.
 - `docker run --rm cascade --help` renders it (the entrypoint answers `-h`/`--help`/`help` before
   any setup, so it works in any environment).
 - The README's `<!-- generated: … -->` regions — the sample `docker run` and the whole
-  Configuration section — are produced from it by `npm run options:docs`.
-- `npm run options:check` (in CI) fails if the entrypoint reads a variable missing from the
-  catalog, if a catalogued option is read by nothing, or if the README has drifted.
+  Configuration section — are produced from it by `cascade options-docs --write` (`go run .
+  options-docs --write` in `server/`).
+- `cascade options-docs` (in CI, and a test of the options package) fails if the entrypoint or
+  `internal/config` reads a variable missing from the catalog, if a catalogued option is read by
+  nothing, or if the README has drifted.
 
-Adding an option therefore means adding it to `options.ts` and nowhere else; hand-editing the
-generated README regions will fail CI.
+Adding an option therefore means adding it to `options.go` and regenerating: the README with
+`options-docs --write`, and the golden `--help` and README renderings in
+`internal/options/testdata` with `go test ./internal/options -update`. Hand-editing the generated
+README regions will fail CI.
 
 ## Persistence
 
 Everything Cascade remembers is in one JSON file, `/config/cascade-state.json`, owned by
-`store.ts`: UI preferences, gamification counters and unlocked badges, per-torrent add times and
+`internal/store`: UI preferences, gamification counters and unlocked badges, per-torrent add times and
 last-seen totals, and throttle groups. Writes are debounced and go through a temp file plus rename,
 so add state there rather than introducing another file.
 
-**Only a real change may dirty the store.** `recordTorrents` folds the whole list in on every
+**Only a real change may dirty the store.** `RecordTorrents` folds the whole list in on every
 poll, and an unconditional `scheduleFlush` there meant an idle session rewrote the JSON file
 every two seconds for as long as a browser was open. Every mutation site now sets a `changed`
 flag first (the ever-growing seed clock coarsens to the minute for the same reason), and the
 store test pins it: fold the same list twice, and the second fold must not recreate a deleted
 state file. Keep that property when adding counters.
 
-Preferences are validated in `prefs.ts` (`sanitizePreferences`) before being stored — an unknown
+Preferences are validated in `internal/prefs` (`Sanitize`) before being stored — an unknown
 theme or sort key falls back to the default instead of reaching the UI. The browser keeps a
 localStorage copy of the preferences, but only as a cache so the theme can apply on first paint;
 the file always wins once it loads, and the cache is repaired on read (`normalizePreferences`)
 because a browser's storage can hold anything. Browser-side writes are debounced and flushed on
 `pagehide` with `keepalive`. `web/src/preferenceSync.ts` orders saves, retries failures without
 dropping newer edits, and protects edits made while the initial server copy is loading. The
-browser re-exports the pure server preference schema rather than maintaining a second validator.
+browser's copy of the schema (`web/src/preferences.ts`) mirrors `internal/prefs` — the same
+allowlists, bounds and repair — and the two must change together. The refresh interval
+(`statePollMs`, null for the server's `CASCADE_STATE_POLL_MS`) is one of them: the status
+reports the effective value and the default, and the stream's reader picks a change up on its
+next read.
 
 ## Themes
 
@@ -330,7 +359,8 @@ are pure token overrides in `styles.css` — components carry no per-theme marku
 a block of custom properties plus, for retro and black metal, a set of shape overrides (zero
 radius, offset shadows, stepped bars / grain and vignette). Keep it that way. Adding a theme means
 touching four places: the token block in `styles.css`, `THEME_MODES`/`THEME_COLORS` in `theme.ts`,
-a glyph in `ThemePicker.tsx`, and the `THEMES` allowlist in the server's `prefs.ts`.
+a glyph in `ThemePicker.tsx`, and the theme allowlists in `internal/prefs` and
+`web/src/preferences.ts`.
 
 An inline script in `index.html` applies the cached theme before first paint (no dark flash for
 light-theme users) and `applyTheme` mirrors the page background into `<meta name="theme-color">`;
@@ -353,14 +383,15 @@ directory or label, or for magnets and URLs. Because the drop path has no dialog
 `addTorrentFile` has to be trustworthy:
 
 - `load.raw_start` returns 0 for **any** payload — a corrupt file only shows up in rtorrent's log —
-  so `torrentfile.ts` parses the bencode first and rejects what is not a torrent, with the reason.
+  so `internal/torrentfile` parses the bencode first and rejects what is not a torrent, with the
+  reason.
 - The same parse yields the info hash, and the load is confirmed by waiting for that hash to appear
   in the session. `load.*` is queued, not immediate, so "the call returned" is not "it loaded".
 
 Failures come back per file in the upload response and are toasted by the UI.
 The response also identifies failed file and URL indices, so the Add dialog retains only failures
-for retry. The upload ceiling is for the combined file bytes, including chunked requests; the
-per-file multer limit alone cannot bound a 50-file batch's memory use.
+for retry. The upload ceiling is for the combined file bytes, including chunked requests; a
+per-file limit alone cannot bound a 50-file batch's memory use.
 
 Two things about the drop handling are load-bearing:
 
@@ -391,7 +422,7 @@ flip mid-flight cannot restyle or restart a sequence, and every variant keeps th
 contract and reduced-motion skip.
 
 Both read their `onDone` through `useLatest` (`hooks.ts`) and depend only on the trigger id. That
-is not incidental — the app re-renders on every poll, so an inline `onDone={() => ...}` in the
+is not incidental — the app re-renders on every update of the state, so an inline `onDone={() => ...}` in the
 dependency array tears the effect down and restarts the sequence one and a half seconds in. The
 visible symptom is subtle (the tail of the animation silently never runs), so if you add another
 timed effect, follow the same pattern. `useLatest` writes its ref in a layout effect, not during
@@ -435,7 +466,7 @@ Two other things are easy to get wrong here:
 
 - Comments explain *why*, especially where the code works around one of the quirks above. Do not
   narrate what the next line does.
-- Errors surfaced to the user should name the cause (`HttpError` with a real status; XML-RPC
+- Errors surfaced to the user should name the cause (`httperr.Error` with a real status; XML-RPC
   faults become 502 with rtorrent's own message, prefixed with the command that failed when it
   came out of a multicall).
 - Anything that deletes data must stay inside `config.deleteRoots`.
@@ -466,34 +497,59 @@ Two other things are easy to get wrong here:
   "stop re-attaching after the next rtorrent restart" and the UI says so. UI-raised scopes
   persist in the store and are re-applied on reconnect exactly like throttle groups; the boot
   scopes come back by themselves, being baked into rtorrent.rc from `RT_LOG_LEVEL` (which the
-  entrypoint now exports so the server can show them as fixed). `LOG_SCOPES` in service.ts is
-  both the offer and the input allowlist — rtorrent faults on unknown names.
+  entrypoint now exports so the server can show them as fixed). `service.LogScopes` is both the
+  offer and the input allowlist — rtorrent faults on unknown names. The entrypoint reads the
+  saved scopes with `cascade log-scopes`, which prints nothing for a missing or corrupt file.
 - "Recheck & restart" is two halves on purpose: the action stops, clears the stale
   `d.message` (which otherwise outranks everything in the status derivation and hides the
   running check) and queues `d.check_hash`; the poll tick then feeds `d.hashing` readings into
   `PendingRestarts` (pure, tested) and issues `d.open`/`d.start` as separate calls when a check
-  ends — never batched with anything, per quirk 5. The check can outlive any HTTP request,
+  ends — never batched with anything, per quirk 5 (`pendingRestarts` in
+  `internal/service/restarts.go`). The check can outlive any HTTP request,
   which is why the restart cannot live in the handler; pending entries survive only in memory
   and expire after a day.
-- The UI polls `/api/state` once per interval rather than issuing many calls; rtorrent is single
-  threaded and does not enjoy being hammered (`MAX_CONCURRENCY` in `rtorrent.ts` caps it). Both
-  pollers — the browser's and the server's rate sampler — chain timeouts rather than using an
-  interval, so a slow response never stacks requests (the SCGI timeout is 30s; an interval at
-  1s would have queued thirty ticks behind a hung rtorrent), and the browser's pauses entirely
-  while the tab is hidden. In the browser that is `usePolling` (`hooks.ts`), used by the app,
-  the detail pane, the throttle dialog and the log — no component runs its own interval. Its
-  task gets `isCurrent()`: an answer that arrives after the inputs changed (another torrent,
-  another tab) or the component closed is for the old question and is dropped, which is also
-  why the detail pane keys what it shows by hash and renders "Loading…" rather than the last
-  torrent's files. The app's own poll additionally drops a `/api/state` answer older than the
-  one on screen, since a refresh after an action can overtake the tick in flight.
-- `status()` looks its multicall answers up by command name, not position, so adding a probe
+- **The UI watches one stream rather than polling.** `GET /api/stream` (server-sent events)
+  sends a page a snapshot of the state, then only what changed. `internal/stream`'s hub reads the
+  state once per interval however many pages are open, not at all while none is, and straight
+  after any request that may have changed something (the HTTP layer wakes it after every
+  non-GET), so an action's effect arrives without the page asking. The interval is
+  `status.statePollMs` — the user's preference, else `CASCADE_STATE_POLL_MS` (100 ms) — within
+  100 ms to a minute. The state is held as a tree whose branches are decoded and whose leaves (a
+  torrent, a history sample, a status value) stay raw JSON until their bytes differ, so a read of
+  500 torrents diffs in about a millisecond; `torrents` and `status.history` travel keyed by hash
+  and by `t`. The patch rules are in `patch.go`'s header, `web/src/stream.ts` applies them, and
+  both are tested against `internal/stream/testdata/patches.json`. Every event but `failure`/`ok`
+  carries an id (`<epoch>-<rev>`); a page back from a hidden tab reopens with `?since=` (a
+  reconnecting EventSource sends `Last-Event-ID`, which wins) and gets the deltas it missed when
+  they are still kept, else a snapshot. The browser reconnects by hand from the last event it
+  applied, never through EventSource's own retry, which would replay from the URL's stale
+  `since`.
+- rtorrent is single threaded and does not enjoy being hammered: `MaxConcurrency` in
+  `internal/rtorrent/client.go` caps the requests in flight, and every repeating reader — the
+  stream's hub, the server's rate sampler, the browser's `usePolling` — waits for one answer
+  before scheduling the next, so a slow response never stacks requests (the SCGI timeout is 30s;
+  an interval would queue ticks behind a hung rtorrent). A listing read costs rtorrent about 1 ms
+  per hundred torrents; at 100 ms that is a tenth of its time with 1,000 torrents, paid only while
+  a page is open. `usePolling` (`hooks.ts`) is left for what the state does not carry — the
+  detail pane, the throttle dialog and the log — and pauses while the tab is hidden. Its task
+  gets `isCurrent()`: an answer that arrives after the inputs changed (another torrent, another
+  tab) or the component closed is for the old question and is dropped, which is also why the
+  detail pane keys what it shows by hash and renders "Loading…" rather than the last torrent's
+  files.
+- The XML-RPC decoder has two paths. rtorrent's answers are plain, well-formed XML, and the
+  listing multicall is half a megabyte of it per read, so `decodeFast` reads that shape in one
+  pass; anything off it (comments, CDATA, attributes, an unknown type, an int past int64) is
+  declined and the permissive parser reads the document instead. `fast_test.go` holds the two to
+  the same answer on every input, including 3,000 random values through the encoder.
+- `status` looks its multicall answers up by command name, not position, so adding a probe
   cannot shift another into the wrong slot. Optional probes (`dht.statistics`) are only asked
   for when `supports()` says so; the same goes for actions — `announce` and the tracker toggle
   are refused with a 501 on a backend without the command, which is what the `trackerAnnounce`
-  and `trackerToggle` entries in `FEATURE_METHODS` exist for.
-- Input is validated at the API edge (`requireInt`, `requireHash`, `requireIndex` in `api.ts`)
-  and answered with a 400 that names the field. An unchecked `NaN` priority or index used to
+  and `trackerToggle` entries in `featureMethods` exist for.
+- Input is validated at the API edge (`internal/validate`, and `requireHash`/`requireIndex` in
+  `internal/httpapi/api.go`) and answered with a 400 that names the field. A field that is
+  absent is left alone and one that is `null` is refused like any other wrong type — look fields
+  up with the comma-ok form, never by reading a missing key as its zero value. An unchecked `NaN` priority or index used to
   reach rtorrent and come back as an opaque 502 fault. Bulk routes go through `bulk()`, which
   applies the action per hash and collects failures by hash instead of stopping at the first.
 - `DELETE /api/throttles/:name` is a 404 for a group the store never saved: `throttle.up` on an
@@ -536,7 +592,8 @@ Two other things are easy to get wrong here:
   server forbids: no API console with raw RPC off, no *Remove + delete data* (and a toast for
   Shift+Delete) with data deletion off. The server still refuses both; hiding them only spares
   the user a 403.
-- Browser writes must be same-origin (`crossSite.ts`, mounted after `/healthz` and before Basic
+- Browser writes must be same-origin (`internal/httpapi/crosssite.go`, checked after `/healthz`
+  and before Basic
   auth). A multipart upload is a "simple" request any page can send without a CORS preflight, and
   the browser attaches Basic credentials to it by itself, so without the guard a hostile page
   could add torrents or rewrite settings. It trusts `Sec-Fetch-Site` when present, else `Origin`
@@ -552,12 +609,22 @@ Two other things are easy to get wrong here:
   immutable for a year, and everything else — above all the `index.html` that names those
   hashes — is `no-cache`, so it revalidates (304) on every load. A heuristically cached shell
   used to survive a redeploy and ask for hashed files that no longer existed, which looks like
-  a blank page until a hard reload.
+  a blank page until a hard reload. Every compressible response of 1 KiB or more is compressed
+  (`internal/httpapi/compress.go`, klauspost's `gzhttp`): zstd when the client offers it — browsers
+  do over HTTPS, so behind a TLS proxy — else gzip, the stream included (one compressed stream,
+  flushed after each event). Validators are left alone rather than suffixed per encoding: the
+  server's are weak, and a suffix would turn every revalidating poll into a full response. JSON
+  reads carry a weak ETag and answer an unchanged poll with a bodiless 304.
+- Routes match in the order they are added, first match wins (`internal/httpapi/router.go`), the
+  rule the API was defined under: `POST /api/torrents/action/trackers` is the bulk action named
+  "trackers", not the tracker list of a torrent whose hash is "action". `http.ServeMux` refuses
+  such overlapping patterns outright, which is why it is not used.
 - The listing multicall asks only for fields something maps: `d.state` and `d.peers_accounted`
   were fetched on every poll for years and read by nothing, and every stray field is one more
   command per torrent per poll on a single-threaded rtorrent.
-- CI (`.github/workflows/ci.yml`) typechecks both halves, runs both unit suites, and smoke-tests
-  the built image on pull requests; the 0.9.8/0.15.2 compat matrix runs on manual dispatch. Main pushes skip the smoke
+- CI (`.github/workflows/ci.yml`) checks the server's formatting, vets and tests it under the race
+  detector, checks the option catalog, typechecks and tests the web, and smoke-tests the built
+  image on pull requests; the 0.9.8/0.15.2 compat matrix runs on manual dispatch. Main pushes skip the smoke
   job because `release.yml` builds and probes those commits on both architectures anyway.
 - `release.yml` publishes to GHCR. Every push to main is a release: it tags the commit
   `v0.1.<run_number>` and publishes `cascade:<version>-<rtorrent-version>` (plus the bare

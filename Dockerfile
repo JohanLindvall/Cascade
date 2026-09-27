@@ -24,33 +24,58 @@
 # two share a version). Override it with LIBTORRENT_VERSION when a pairing is
 # unusual, and point RTORRENT_REPO/LIBTORRENT_REPO at a fork if needed.
 #
-# The web server discovers what the backend supports at runtime (system.list-
+# The server discovers what the backend supports at runtime (system.list-
 # Methods), so one build of the UI drives any of these versions.
+#
+# Node is a build tool here and nothing more: the web UI is compiled to static
+# files, and the server is a single Go binary.
 
 ARG ALPINE_VERSION=3.22
 ARG NODE_VERSION=22
+ARG GO_VERSION=1.26
 
 # --------------------------------------------------------------------------
-# 1. build the TypeScript frontend and backend
+# 1a. build the web UI
 # --------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine AS build
+FROM node:${NODE_VERSION}-alpine AS web
 WORKDIR /src
 
 COPY web/package.json web/
 RUN cd web && npm install --no-audit --no-fund --loglevel=error
 
-COPY server/package.json server/
-RUN cd server && npm install --no-audit --no-fund --loglevel=error
-
 COPY web/ web/
-COPY server/ server/
-COPY docker/ docker/
+# The client's half of the delta protocol is tested against the server's
+# golden patches, so both sides are held to the same cases.
+COPY server/internal/stream/testdata/ server/internal/stream/testdata/
 
 # Unit tests run inside the build, so a red suite is a failed image — the
-# same contract as the typecheck. Both use node's own runner: no frameworks,
-# no new dependencies.
+# same contract as the typecheck. They use node's own runner: no frameworks.
 RUN cd web && npm test && npm run build
-RUN sh docker/scripts.test.sh && cd server && npm run build && npm test && npm prune --omit=dev
+
+# --------------------------------------------------------------------------
+# 1b. build the server
+# --------------------------------------------------------------------------
+FROM golang:${GO_VERSION}-alpine AS server
+WORKDIR /src
+
+# Modules first, so a source change does not download them again.
+COPY server/go.mod server/go.sum server/
+RUN --mount=type=cache,target=/go/pkg/mod cd server && go mod download
+
+COPY server/ server/
+# What the server's tests hold it to besides its own code: the README and
+# the entrypoint (the option catalog is checked against both) and the web's
+# copy of the badge table.
+COPY README.md ./
+COPY docker/ docker/
+COPY web/src/game-catalog.json web/src/
+
+# The same contract as the web: vet and the unit suites run in the build. The
+# binary is static, so the runtime image needs nothing to run it.
+RUN sh docker/scripts.test.sh
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    cd server && go vet ./... && go test ./... && \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/cascade .
 
 # --------------------------------------------------------------------------
 # 2. compile libtorrent and rtorrent from upstream tags
@@ -144,17 +169,15 @@ ENV LD_LIBRARY_PATH=/usr/local/lib
 FROM rtorrent AS runtime
 
 RUN apk add --no-cache \
-      nodejs tini su-exec screen ca-certificates curl tzdata
+      tini su-exec screen ca-certificates curl tzdata
 
-COPY --from=build /src/server/dist       /app/server
-COPY --from=build /src/server/node_modules /app/node_modules
-COPY --from=build /src/web/dist          /app/web
+COPY --from=server /out/cascade /usr/local/bin/cascade
+COPY --from=web /src/web/dist /app/web
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY docker/move-completed.sh /usr/local/bin/cascade-move
 RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/cascade-move
 
-ENV NODE_ENV=production \
-    CASCADE_WEB_ROOT=/app/web \
+ENV CASCADE_WEB_ROOT=/app/web \
     RT_DOWNLOAD_DIR=/downloads \
     RT_SESSION_DIR=/config/session \
     RT_WATCH_DIR=/watch \

@@ -1,8 +1,8 @@
 # Cascade
 
 A modern web UI for [rtorrent](https://github.com/rakshasa/rtorrent), packaged as a single
-Docker image with rtorrent baked in. TypeScript end to end — React on the front, a
-dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
+Docker image with rtorrent baked in. React on the front; behind it a small Go server that speaks
+rtorrent's XML-RPC over SCGI and streams every open page only what changed.
 
 ![Main view](docs/screenshot-main.png)
 
@@ -12,6 +12,10 @@ dependency-light Node backend that speaks rtorrent's XML-RPC over SCGI.
   published for amd64 and arm64, and buildable from source in one command.
 - **rtorrent 0.16.24, compiled from source** — the version in the image is exactly the upstream
   tag you asked for, not whatever a distro packaged. Any other tag builds with one build arg.
+- **Live, and light on rtorrent** — open pages watch one server-sent event stream: a snapshot,
+  then only what changed, compressed. rtorrent is read once per interval however many pages are
+  open, not at all while none is, and straight after every change made in the UI, so an action
+  shows at once. Watching 500 torrents costs well under a kilobyte a second on the wire.
 - **Works across backend versions** — the server probes `system.listMethods` on connect and picks
   command names from what the running rtorrent actually implements, hiding unsupported controls
   in the UI instead of failing.
@@ -197,7 +201,8 @@ docker run --rm ghcr.io/johanlindvall/cascade:latest --help
 ```
 
 Both that output and the tables below are generated from one catalog in the source
-(`server/src/options.ts`), and CI fails if either drifts from what the container actually reads.
+(`server/internal/options/options.go`), and CI fails if either drifts from what the container
+actually reads.
 
 <!-- generated: options -->
 ### Paths and identity
@@ -326,6 +331,7 @@ Rates are in KiB/s; 0 means unlimited.
 | `CASCADE_DELETE_ROOTS` | download + completed dirs | Extra :-separated roots data may be deleted from |
 | `CASCADE_MAX_UPLOAD_MB` | `64` | Maximum combined .torrent file size per upload batch, MiB |
 | `CASCADE_POLL_MS` | `1000` | Backend sampling interval for the rate graph, ms |
+| `CASCADE_STATE_POLL_MS` | `100` | How often the torrent list is read while a page is open, ms (100-60000; the UI can override it) |
 | `CASCADE_GAMIFY` | `1` | Set 0 to remove levels, badges and celebrations |
 | `CASCADE_WEB_ROOT` | `/app/web` | Directory the built UI is served from |
 
@@ -437,7 +443,8 @@ leans on uploading rather than downloading. Set `CASCADE_GAMIFY=0` and the whole
 rtorrent's live settings are editable, with anything the running version does not support greyed
 out. Rate fields take `500k`, `2M`, `1.5 MiB/s` or `800 B/s` — a bare number is KiB/s, empty is
 unlimited — and anything else is flagged at the field and holds **Apply** back, rather than being
-read as "unlimited".
+read as "unlimited". The same dialog's **Interface** section sets how often the list refreshes,
+from 100 ms to a minute; the server's default is `CASCADE_STATE_POLL_MS`.
 
 ![Settings](docs/screenshot-settings.png)
 
@@ -491,7 +498,7 @@ below 720px the table becomes a card list with its own sort control in the toolb
 becomes a drawer behind the filter button — carrying the settings, throttle and console tools as
 well as the filters — and the detail pane and dialogs become full-screen sheets. The live
 transfer rates stay in the header. Touch gets larger targets, a long press stands in for
-right-click, and polling pauses while the tab is in the background.
+right-click, and the live stream pauses while the tab is in the background.
 
 <p>
   <img src="docs/screenshot-mobile.png" alt="Mobile layout" width="290">
@@ -505,7 +512,8 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/healthz` | Liveness (outside Basic auth and always available at the root, even with `WEB_BASE_PATH`) |
-| `GET` | `/api/state` | Torrents, global status, throttle groups (the UI's poll) |
+| `GET` | `/api/state` | Torrents, global status, throttle groups and the game, all at once |
+| `GET` | `/api/stream` | The same state as server-sent events: a snapshot, then deltas ([below](#the-state-stream)) |
 | `GET` | `/api/torrents?view=main` | Torrent list for an rtorrent view |
 | `GET` | `/api/status` | Global rates, limits, backend summary and policy on their own |
 | `GET` | `/api/capabilities` | Backend version and supported feature map |
@@ -564,6 +572,32 @@ rt = xmlrpc.client.ServerProxy("http://admin:change-me@localhost:8080/RPC2")
 print(rt.system.client_version(), rt.d.multicall2("", "main", "d.name=", "d.down.rate="))
 ```
 
+### The state stream
+
+`GET /api/stream` is what the UI watches, and anything else may watch it too. It is a
+server-sent event stream (compressed with zstd or gzip when the client takes either) with four
+events:
+
+- `snapshot` — the whole state, as `/api/state` would answer, except that `torrents` is an object
+  keyed by info hash and `status.history` one keyed by `t`, so an entry added or removed patches
+  that one entry instead of every index after it;
+- `delta` — a patch that turns the previous state into the next: an object patches an object key
+  by key (its `"-"` member lists the keys that are gone), an object patches a same-length array
+  index by index, `{"=": value}` replaces whatever was there, and anything else replaces the old
+  value;
+- `failure` — `{"error": "…"}`: rtorrent cannot be read right now; the stream stays open;
+- `ok` — `{}`: it can again.
+
+Each `snapshot` and `delta` carries an id. A client that reconnects with `Last-Event-ID` (as
+`EventSource` does by itself) or `?since=<id>` is sent the deltas it missed while the server still
+has them, and a snapshot otherwise. The state is read once per interval — `CASCADE_STATE_POLL_MS`,
+or the interval chosen in the UI's settings — however many clients are watching, and not at all
+while none is.
+
+```bash
+curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
+```
+
 To expose rtorrent's own SCGI socket instead, set `RT_SCGI_PORT=5000` and
 `RT_SCGI_BIND=0.0.0.0`, then publish the port. **SCGI is unauthenticated** — anyone who reaches
 it has full control of rtorrent and can run commands on the host through `execute`. Keep it on a
@@ -603,11 +637,11 @@ private network, or prefer `/RPC2`, which sits behind Basic auth.
 
 ## Development
 
-The whole toolchain lives in the image; no local Node is required. The Makefile wraps the usual
-work — `make` on its own lists every target.
+The whole toolchain lives in the image; no local Go or Node is required. The Makefile wraps the
+usual work — `make` on its own lists every target.
 
 ```bash
-make build                  # build the image (typechecks + unit tests, both halves)
+make build                  # build the image (Go vet + tests, web typecheck + tests)
 make run PORT=8080          # run it, mounting ./data, then open it in a browser
 make run OPEN=0             # ...without launching a browser
 make open                   # wait for it to answer, then open it
@@ -620,30 +654,33 @@ make logs / shell / stop
 python3 docker/api-smoke.py http://127.0.0.1:18080  # extra checks on a disposable running container
 ```
 
-The smoke script uses Python 3's standard library, checks real setting and throttle round trips,
-and restores their original values. `make smoke` cleans up its container even when a check fails.
+The smoke script uses Python 3's standard library, checks real setting and throttle round trips
+and the state stream, and restores their original values. `make smoke` cleans up its container even when a check fails.
 CI and release builds run it too. `docker/scripts.test.sh` covers release-bump failures, custom
 User-Agent escaping and completion moves, and runs inside every Docker build.
 
-Both halves carry unit tests beside their sources (`server/src/*.test.ts`, `web/src/*.test.ts`),
-written for node's built-in test runner — no frameworks, no new dependencies. The server suite
-covers everything from the XML-RPC codec up to the HTTP routes: the client and the capability
-probe run against a scripted transport, the service against a fake client that records what
-would have reached rtorrent, and the express app is mounted on a spare port and driven with
-`fetch`. They run inside every image build, so a red suite fails the build exactly as a type
-error does; to run them alone (the repo root is mounted because the options check reads the
-entrypoint and the README):
+Both halves carry unit tests beside their sources. The server (`server/`, a Go module) is tested
+from the XML-RPC codec up to the HTTP routes: the client and the capability probe run against a
+scripted transport, the service against a fake client that records what would have reached
+rtorrent, and the HTTP layer is mounted on a spare port and driven over real requests. The web's
+tests (`web/src/*.test.ts`) use node's built-in runner — no frameworks. Both suites run inside
+every image build, so a red test fails the build exactly as a type error does; to run them alone
+(the repo root is mounted because the server's tests read the entrypoint and the README):
 
 ```bash
-docker run --rm -v "$PWD":/r -w /r/server node:22-alpine sh -c 'npm install && npm test && npm run options:check'
+docker run --rm -v "$PWD":/r -w /r/server golang:1.26-alpine sh -c 'go vet ./... && go test ./... && go run . options-docs'
 docker run --rm -v "$PWD":/r -w /r/web node:22-alpine sh -c 'npm install && npm test'
 ```
 
-CI (GitHub Actions) runs the same checks: a fast typecheck and the unit tests of both TypeScript
-halves on every push and pull request, plus a full image build with an API smoke test on pull requests. A
-compatibility matrix against rtorrent 0.9.8 and 0.15.2 can be run from the Actions tab
-(**Run workflow → full-matrix**). Dependencies are kept up by two bots: Dependabot for the npm
-packages and the Actions (a pull request only when a release falls outside its range), and the
+The server has two dependencies: [lightning](https://github.com/JohanLindvall/lightning), which
+decodes its JSON, and [klauspost/compress](https://github.com/klauspost/compress), which
+compresses its responses with zstd or gzip.
+
+CI (GitHub Actions) runs the same checks — the server's vet and tests under the race detector, the
+option catalog check, and the web's typecheck and tests — on every push and pull request, plus a
+full image build with an API smoke test on pull requests. A compatibility matrix against rtorrent
+0.9.8 and 0.15.2 can be run from the Actions tab (**Run workflow → full-matrix**). Dependencies
+are kept up by two bots: Dependabot for the Go modules, the npm packages and the Actions, and the
 daily rtorrent workflow described under [Choosing the rtorrent version](#choosing-the-rtorrent-version).
 
 Pushing to `main` releases. The release workflow tags the commit `v0.1.<run number>`, builds the
@@ -666,7 +703,7 @@ Layout:
 
 ```
 Makefile       build/run/test wrappers around Docker
-server/src/    XML-RPC codec, SCGI transport, capability probe, REST API
+server/        the Go server: XML-RPC codec, SCGI transport, capability probe, REST API, state stream
 web/src/       React UI (components/, styles.css)
 docker/        entrypoint that renders rtorrent.rc and supervises both processes
 ```

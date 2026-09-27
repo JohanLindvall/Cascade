@@ -14,6 +14,7 @@ import {
   duration,
   fileName,
   formatRateInput,
+  interval,
   logDay,
   logTime,
   magnetLink,
@@ -38,6 +39,13 @@ test('bytes picks the unit and the precision', () => {
   assert.equal(bytes(1536 * 1024), '1.50 MiB');
   assert.equal(bytes(120 * 1024 ** 3), '120 GiB');
   assert.equal(bytes(3 * 1024 ** 5), '3.00 PiB');
+});
+
+test('an interval reads in milliseconds below a second, seconds above', () => {
+  assert.equal(interval(250), '250 ms');
+  assert.equal(interval(1000), '1 s');
+  assert.equal(interval(1500), '1.5 s');
+  assert.equal(interval(60_000), '60 s');
 });
 
 test('rate is bytes per second, silent at zero', () => {

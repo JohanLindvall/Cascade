@@ -1,0 +1,29 @@
+{
+  "achievements": [
+    "first-contact",
+    "touchdown",
+    "serial-downloader",
+    "century",
+    "gigabyte-club",
+    "terabyte-club",
+    "giving-back",
+    "pillar-of-the-swarm",
+    "break-even",
+    "overachiever",
+    "seed-farm",
+    "swarm-master",
+    "speed-demon",
+    "curator",
+    "marathon"
+  ],
+  "titles": [
+    "Newcomer",
+    "Leecher",
+    "Sharer",
+    "Seeder",
+    "Archivist",
+    "Swarm Keeper",
+    "Torrent Warden",
+    "Legend"
+  ]
+}

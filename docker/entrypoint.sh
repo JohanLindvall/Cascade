@@ -8,10 +8,11 @@ die() { printf '[cascade] FATAL: %s\n' "$*" >&2; exit 1; }
 
 # `docker run --rm cascade --help` lists every option. Answered first, before
 # any user, directory or rtorrent setup, so it works in any environment. The
-# text is rendered from the option catalog in the server (src/options.ts).
+# text is rendered from the option catalog in the server
+# (server/internal/options).
 case "${1:-}" in
   -h | --help | help)
-    exec node /app/server/index.js --help
+    exec cascade --help
     ;;
 esac
 
@@ -139,18 +140,12 @@ clear_session_lock() {
 quote() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
 
 # Log scopes the UI raised in an earlier run, read out of the state file the
-# server owns. Anything unreadable — no file yet, corrupt JSON, no node —
-# yields nothing rather than failing the start, and the names are filtered to
+# server owns. Anything unreadable — no file yet, corrupt JSON — yields
+# nothing rather than failing the start, and the server filters the names to
 # the shape a scope has so a hand-edited file cannot inject rc lines.
 stored_log_scopes() {
   [ -f "$CASCADE_STATE_FILE" ] || return 0
-  node -e '
-    try {
-      const data = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-      const scopes = Array.isArray(data.logScopes) ? data.logScopes : [];
-      console.log(scopes.filter((s) => /^[a-z][a-z_]{1,30}$/.test(s)).join(" "));
-    } catch { /* nothing to add */ }
-  ' "$CASCADE_STATE_FILE" 2>/dev/null || true
+  cascade log-scopes "$CASCADE_STATE_FILE" 2>/dev/null || true
 }
 
 # Ask this rtorrent whether it knows a command, by feeding it a one-line option
@@ -263,8 +258,9 @@ fi
 # --------------------------------------------------------------------------
 
 # The catalog maps environment options to settings; JSON encoding and input
-# validation run once in Node so quoted paths cannot corrupt the whole file.
-node /app/server/bootSettings.js > "$BOOT_SETTINGS"
+# validation run once in the server so quoted paths cannot corrupt the whole
+# file, and a bad value stops the start here, by its name.
+cascade boot-settings > "$BOOT_SETTINGS"
 [ "$(id -u)" = "0" ] && chown "$PUID:$PGID" "$BOOT_SETTINGS" || true
 
 # --------------------------------------------------------------------------
@@ -279,7 +275,7 @@ as_user() {
   fi
 }
 
-NODE_PID=""
+SERVER_PID=""
 STOPPING=0
 
 start_rtorrent() {
@@ -317,7 +313,7 @@ wait_rtorrent() {
 stop_all() {
   STOPPING=1
   log "shutting down"
-  [ -n "$NODE_PID" ] && kill "$NODE_PID" 2>/dev/null || true
+  [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true
   if pidof rtorrent >/dev/null 2>&1; then
     kill -INT "$(pidof rtorrent)" 2>/dev/null || true
     if wait_rtorrent 30; then
@@ -328,7 +324,7 @@ stop_all() {
       wait_rtorrent 10 || log "rtorrent did not stop; the next start clears its session lock"
     fi
   fi
-  [ -z "$NODE_PID" ] || wait "$NODE_PID" 2>/dev/null || true
+  [ -z "$SERVER_PID" ] || wait "$SERVER_PID" 2>/dev/null || true
   exit "${1:-0}"
 }
 
@@ -354,18 +350,18 @@ if [ $# -gt 0 ]; then
 fi
 
 if [ "$(id -u)" = "0" ]; then
-  su-exec "$PUID:$PGID" node /app/server/index.js &
+  su-exec "$PUID:$PGID" cascade &
 else
-  node /app/server/index.js &
+  cascade &
 fi
-NODE_PID=$!
+SERVER_PID=$!
 
 while [ "$STOPPING" = "0" ]; do
   sleep 5 &
   wait $! 2>/dev/null || true
   [ "$STOPPING" = "1" ] && break
 
-  if ! kill -0 "$NODE_PID" 2>/dev/null; then
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     log "web server exited — stopping container"
     # Preserve failure for Docker's on-failure restart policy.
     stop_all 1

@@ -6,7 +6,8 @@
 # tagged a newer release, opens a pull request moving the default to it — the
 # same edit as `make bump-rtorrent` (docker/bump-rtorrent.sh). Merging it is a
 # push to main like any other, so release.yml publishes it.
-# .github/dependabot.yml covers the npm packages and the Actions.
+# .github/dependabot.yml covers the Go modules, the npm packages and the
+# Actions.
 #
 # Two GitHub rules shape the last step. A pull request opened with
 # GITHUB_TOKEN needs Settings → Actions → General → "Allow GitHub Actions to

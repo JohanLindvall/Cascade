@@ -4,4 +4,6 @@
 docs
 data
 *.md
+# The server's tests check the option catalog against it.
+!README.md
 .github
