@@ -13,6 +13,7 @@ package options
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -164,10 +165,5 @@ func WriteDocs(root string) (changed bool, err error) {
 }
 
 func sortedKeys(set map[string]bool) []string {
-	keys := make([]string, 0, len(set))
-	for key := range set {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	return keys
+	return slices.Sorted(maps.Keys(set))
 }

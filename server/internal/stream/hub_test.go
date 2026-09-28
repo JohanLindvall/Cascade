@@ -60,13 +60,22 @@ func quiet(t *testing.T, sub *Subscriber) {
 	}
 }
 
+func subscribe(t *testing.T, hub *Hub, since string) *Subscriber {
+	t.Helper()
+	sub, err := hub.Subscribe(since)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sub
+}
+
 // A long interval, so every read in these tests is one they asked for.
 func newTestHub(src *scripted) *Hub { return NewHub(src.fetch, time.Minute) }
 
 func TestSnapshotThenOnlyTheChanges(t *testing.T) {
 	src := &scripted{body: `{"torrents":[{"hash":"AA","upRate":0}],"status":{"upRate":0}}`}
 	hub := newTestHub(src)
-	sub := hub.Subscribe("")
+	sub := subscribe(t, hub, "")
 	defer hub.Unsubscribe(sub)
 
 	snap := next(t, sub)
@@ -95,7 +104,7 @@ func TestSnapshotThenOnlyTheChanges(t *testing.T) {
 func TestReconnectCatchesUpFromWhatIsKept(t *testing.T) {
 	src := &scripted{body: `{"n":1}`}
 	hub := newTestHub(src)
-	first := hub.Subscribe("")
+	first := subscribe(t, hub, "")
 	snap := next(t, first)
 	for _, body := range []string{`{"n":2}`, `{"n":3}`} {
 		src.set(body, nil)
@@ -104,7 +113,7 @@ func TestReconnectCatchesUpFromWhatIsKept(t *testing.T) {
 	}
 
 	// Back from the first snapshot: the two deltas since, no snapshot.
-	again := hub.Subscribe(snap.ID)
+	again := subscribe(t, hub, snap.ID)
 	defer hub.Unsubscribe(again)
 	for _, want := range []string{`{"n":2}`, `{"n":3}`} {
 		ev := next(t, again)
@@ -115,13 +124,13 @@ func TestReconnectCatchesUpFromWhatIsKept(t *testing.T) {
 	quiet(t, again)
 
 	// Already current: nothing to send.
-	current := hub.Subscribe(hub.id(3))
+	current := subscribe(t, hub, hub.id(3))
 	defer hub.Unsubscribe(current)
 	quiet(t, current)
 
 	// From another server's lifetime, or too far back: a snapshot.
 	for _, since := range []string{"otherepoch-2", "junk", hub.id(99)} {
-		sub := hub.Subscribe(since)
+		sub := subscribe(t, hub, since)
 		if ev := next(t, sub); ev.Name != eventSnapshot || string(ev.Data) != `{"n":3}` {
 			t.Fatalf("since %q: %s %s", since, ev.Name, ev.Data)
 		}
@@ -133,7 +142,7 @@ func TestReconnectCatchesUpFromWhatIsKept(t *testing.T) {
 func TestFailureIsSaidOnceAndRecoveryClearsIt(t *testing.T) {
 	src := &scripted{body: `{"n":1}`}
 	hub := newTestHub(src)
-	sub := hub.Subscribe("")
+	sub := subscribe(t, hub, "")
 	defer hub.Unsubscribe(sub)
 	next(t, sub)
 
@@ -148,7 +157,7 @@ func TestFailureIsSaidOnceAndRecoveryClearsIt(t *testing.T) {
 	quiet(t, sub) // the same failure is not repeated
 
 	// A subscriber arriving now hears about it at once.
-	late := hub.Subscribe("")
+	late := subscribe(t, hub, "")
 	defer hub.Unsubscribe(late)
 	if ev := next(t, late); ev.Name != eventSnapshot {
 		t.Fatalf("late subscriber first got %s", ev.Name)
@@ -169,7 +178,7 @@ func TestFailureIsSaidOnceAndRecoveryClearsIt(t *testing.T) {
 func TestTheStateSetsTheInterval(t *testing.T) {
 	src := &scripted{body: `{"status":{"statePollMs":2000}}`}
 	hub := NewHub(src.fetch, 500*time.Millisecond)
-	sub := hub.Subscribe("")
+	sub := subscribe(t, hub, "")
 	defer hub.Unsubscribe(sub)
 	next(t, sub)
 	hub.mu.Lock()
@@ -193,7 +202,7 @@ func TestTheStateSetsTheInterval(t *testing.T) {
 func TestPollingStopsWithTheLastSubscriber(t *testing.T) {
 	src := &scripted{body: `{"n":1}`}
 	hub := NewHub(src.fetch, minInterval)
-	sub := hub.Subscribe("")
+	sub := subscribe(t, hub, "")
 	next(t, sub)
 	hub.Unsubscribe(sub)
 	time.Sleep(3 * minInterval)
@@ -209,7 +218,7 @@ func TestPollingStopsWithTheLastSubscriber(t *testing.T) {
 		t.Fatal("still marked as polling")
 	}
 	// A new subscriber starts it again, from a snapshot.
-	again := hub.Subscribe("")
+	again := subscribe(t, hub, "")
 	defer hub.Unsubscribe(again)
 	if ev := next(t, again); ev.Name != eventSnapshot {
 		t.Fatalf("got %s", ev.Name)
@@ -219,7 +228,7 @@ func TestPollingStopsWithTheLastSubscriber(t *testing.T) {
 func TestASubscriberThatFallsBehindIsDropped(t *testing.T) {
 	src := &scripted{body: `{"n":0}`}
 	hub := newTestHub(src)
-	slow := hub.Subscribe("")
+	slow := subscribe(t, hub, "")
 	next(t, slow)
 	hub.mu.Lock()
 	for i := 0; i <= subscriberBuffer; i++ {
@@ -231,5 +240,37 @@ func TestASubscriberThatFallsBehindIsDropped(t *testing.T) {
 		t.Fatal("a subscriber with a full buffer is still subscribed")
 	}
 	for range slow.Events { // drains, then ends: the channel is closed
+	}
+}
+
+func TestTheOpenStreamsAreBounded(t *testing.T) {
+	hub := newTestHub(&scripted{body: `{"n":0}`})
+	subs := make([]*Subscriber, maxSubscribers)
+	for i := range subs {
+		subs[i] = subscribe(t, hub, "")
+	}
+	if _, err := hub.Subscribe(""); !errors.Is(err, ErrTooManySubscribers) {
+		t.Fatalf("subscriber %d: %v", maxSubscribers+1, err)
+	}
+	hub.Unsubscribe(subs[0])
+	defer func() {
+		for _, sub := range subs {
+			hub.Unsubscribe(sub)
+		}
+	}()
+	subs[0] = subscribe(t, hub, "") // a closed stream makes room again
+}
+
+func TestAnEventIsFramedForServerSentEvents(t *testing.T) {
+	for _, c := range []struct {
+		ev   Event
+		want string
+	}{
+		{Event{Name: eventDelta, ID: "e-2", Data: []byte(`{"n":2}`)}, "id: e-2\nevent: delta\ndata: {\"n\":2}\n\n"},
+		{Event{Name: eventOK, Data: []byte("{}")}, "event: ok\ndata: {}\n\n"},
+	} {
+		if got := string(c.ev.Frame()); got != c.want {
+			t.Errorf("%q, want %q", got, c.want)
+		}
 	}
 }

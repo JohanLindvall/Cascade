@@ -183,8 +183,15 @@ func readEvent(t *testing.T, r *bufio.Reader) (name, data string) {
 
 // a service whose state a test can change.
 type changing struct {
-	mu   sync.Mutex
-	rate int64
+	mu    sync.Mutex
+	rate  int64
+	reads int
+}
+
+func (c *changing) readCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reads
 }
 
 func (c *changing) set(rate int64) {
@@ -196,6 +203,7 @@ func (c *changing) set(rate int64) {
 func (c *changing) state(context.Context) (contracts.StateResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.reads++
 	return contracts.StateResponse{
 		Status:   contracts.GlobalStatus{StatePollMs: 60_000, History: []contracts.RateSample{}},
 		Torrents: []contracts.Torrent{{Hash: hash, UpRate: c.rate}},

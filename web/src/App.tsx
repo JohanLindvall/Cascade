@@ -1,5 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react';
-import { api, type BulkResult } from './api';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
+import { api } from './api';
+import { rowOf } from './app/dom';
+import { focusOnMenu } from './app/menuFocus';
+import { Toolbar } from './app/Toolbar';
+import { useDropToAdd } from './app/useDropToAdd';
+import { useShortcuts } from './app/useShortcuts';
+import { useTorrentActions } from './app/useTorrentActions';
 import { AchievementsDialog } from './components/Achievements';
 import { AddDialog } from './components/AddDialog';
 import { Celebrate } from './components/Celebrate';
@@ -11,27 +17,12 @@ import { RpcConsole } from './components/RpcConsole';
 import { SettingsDialog } from './components/SettingsDialog';
 import { Sidebar, type ToolId } from './components/Sidebar';
 import { ThrottleDialog } from './components/ThrottleDialog';
-import { TorrentMenu, type MenuActions } from './components/TorrentMenu';
-import { SORT_OPTIONS, TorrentTable } from './components/TorrentTable';
+import { TorrentMenu } from './components/TorrentMenu';
+import { TorrentTable } from './components/TorrentTable';
 import { useDialogs } from './components/dialogs';
-import {
-  IconAlert,
-  IconClose,
-  IconFilter,
-  IconList,
-  IconPause,
-  IconPlay,
-  IconRefresh,
-  IconSearch,
-  IconStop,
-  IconTag,
-  IconTrash,
-  IconUpload,
-} from './components/icons';
-import { useToast } from './components/ui';
-import { acceptTorrents, dropText, droppedFiles, linksFromDrop } from './files';
+import { IconAlert, IconRefresh, IconUpload } from './components/icons';
+import { useToast } from './components/toast';
 import { filterTorrents, type Filter } from './filter';
-import { magnetLink, nameErrors } from './format';
 import { grimAchievement, grimGame } from './grim';
 import { useLatest } from './hooks';
 import { fetchPreferences, readCache, savePreferences, type Preferences } from './prefs';
@@ -46,6 +37,7 @@ import {
   type SelectMods,
   type Selection,
 } from './selection';
+import { sharedValue } from './sharedValue';
 import { defaultSortDir, sortTorrents, type SortKey, type SortState } from './sort';
 import { applyTheme, fxFlavor, resolveTheme, type ResolvedTheme, type ThemeMode } from './theme';
 import type { GameState, ThrottleGroup, Torrent } from './types';
@@ -66,18 +58,6 @@ interface MenuState {
 const NO_TORRENTS: Torrent[] = [];
 const NO_THROTTLES: ThrottleGroup[] = [];
 
-/** Fields that take typing, and dropped text, for themselves. A checkbox does not. */
-const TEXT_ENTRY =
-  'textarea, select, [contenteditable]:not([contenteditable="false"]), ' +
-  'input:not([type="checkbox"]):not([type="radio"]):not([type="button"]):not([type="submit"])';
-
-function isTextEntry(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest(TEXT_ENTRY) !== null;
-}
-
-const NO_DATA_DELETE =
-  'Deleting data is switched off on this server (CASCADE_ALLOW_DATA_DELETE) — Delete alone removes the torrent and keeps its data.';
-
 export function App() {
   // The server's state, kept current by the stream: every change made through
   // the API is read back at once, so nothing here asks for it again.
@@ -97,7 +77,6 @@ export function App() {
   const [focused, setFocused] = useState<string | null>(null);
   const [dialog, setDialog] = useState<Dialog>(null);
   const [menu, setMenu] = useState<MenuState | null>(null);
-  const [dropping, setDropping] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [celebration, setCelebration] = useState(0);
   const [burst, setBurst] = useState<Burst | null>(null);
@@ -113,20 +92,19 @@ export function App() {
   const flavor = fxFlavor(resolvedTheme);
   const supports = status?.backend.supports;
   const policy = status?.policy;
+  const gameEnabled = game?.enabled === true;
 
   const toast = useToast();
   const dialogs = useDialogs();
   const compact = useMediaQuery(COMPACT_QUERY);
+  const compactRef = useLatest(compact);
   const searchRef = useRef<HTMLInputElement>(null);
-  const dragDepth = useRef(0);
   const completedRef = useRef<Set<string> | null>(null);
   const seenBadgesRef = useRef<string[] | null>(null);
   // Set once the stored preferences say which badges were already toasted.
   const [badgesKnown, setBadgesKnown] = useState(false);
   // Read by badge toasts without re-running them on theme changes.
   const grimRef = useLatest(grim);
-  // Any modal — the app's own dialogs or a confirm/prompt — takes the keyboard.
-  const modalOpen = dialog !== null || dialogs.open;
 
   // The black metal theme re-carves the gamification copy; the server's ids
   // and progress stay canonical, so switching themes never changes what is
@@ -135,6 +113,7 @@ export function App() {
 
   const clearBurst = useCallback(() => setBurst(null), []);
   const clearCelebration = useCallback(() => setCelebration(0), []);
+  const closeDialog = useCallback(() => setDialog(null), []);
 
   const updatePrefs = useCallback((patch: Partial<Preferences>) => {
     setPrefs((current) => ({ ...current, ...patch }));
@@ -204,7 +183,6 @@ export function App() {
   // list keeps its identity through a delta that touches no torrent (the
   // global rates, the history), so this runs when a torrent changed, not on
   // every delta.
-  const gameEnabled = game?.enabled === true;
   useEffect(() => {
     if (!loaded) return;
     const done = new Set(torrents.filter((torrent) => torrent.progress >= 1).map((torrent) => torrent.hash));
@@ -223,8 +201,9 @@ export function App() {
     if (badgesKnown) announceBadges(game);
   }, [game, badgesKnown, announceBadges]);
 
-  // Tracker hosts change rarely; refresh them only when the torrent set changes.
-  const hashKey = torrents.map((torrent) => torrent.hash).join(',');
+  // Tracker hosts change rarely; refresh them only when the torrent set
+  // changes, which the joined key says without comparing lists.
+  const hashKey = useMemo(() => torrents.map((torrent) => torrent.hash).join(','), [torrents]);
   useEffect(() => {
     const hashes = hashKey ? hashKey.split(',') : [];
     if (hashes.length === 0) {
@@ -252,6 +231,7 @@ export function App() {
     [torrents, filter, search, sort, trackerHosts],
   );
   const order = useMemo(() => visible.map((torrent) => torrent.hash), [visible]);
+  const orderRef = useLatest(order);
 
   const byHash = useMemo(() => {
     const map = new Map<string, Torrent>();
@@ -273,27 +253,18 @@ export function App() {
     [torrents],
   );
 
-  const nameOf = useCallback((hash: string) => byHash.get(hash)?.name, [byHash]);
-
-  /** The value every one of `hashes` shares for a field, or empty when they differ. */
-  const shared = (hashes: string[], pick: (torrent: Torrent) => string) => {
-    const values = new Set(
-      hashes.map((hash) => {
-        const torrent = byHash.get(hash);
-        return torrent ? pick(torrent) : '';
-      }),
-    );
-    return values.size === 1 ? [...values][0] : '';
-  };
-
   /* ------------------------------ selection ---------------------------- */
 
+  // Handed to every row, so it must not change with the list: each memoized
+  // row would otherwise be drawn again on every update. The order is read
+  // when the click lands, which is the order the user clicked in.
   const onSelect = useCallback(
     (hash: string, mods: SelectMods) => {
+      const rows = orderRef.current;
       setFocused(hash);
-      setSelection((current) => selectRow(current, order, hash, mods));
+      setSelection((current) => selectRow(current, rows, hash, mods));
     },
-    [order],
+    [orderRef],
   );
 
   /** The header checkbox and Ctrl+A act on the rows it shows, leaving hidden ones alone. */
@@ -311,171 +282,67 @@ export function App() {
     [order],
   );
 
-  const clearSelection = () => {
+  const clearSelection = useCallback(() => {
     setSelection(EMPTY_SELECTION);
     setFocused(null);
-  };
+  }, []);
 
   /** Keyboard movement: focus a row, selecting it — or, with Shift, the range to it. */
-  const moveTo = (hash: string, extend: boolean) => {
-    setFocused(hash);
+  const move = (to: 'next' | 'previous' | 'first' | 'last', extend: boolean): boolean => {
+    const next =
+      to === 'first'
+        ? order[0]
+        : to === 'last'
+          ? order[order.length - 1]
+          : stepRow(order, focused, to === 'next' ? 1 : -1);
+    if (!next) return false;
+    setFocused(next);
     setSelection((current) =>
-      extend ? selectRow(current, order, hash, { ctrl: false, shift: true }) : selectOnly(hash),
+      extend ? selectRow(current, order, next, { ctrl: false, shift: true }) : selectOnly(next),
     );
-    document.querySelector(`[data-hash="${hash}"]`)?.scrollIntoView({ block: 'nearest' });
+    rowOf(next)?.scrollIntoView({ block: 'nearest' });
+    return true;
   };
 
   /* ------------------------------- actions ----------------------------- */
 
-  /** Toast each failure a bulk call reports, by torrent name; true when there were none. */
-  const report = useCallback(
-    (result: BulkResult) => {
-      for (const error of nameErrors(result.errors, nameOf)) toast.push('error', error);
-      return result.errors.length === 0;
-    },
-    [nameOf, toast],
-  );
-
-  const runAction = useCallback(
-    async (action: string, hashes: string[] = targets): Promise<boolean> => {
-      if (hashes.length === 0) return false;
-      try {
-        return report(await api.bulkAction(hashes, action));
-      } catch (error) {
-        toast.error(error);
-        return false;
-      }
-    },
-    [targets, report, toast],
-  );
+  const actions = useTorrentActions({
+    targets,
+    byHash,
+    labels,
+    policy,
+    downloadDir: status?.downloadDir ?? '',
+    onRemoved: clearSelection,
+  });
 
   /**
-   * Recheck, then start again the moment the check completes — the way out
-   * of "registered as completed, but hash check returned unfinished
-   * chunks", which a plain recheck leaves stopped. The server watches the
-   * check end; the toast says so, or the silence afterwards reads as a
-   * button that did nothing.
+   * Open the torrent menu on a row, making it the selection unless it is
+   * already part of it. The compact layout is read through a ref so that the
+   * callback, handed to every row, stays stable.
    */
-  const recheckRestart = useCallback(
-    async (hashes: string[] = targets) => {
-      if (hashes.length === 0) return;
-      if (!(await runAction('recheck-restart', hashes))) return; // errors already toasted
-      toast.push(
-        'info',
-        `Rechecking ${hashes.length === 1 ? 'torrent' : `${hashes.length} torrents`} — starting again when the check completes`,
-      );
+  const openMenu = useCallback(
+    (hash: string, x: number, y: number) => {
+      const compactNow = compactRef.current;
+      setSelection((current) => (current.selected.has(hash) ? current : selectOnly(hash)));
+      setFocused((current) => focusOnMenu(compactNow, current, hash));
+      setMenu({ x, y, hash });
     },
-    [targets, runAction, toast],
+    [compactRef],
   );
 
-  const removeTorrents = useCallback(
-    async (deleteData: boolean, hashes: string[] = targets) => {
-      if (hashes.length === 0) return;
-      // Refused here rather than after a confirmation the server would then refuse.
-      if (deleteData && policy?.deleteData === false) {
-        toast.push('info', NO_DATA_DELETE);
-        return;
-      }
-      const count = hashes.length === 1 ? 'this torrent' : `these ${hashes.length} torrents`;
-      const ok = await dialogs.confirm({
-        title: deleteData ? 'Remove and delete data' : 'Remove torrent',
-        message: deleteData
-          ? `Remove ${count} from rtorrent and delete the downloaded data? This cannot be undone.`
-          : `Remove ${count} from rtorrent? The downloaded data is kept.`,
-        items: hashes.map((hash) => nameOf(hash) ?? hash),
-        confirmLabel: deleteData ? 'Remove and delete' : 'Remove',
-        danger: deleteData,
-      });
-      if (!ok) return;
-      try {
-        if (report(await api.remove(hashes, deleteData))) {
-          toast.push('success', `Removed ${hashes.length} torrent${hashes.length === 1 ? '' : 's'}`);
-        }
-        setSelection(EMPTY_SELECTION);
-        setFocused(null);
-      } catch (error) {
-        toast.error(error);
-      }
+  // Stable for the same reason as onSelect.
+  const onContextMenu = useCallback(
+    (hash: string, event: MouseEvent) => {
+      event.preventDefault();
+      openMenu(hash, event.clientX, event.clientY);
     },
-    [targets, policy, dialogs, nameOf, report, toast],
+    [openMenu],
   );
-
-  const patchTorrents = useCallback(
-    async (patch: Record<string, unknown>, hashes: string[] = targets) => {
-      if (hashes.length === 0) return;
-      report(await api.patchEach(hashes, patch));
-    },
-    [targets, report],
-  );
-
-  const promptLabel = async (hashes: string[] = targets) => {
-    if (hashes.length === 0) return;
-    const label = await dialogs.prompt({
-      title: 'Set label',
-      label: 'Label',
-      message: 'Leave it empty to clear the label.',
-      items: hashes.map((hash) => nameOf(hash) ?? hash),
-      initial: shared(hashes, (torrent) => torrent.label),
-      placeholder: 'none',
-      suggestions: labels,
-      confirmLabel: 'Apply',
-    });
-    if (label === null) return;
-    await patchTorrents({ label: label.trim() }, hashes);
-  };
-
-  const promptDirectory = async (hashes: string[] = targets) => {
-    if (hashes.length === 0) return;
-    const directory = await dialogs.prompt({
-      title: 'Change directory',
-      label: 'Directory',
-      message:
-        'The torrent will be stopped and its download path changed. Move any downloaded files yourself, then use Recheck & restart.',
-      items: hashes.map((hash) => nameOf(hash) ?? hash),
-      initial: shared(hashes, (torrent) => torrent.directory),
-      placeholder: status?.downloadDir || '/downloads',
-      confirmLabel: 'Change directory',
-    });
-    if (!directory?.trim()) return;
-    await patchTorrents({ directory: directory.trim() }, hashes);
-  };
-
-  const copyMagnets = async (hashes: string[]) => {
-    const links = hashes.map((hash) => magnetLink(hash, nameOf(hash)));
-    try {
-      await copyToClipboard(links.join('\n'));
-      toast.push('success', `Copied ${links.length === 1 ? 'magnet link' : `${links.length} magnet links`}`);
-    } catch {
-      toast.push('error', 'Could not write to the clipboard');
-    }
-  };
-
-  const menuActions: MenuActions = {
-    run: (action, hashes) => void runAction(action, hashes),
-    recheckRestart: (hashes) => void recheckRestart(hashes),
-    patch: (patch, hashes) => void patchTorrents(patch, hashes),
-    setLabel: (hashes) => void promptLabel(hashes),
-    changeDirectory: (hashes) => void promptDirectory(hashes),
-    copyMagnets: (hashes) => void copyMagnets(hashes),
-    remove: (deleteData, hashes) => void removeTorrents(deleteData, hashes),
-  };
-
-  /** Open the torrent menu on a row, making it the selection unless it is already part of it. */
-  const openMenu = (hash: string, x: number, y: number) => {
-    setSelection((current) => (current.selected.has(hash) ? current : selectOnly(hash)));
-    setFocused(hash);
-    setMenu({ x, y, hash });
-  };
-
-  const onContextMenu = (hash: string, event: MouseEvent) => {
-    event.preventDefault();
-    openMenu(hash, event.clientX, event.clientY);
-  };
 
   /** The menu key and Shift+F10: the same menu, on the focused row. */
   const openMenuFromKeyboard = (): boolean => {
     if (!focused || !order.includes(focused)) return false;
-    const row = document.querySelector(`[data-hash="${focused}"]`)?.getBoundingClientRect();
+    const row = rowOf(focused)?.getBoundingClientRect();
     if (!row) return false;
     openMenu(focused, row.left + Math.min(row.width / 3, 240), row.top + row.height / 2);
     return true;
@@ -486,121 +353,12 @@ export function App() {
 
   /* --------------------------- drag and drop ---------------------------- */
 
-  /**
-   * Whether a drag is carrying something droppable: files, or a link — which
-   * is how a magnet arrives when dragged out of another tab. Some sources
-   * populate dataTransfer.items without advertising the "Files" type, so
-   * both are checked. Plain text selections are left out on purpose: they
-   * would light the overlay for drags that can never add anything.
-   */
-  const carriesPayload = (event: DragEvent): boolean => {
-    const transfer = event.dataTransfer;
-    if (!transfer) return false;
-    const types = Array.from(transfer.types ?? []);
-    if (types.includes('Files') || types.includes('text/uri-list')) return true;
-    return Array.from(transfer.items ?? []).some((item) => item.kind === 'file');
-  };
-
-  const onDragEnter = (event: DragEvent) => {
-    // The Add dialog has its own dropzone, and what lands there is staged,
-    // not started — the overlay promising otherwise would be wrong.
-    if (dialog === 'add' || !carriesPayload(event)) return;
-    dragDepth.current += 1;
-    setDropping(true);
-  };
-
-  const onDragLeave = (event: DragEvent) => {
-    if (dialog === 'add' || !carriesPayload(event)) return;
-    dragDepth.current = Math.max(0, dragDepth.current - 1);
-    if (dragDepth.current === 0) setDropping(false);
-  };
-
-  /**
-   * Always cancel the default action while a drag is over the app. Without
-   * this the browser handles any drop it does not recognise by navigating to
-   * the dropped file, which throws the UI away mid-drop.
-   */
-  const onDragOver = (event: DragEvent) => {
-    if (isTextEntry(event.target) && !Array.from(event.dataTransfer.types).includes('Files') &&
-        !Array.from(event.dataTransfer.items).some((item) => item.kind === 'file')) return;
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-  };
-
-  const submitDrop = async (form: FormData) => {
-    form.append('start', '1');
-    try {
-      const result = await api.upload(form);
-      for (const error of result.errors) toast.push('error', error);
-    } catch (error) {
-      toast.error(error);
-    }
-  };
-
-  const onDropFiles = (event: DragEvent) => {
-    dragDepth.current = 0;
-    setDropping(false);
-    const transfer = event.dataTransfer;
-    // Read files from both .files and .items, synchronously — a browser that
-    // exposed the drop only through .items would otherwise look like a bare
-    // path drop and be turned away (see droppedFiles).
-    const dropped = droppedFiles(transfer);
-    // Text or a link dropped on a field is the field's own: a magnet dragged
-    // into the Add dialog's link box, a name into the search. A file is still
-    // ours, or the browser would navigate to it.
-    if (dropped.length === 0 && isTextEntry(event.target)) return;
-    event.preventDefault();
-
-    // The Add dialog stages its own drops (its dropzone stops propagation, so
-    // this handler only ever sees the ones that missed it) — say where the
-    // file should land instead of swallowing the drop without a trace, which
-    // read as dragging being broken. Any other dialog has no stake in a
-    // drop: the file is handled exactly as if nothing were open.
-    if (dialog === 'add') {
-      toast.push('info', 'Drop it on the dialog’s dropzone — or close the dialog to add it straight away.');
-      return;
-    }
-
-    const { accepted, ignored } = acceptTorrents(dropped);
-    if (ignored) toast.push('info', ignored);
-    const launch = (count: number) =>
-      game?.enabled && setBurst({ id: ++burstId.current, x: event.clientX, y: event.clientY, count, flavor });
-
-    if (accepted.length > 0) {
-      launch(accepted.length);
-      const form = new FormData();
-      for (const file of accepted) form.append('torrents', file);
-      void submitDrop(form);
-      return;
-    }
-    if (dropped.length > 0) return; // Only non-torrents: already said so.
-
-    const { links, problem } = linksFromDrop(dropText(transfer));
-    if (problem) {
-      toast.push(problem.level, problem.text);
-      return;
-    }
-    launch(links.length);
-    const form = new FormData();
-    form.append('urls', links.join('\n'));
-    void submitDrop(form);
-  };
-
-  // A drop that lands outside the app element would otherwise make the browser
-  // navigate to the file, discarding the UI.
-  useEffect(() => {
-    const block = (event: globalThis.DragEvent) => {
-      if (isTextEntry(event.target) && !event.dataTransfer?.types.includes('Files') &&
-          !Array.from(event.dataTransfer?.items ?? []).some((item) => item.kind === 'file')) return;
-      event.preventDefault();
-    };
-    window.addEventListener('dragover', block);
-    window.addEventListener('drop', block);
-    return () => {
-      window.removeEventListener('dragover', block);
-      window.removeEventListener('drop', block);
-    };
-  }, []);
+  const drop = useDropToAdd({
+    staging: dialog === 'add',
+    onLaunch: (x, y, count) => {
+      if (gameEnabled) setBurst({ id: ++burstId.current, x, y, count, flavor });
+    },
+  });
 
   /* ----------------------------- keyboard ------------------------------ */
 
@@ -609,77 +367,21 @@ export function App() {
     if (!compact) setDrawerOpen(false);
   }, [compact]);
 
-  // Read through a ref so the listener is attached once, not re-attached on
-  // every poll with a fresh closure over the list.
-  const onKey = useLatest((event: KeyboardEvent) => {
-    // A key a component handled is claimed (the menus, the detail tabs, the
-    // resize handle all prevent the default), and a text field keeps its own.
-    if (event.defaultPrevented || isTextEntry(event.target)) return;
-    // With anything modal open the keyboard is its: Escape closes it (the
-    // modal listens for itself) and must not also clear the selection
-    // behind it, and Delete must not stack a second confirmation.
-    if (modalOpen) return;
-    if (drawerOpen && event.key !== 'Escape') return;
-    if (menu || (event.target instanceof Element && event.target.closest('[role="menu"]'))) {
-      if (event.key === 'Escape') setMenu(null);
-      return;
-    }
-    const command = event.ctrlKey || event.metaKey;
-    switch (event.key) {
-      case 'Escape':
-        // One layer at a time: the drawer first, then the selection.
-        if (drawerOpen) setDrawerOpen(false);
-        else clearSelection();
-        break;
-      case 'Delete':
-        void removeTorrents(event.shiftKey);
-        break;
-      case 'Backspace':
-        // ⌘⌫, the Mac spelling of Delete: a laptop keyboard has no Delete key.
-        if (command) void removeTorrents(event.shiftKey);
-        break;
-      case 'ArrowDown':
-      case 'ArrowUp':
-      case 'Home':
-      case 'End': {
-        const next =
-          event.key === 'Home'
-            ? order[0]
-            : event.key === 'End'
-              ? order[order.length - 1]
-              : stepRow(order, focused, event.key === 'ArrowDown' ? 1 : -1);
-        if (!next) break;
-        event.preventDefault();
-        moveTo(next, event.shiftKey);
-        break;
-      }
-      case 'ContextMenu':
-      case 'F10':
-        if (event.key === 'F10' && !event.shiftKey) break;
-        if (openMenuFromKeyboard()) event.preventDefault();
-        break;
-      case '/':
-        event.preventDefault();
-        searchRef.current?.focus();
-        break;
-      case 'a':
-      case 'A':
-        if (!command) break;
-        event.preventDefault();
-        onSelectAll(true);
-        break;
-      case 'n':
-      case 'N':
-        if (!command && !event.altKey) setDialog('add');
-        break;
-    }
+  useShortcuts({
+    // Any modal — the app's own dialogs or a confirm/prompt — takes the keyboard.
+    modalOpen: dialog !== null || dialogs.open,
+    drawerOpen,
+    menuOpen: menu !== null,
+    closeDrawer: () => setDrawerOpen(false),
+    closeMenu: () => setMenu(null),
+    clearSelection,
+    remove: (deleteData) => void actions.remove(deleteData),
+    move,
+    openMenu: openMenuFromKeyboard,
+    focusSearch: () => searchRef.current?.focus(),
+    selectAll: () => onSelectAll(true),
+    add: () => setDialog('add'),
   });
-
-  useEffect(() => {
-    const listener = (event: KeyboardEvent) => onKey.current(event);
-    window.addEventListener('keydown', listener);
-    return () => window.removeEventListener('keydown', listener);
-  }, [onKey]);
 
   /* ------------------------------- render ------------------------------ */
 
@@ -691,27 +393,15 @@ export function App() {
       sort.key === key ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: defaultSortDir(key) },
     );
 
-  /** The compact layout's dropdown: pick a column, keeping the direction if it is the same one. */
-  const onSortKey = (key: SortKey) =>
-    applySort({ key, dir: sort.key === key ? sort.dir : defaultSortDir(key) });
-
   const openTool = (tool: ToolId) => {
     setDrawerOpen(false);
     setDialog(tool);
   };
 
-  const none = targets.length === 0;
-  const labelsSupported = supports?.labels !== false;
   const showConsole = policy?.rawRpc === true;
 
   return (
-    <div
-      className="app"
-      onDragEnter={onDragEnter}
-      onDragLeave={onDragLeave}
-      onDragOver={onDragOver}
-      onDrop={onDropFiles}
-    >
+    <div className="app" {...drop.handlers}>
       <Header
         status={status}
         game={displayGame}
@@ -739,7 +429,7 @@ export function App() {
         trackerHosts={trackerHosts}
         compact={compact}
         onTool={openTool}
-        showProgress={!!game?.enabled}
+        showProgress={gameEnabled}
         showConsole={showConsole}
       />
 
@@ -755,135 +445,24 @@ export function App() {
           </div>
         )}
 
-        <div className="toolbar">
-          <button
-            className="btn sm compact-only"
-            onClick={() => setDrawerOpen((value) => !value)}
-            title="Filters"
-            aria-label="Filters"
-            aria-expanded={drawerOpen}
-          >
-            <IconFilter size={14} />
-          </button>
-          <button className="btn sm" aria-label="Start" onClick={() => void runAction('start')} disabled={none}>
-            <IconPlay size={12} />
-            <span>Start</span>
-          </button>
-          <button className="btn sm" aria-label="Pause" onClick={() => void runAction('pause')} disabled={none}>
-            <IconPause size={13} />
-            <span>Pause</span>
-          </button>
-          <button className="btn sm" aria-label="Stop" onClick={() => void runAction('stop')} disabled={none}>
-            <IconStop size={12} />
-            <span>Stop</span>
-          </button>
-          <button
-            className="btn sm danger"
-            onClick={() => void removeTorrents(false)}
-            disabled={none}
-            title="Remove (Delete)"
-            aria-label="Remove"
-          >
-            <IconTrash size={13} />
-            <span>Remove</span>
-          </button>
-
-          <div className="divider" />
-
-          <button className="btn sm" aria-label="Recheck" onClick={() => void runAction('recheck')} disabled={none}>
-            <IconRefresh size={13} />
-            <span>Recheck</span>
-          </button>
-          <button
-            className="btn sm"
-            onClick={() => void promptLabel()}
-            aria-label="Label"
-            disabled={none || !labelsSupported}
-            title={labelsSupported ? undefined : 'Not supported by this rtorrent build'}
-          >
-            <IconTag size={13} />
-            <span>Label</span>
-          </button>
-
-          {compact && (
-            <>
-              <select
-                className="select sort-select"
-                value={sort.key}
-                aria-label="Sort by"
-                onChange={(event) => onSortKey(event.target.value as SortKey)}
-              >
-                {SORT_OPTIONS.map((option) => (
-                  <option key={option.key} value={option.key}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                className="btn sm"
-                onClick={() => applySort({ key: sort.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' })}
-                aria-label={`Sort direction: ${sort.dir === 'asc' ? 'ascending' : 'descending'}`}
-                title="Sort direction"
-              >
-                {sort.dir === 'asc' ? '▲' : '▼'}
-              </button>
-            </>
-          )}
-
-          {(targets.length > 0 || hidden > 0) && (
-            <span className="selection-pill">
-              {targets.length} selected
-              {hidden > 0 && (
-                <span
-                  className="pill-hidden"
-                  title="Selected, but hidden by the current filter or search — actions skip them until they are shown again"
-                >
-                  +{hidden} hidden
-                </span>
-              )}
-              <button className="btn sm ghost pill-clear" onClick={clearSelection}>
-                clear
-              </button>
-            </span>
-          )}
-
-          <div className="header-spacer" />
-
-          <button className="btn sm" onClick={() => setDialog('log')} title="rtorrent log" aria-label="rtorrent log">
-            <IconList size={13} />
-            <span>Log</span>
-          </button>
-
-          <div className="search">
-            <IconSearch size={14} />
-            <input
-              ref={searchRef}
-              className="input"
-              placeholder="Search torrents… ( / )"
-              aria-label="Search torrents"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape') return;
-                setSearch('');
-                event.currentTarget.blur();
-              }}
-            />
-            {search && (
-              <button
-                className="search-clear"
-                onClick={() => {
-                  setSearch('');
-                  searchRef.current?.focus();
-                }}
-                aria-label="Clear search"
-                title="Clear search (Esc)"
-              >
-                <IconClose size={12} />
-              </button>
-            )}
-          </div>
-        </div>
+        <Toolbar
+          compact={compact}
+          drawerOpen={drawerOpen}
+          onToggleDrawer={() => setDrawerOpen((value) => !value)}
+          selected={targets.length}
+          hidden={hidden}
+          onClearSelection={clearSelection}
+          onAction={(action) => void actions.run(action)}
+          onRemove={() => void actions.remove(false)}
+          onLabel={() => void actions.promptLabel()}
+          labelsSupported={supports?.labels !== false}
+          sort={sort}
+          onSort={applySort}
+          onLog={() => setDialog('log')}
+          search={search}
+          onSearch={setSearch}
+          searchRef={searchRef}
+        />
 
         <TorrentTable
           compact={compact}
@@ -895,10 +474,12 @@ export function App() {
           onSelect={onSelect}
           onSelectAll={onSelectAll}
           onContextMenu={onContextMenu}
-          emptyHint={
-            torrents.length === 0
-              ? 'Add a .torrent file or magnet link to get started.'
-              : 'No torrents match the current filter.'
+          empty={
+            !loaded
+              ? { title: 'Loading torrents…' }
+              : torrents.length === 0
+                ? { title: 'Nothing here yet', hint: 'Add a .torrent file or magnet link to get started.' }
+                : { title: 'No matches', hint: 'No torrents match the current filter or search.' }
           }
         />
 
@@ -908,7 +489,7 @@ export function App() {
             height={prefs.detailHeight}
             onHeightChange={(height) => updatePrefs({ detailHeight: height })}
             onClose={() => setFocused(null)}
-            onRecheckRestart={recheckRestart}
+            onRecheckRestart={actions.recheckRestart}
             supports={supports}
           />
         )}
@@ -922,12 +503,16 @@ export function App() {
           throttles={throttles}
           supports={supports}
           policy={policy}
-          actions={menuActions}
+          current={{
+            priority: sharedValue(byHash, menuTargets, (torrent) => torrent.priority),
+            throttle: sharedValue(byHash, menuTargets, (torrent) => torrent.throttle),
+          }}
+          actions={actions.menu}
           onClose={() => setMenu(null)}
         />
       )}
 
-      {dropping && (
+      {drop.dropping && (
         <div className="drop-overlay">
           <div className="drop-card">
             <IconUpload size={30} />
@@ -941,46 +526,23 @@ export function App() {
       <DropBurst burst={burst} onDone={clearBurst} />
 
       {dialog === 'add' && (
-        <AddDialog
-          onClose={() => setDialog(null)}
-          defaultDirectory={status?.downloadDir ?? ''}
-          labels={labels}
-        />
+        <AddDialog onClose={closeDialog} defaultDirectory={status?.downloadDir ?? ''} labels={labels} />
       )}
       {dialog === 'progress' && displayGame && (
-        <AchievementsDialog game={displayGame} grim={grim} onClose={() => setDialog(null)} />
+        <AchievementsDialog game={displayGame} grim={grim} onClose={closeDialog} />
       )}
       {dialog === 'settings' && (
         <SettingsDialog
-          onClose={() => setDialog(null)}
+          onClose={closeDialog}
           backend={status?.backend ?? null}
           statePollMs={prefs.statePollMs}
           statePollDefaultMs={status?.statePollDefaultMs ?? null}
           onStatePollChange={(statePollMs) => updatePrefs({ statePollMs })}
         />
       )}
-      {dialog === 'throttles' && (
-        <ThrottleDialog onClose={() => setDialog(null)} backend={status?.backend ?? null} />
-      )}
-      {dialog === 'console' && <RpcConsole onClose={() => setDialog(null)} />}
-      {dialog === 'log' && <LogDialog onClose={() => setDialog(null)} />}
+      {dialog === 'throttles' && <ThrottleDialog onClose={closeDialog} backend={status?.backend ?? null} />}
+      {dialog === 'console' && <RpcConsole onClose={closeDialog} />}
+      {dialog === 'log' && <LogDialog onClose={closeDialog} />}
     </div>
   );
-}
-
-/** Clipboard write with a fallback for non-secure (plain http) origins. */
-function copyToClipboard(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
-  const area = document.createElement('textarea');
-  area.value = text;
-  area.style.position = 'fixed';
-  area.style.opacity = '0';
-  document.body.appendChild(area);
-  area.select();
-  try {
-    if (!document.execCommand('copy')) return Promise.reject(new Error('copy rejected'));
-  } finally {
-    area.remove();
-  }
-  return Promise.resolve();
 }

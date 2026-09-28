@@ -10,10 +10,10 @@
 | `RT_SESSION_DIR` | `/config/session` | rtorrent's session state |
 | `RT_WATCH_DIR` | `/watch` | .torrent files dropped here are loaded and started |
 | `RT_WATCH_ENABLE` | `1` | Set 0 to ignore the watch directory |
-| `RT_WATCH_INTERVAL` | `10` | Watch-directory poll interval, seconds |
+| `RT_WATCH_INTERVAL` | `10` | Watch-directory poll interval: seconds, MM:SS or HH:MM:SS |
 | `RT_LOG_FILE` | `/config/rtorrent.log` | rtorrent's log file, surfaced in the UI |
 | `RT_LOG_LEVEL` | `info` | Log scopes: info, debug, dht_debug, tracker_debug, … (more can be raised live from the log dialog) |
-| `RT_UMASK` | `0022` | umask rtorrent creates files with |
+| `RT_UMASK` | `0022` | umask rtorrent creates files with, in octal |
 | `CASCADE_STATE_FILE` | `/config/cascade-state.json` | Preferences, progress, add times and throttle groups |
 | `CASCADE_CHOWN_DOWNLOADS` | `0` | Set 1 to chown the download directory at startup (slow on large libraries) |
 | `RT_SESSION_LOCK_KEEP` | `0` | Set 1 to keep a leftover rtorrent.lock instead of clearing it |
@@ -124,7 +124,7 @@ Rates are in KiB/s; 0 means unlimited.
 | `CASCADE_DELETE_ROOTS` | download + completed dirs | Extra :-separated roots data may be deleted from |
 | `CASCADE_MAX_UPLOAD_MB` | `64` | Maximum combined .torrent file size per upload batch, MiB |
 | `CASCADE_POLL_MS` | `1000` | Backend sampling interval for the rate graph, ms |
-| `CASCADE_STATE_POLL_MS` | `100` | How often the torrent list is read while a page is open, ms (100-60000; the UI can override it) |
+| `CASCADE_STATE_POLL_MS` | `500` | How often the torrent list is read while a page is open, ms (100-60000; the UI can override it) |
 | `CASCADE_GAMIFY` | `1` | Set 0 to remove levels, badges and celebrations |
 | `CASCADE_WEB_ROOT` | `/app/web` | Directory the built UI is served from |
 

@@ -47,6 +47,23 @@ func TestStringTrimsAndRefusesControlCharacters(t *testing.T) {
 	}
 }
 
+func TestTrimIsTheBrowsersTrim(t *testing.T) {
+	// String.prototype.trim takes the byte order mark and the Unicode space
+	// separators, but leaves U+0085 (NEL), which unicode.IsSpace counts.
+	for text, want := range map[string]string{
+		"\uFEFF\u3000 x\u00A0\u2028": "x",
+		"\u0085x\u0085":              "\u0085x\u0085",
+		"\t\u0085\n":                 "\u0085",
+	} {
+		if got := Trim(text); got != want {
+			t.Errorf("%q: %q, want %q", text, got, want)
+		}
+	}
+	if got, err := String(" \u0085 ", "s", false); got != "\u0085" || err != nil {
+		t.Errorf("%q %v", got, err)
+	}
+}
+
 func TestBoolReadsTheUsualSpellings(t *testing.T) {
 	for value, want := range map[any]bool{true: true, false: false, float64(1): true, float64(0): false,
 		"yes": true, "ON": true, "true": true, "no": false, "off": false, "0": false} {

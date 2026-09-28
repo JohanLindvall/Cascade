@@ -4,13 +4,16 @@
 // groups and the log scopes that have to be re-created after an rtorrent
 // restart.
 //
-// Writes are debounced and land through a temp file plus rename, and only a
-// real change may dirty the file — the list is folded in on every poll.
+// Writes are debounced and land through a synced temp file plus rename, and
+// only a real change may dirty the file — the list is folded in on every
+// read of the state, up to ten times a second.
 package store
 
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"log"
 	"math"
 	"os"
@@ -74,6 +77,10 @@ type Store struct {
 	now   func() time.Time
 	delay time.Duration
 
+	// writing serializes the file writes, which run outside mu: a slow disk
+	// must not hold up the reads the state stream makes many times a second.
+	writing sync.Mutex
+
 	mu        sync.Mutex
 	data      data
 	completed map[string]bool
@@ -81,20 +88,56 @@ type Store struct {
 	timer     *time.Timer
 }
 
-// Open loads the store kept in file. A missing, unreadable or corrupt file
-// starts clean, and a well-formed one keeps whatever of it is valid.
+// Open loads the store kept in file. A well-formed file keeps whatever of it
+// is valid. One that cannot be read or is not JSON at all is set aside as
+// <file>.corrupt (then .corrupt.1, .corrupt.2, …) before starting clean, so
+// the first write does not destroy the only copy of what it held.
 func Open(file string) *Store {
 	s := &Store{file: file, now: time.Now, delay: flushDelay, data: emptyData()}
-	if raw, err := os.ReadFile(file); err == nil {
-		if parsed, err := parseJSON(raw); err == nil {
+	raw, err := os.ReadFile(file)
+	if err == nil {
+		var parsed any
+		if parsed, err = parseJSON(raw); err == nil {
 			s.data = restoreData(parsed)
 		}
+	}
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		s.setAside(err)
 	}
 	s.completed = make(map[string]bool, len(s.data.EverCompleted))
 	for _, hash := range s.data.EverCompleted {
 		s.completed[hash] = true
 	}
 	return s
+}
+
+// setAside moves an unusable state file out of the way, keeping its bytes
+// for whoever wants to recover them. Only a regular file is moved: anything
+// else in its place (a directory, a mount) is a misconfiguration to report,
+// not something to rename.
+func (s *Store) setAside(cause error) {
+	if info, err := os.Stat(s.file); err != nil || !info.Mode().IsRegular() {
+		log.Printf("[cascade] cannot use %s (%v); starting from an empty state", s.file, cause)
+		return
+	}
+	// Never over an earlier copy: rename replaces its target, and the fresh
+	// state written since that copy was made may be what is unusable now —
+	// the same failing disk twice would otherwise swap the counters and
+	// badges kept aside for a near-empty file. Cascade is the only writer
+	// here, so looking before renaming is enough. A name that cannot even be
+	// looked up (too long, say) is left for the rename to report.
+	aside := s.file + ".corrupt"
+	for n := 1; ; n++ {
+		if _, err := os.Lstat(aside); err != nil {
+			break
+		}
+		aside = s.file + ".corrupt." + strconv.Itoa(n)
+	}
+	if err := os.Rename(s.file, aside); err != nil {
+		log.Printf("[cascade] cannot use %s (%v) or set it aside (%v); starting from an empty state", s.file, cause, err)
+		return
+	}
+	log.Printf("[cascade] cannot use %s (%v); kept it as %s and started from an empty state", s.file, cause, aside)
 }
 
 // parseJSON decodes one JSON document as JSON.parse does: numbers too large
@@ -240,60 +283,106 @@ func (s *Store) scheduleFlushLocked() {
 	var timer *time.Timer
 	timer = time.AfterFunc(s.delay, func() {
 		s.mu.Lock()
-		defer s.mu.Unlock()
 		// An explicit Flush in the meantime has already written, and may
 		// have scheduled a retry of its own.
-		if s.timer != timer {
-			return
+		current := s.timer == timer
+		if current {
+			s.timer = nil
 		}
-		s.timer = nil
-		_ = s.flushLocked()
+		s.mu.Unlock()
+		if current {
+			_ = s.Flush()
+		}
 	})
 	s.timer = timer
 }
 
 // Flush writes pending changes now; a failed write is retried later without
-// waiting for another change.
+// waiting for another change. The state is captured under the lock and
+// written outside it, and writes never overlap, so the last one to finish
+// always holds the latest state.
 func (s *Store) Flush() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.flushLocked()
-}
+	s.writing.Lock()
+	defer s.writing.Unlock()
 
-func (s *Store) flushLocked() error {
+	s.mu.Lock()
 	if !s.dirty {
+		s.mu.Unlock()
 		return nil
 	}
 	if s.timer != nil {
 		s.timer.Stop()
 		s.timer = nil
 	}
-	if err := s.writeLocked(); err != nil {
+	encoded, err := encode(s.data)
+	s.dirty = false
+	s.mu.Unlock()
+
+	if err == nil {
+		err = writeAtomic(s.file, encoded)
+	}
+	if err != nil {
 		log.Printf("[cascade] could not persist state to %s: %v", s.file, err)
+		s.mu.Lock()
 		// Keep the unsaved state dirty and retry even if the session is idle.
 		s.scheduleFlushLocked()
-		return err
+		s.mu.Unlock()
 	}
-	s.dirty = false
-	return nil
+	return err
 }
 
-func (s *Store) writeLocked() error {
-	if err := os.MkdirAll(filepath.Dir(s.file), 0o777); err != nil {
-		return err
-	}
+// encode renders the file: indented as JSON.stringify(data, null, 2) would,
+// with nothing HTML-escaped and no trailing newline.
+func encode(d data) ([]byte, error) {
 	var encoded bytes.Buffer
 	encoder := json.NewEncoder(&encoded)
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(s.data); err != nil {
+	if err := encoder.Encode(d); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(encoded.Bytes(), []byte("\n")), nil
+}
+
+// writeAtomic replaces file through a temp file beside it, synced before the
+// rename: a crash or a full disk leaves the old file or the new one, never a
+// truncated mix of the two.
+func writeAtomic(file string, content []byte) (err error) {
+	dir := filepath.Dir(file)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp := s.file + ".tmp"
-	if err := os.WriteFile(tmp, bytes.TrimSuffix(encoded.Bytes(), []byte("\n")), 0o666); err != nil {
+	tmp := file + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, s.file)
+	defer func() {
+		if err != nil {
+			_ = os.Remove(tmp)
+		}
+	}()
+	if _, err = f.Write(content); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	if err = os.Rename(tmp, file); err != nil {
+		return err
+	}
+	// The rename itself is durable only once the directory is; a failure
+	// here loses nothing that is not already on its way to the disk.
+	if d, dirErr := os.Open(dir); dirErr == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 // seconds turns a stored time back into whole Unix seconds; a hand-edited
@@ -306,14 +395,32 @@ func seconds(f float64) int64 {
 // AddedAt returns the recorded add time, recording seenAt the first time a
 // hash is seen.
 func (s *Store) AddedAt(hash string, seenAt int64) int64 {
+	return s.AddedTimes([]string{hash}, seenAt)[0]
+}
+
+// AddedTimes is AddedAt for a whole listing under one lock, which is how the
+// state reads it: every torrent, several times a second.
+func (s *Store) AddedTimes(hashes []string, seenAt int64) []int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if existing := s.data.AddedAt[hash]; existing != 0 {
-		return seconds(existing)
+	times := make([]int64, len(hashes))
+	added := false
+	for i, hash := range hashes {
+		if existing := s.data.AddedAt[hash]; existing != 0 {
+			times[i] = seconds(existing)
+			continue
+		}
+		if hash == "" {
+			continue // Nothing to key it by; rtorrent always sends one.
+		}
+		s.data.AddedAt[hash] = float64(seenAt)
+		times[i] = seenAt
+		added = true
 	}
-	s.data.AddedAt[hash] = float64(seenAt)
-	s.scheduleFlushLocked()
-	return seenAt
+	if added {
+		s.scheduleFlushLocked()
+	}
+	return times
 }
 
 // Forget drops a removed torrent's bookkeeping. Its completion stays counted.
@@ -375,10 +482,7 @@ func copyPreferences(p prefs.Preferences) prefs.Preferences {
 func (s *Store) UpdatePreferences(patch any) prefs.Preferences {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	next := prefs.Sanitize(s.data.Prefs, patch)
-	before, _ := json.Marshal(s.data.Prefs)
-	after, _ := json.Marshal(next)
-	if !bytes.Equal(before, after) {
+	if next := prefs.Sanitize(s.data.Prefs, patch); !next.Equal(s.data.Prefs) {
 		s.data.Prefs = next
 		s.scheduleFlushLocked()
 	}

@@ -1,11 +1,15 @@
 # Dependabot keeps up what it can see: the server's Go modules, the web's npm
 # packages and the Actions the workflows use.
 #
-# The server's modules are pinned by go.sum, so every new release is a pull
-# request. The web has no lockfile — the image installs the newest release
-# each range allows, at build time — so only a release outside its range (a
-# new major) needs one, and increase-if-necessary opens exactly those.
-# Actions are pinned by major tag, which works out the same.
+# Both halves build from what is pinned — the server from go.mod and go.sum,
+# the web from package-lock.json, transitive packages included — so a build
+# never picks up an untested version by itself. A new release of a package the
+# manifests name is a pull request; for the web, increase-if-necessary moves a
+# range in package.json only when a release falls outside it, and within the
+# range only the lockfile changes. npm version updates do not reach the web's
+# transitive packages: those move when a direct update needs them to, with a
+# security update, or by hand (`npm update` in web/, then commit the lockfile).
+# Actions are pinned by major tag, so only a new major needs a pull request.
 #
 # What Dependabot cannot see: rtorrent, a git tag compiled from source, which
 # .github/workflows/rtorrent-update.yml follows instead; and the base images,

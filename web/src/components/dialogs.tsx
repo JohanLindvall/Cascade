@@ -16,7 +16,8 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { Field, Modal } from './ui';
+import { Field } from './form';
+import { Modal } from './modal';
 
 interface DialogOptions {
   title: string;
@@ -69,7 +70,9 @@ function cancel(pending: Pending): void {
 }
 
 export function DialogProvider({ children }: { children: ReactNode }) {
-  const [pending, setPending] = useState<Pending | null>(null);
+  // What is on screen, numbered so a replacing request remounts the dialog
+  // (fresh text, fresh focus) even when it asks the same thing.
+  const [pending, setPending] = useState<{ request: Pending; id: number } | null>(null);
   // The request on screen, readable from the stable open functions below.
   const current = useRef<Pending | null>(null);
   const sequence = useRef(0);
@@ -86,7 +89,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     if (current.current && current.current !== next) cancel(current.current);
     current.current = next;
     sequence.current += 1;
-    setPending(next);
+    setPending(next && { request: next, id: sequence.current });
   }, []);
 
   const confirm = useCallback(
@@ -113,8 +116,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
   return (
     <DialogContext.Provider value={api}>
       {children}
-      {pending?.kind === 'confirm' && <ConfirmDialog key={sequence.current} options={pending.options} onSettle={settle} />}
-      {pending?.kind === 'prompt' && <PromptDialog key={sequence.current} options={pending.options} onSettle={settle} />}
+      {pending?.request.kind === 'confirm' && (
+        <ConfirmDialog key={pending.id} options={pending.request.options} onSettle={settle} />
+      )}
+      {pending?.request.kind === 'prompt' && (
+        <PromptDialog key={pending.id} options={pending.request.options} onSettle={settle} />
+      )}
     </DialogContext.Provider>
   );
 }

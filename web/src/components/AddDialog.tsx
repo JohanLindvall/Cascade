@@ -5,7 +5,9 @@ import { bytes } from '../format';
 import { useMounted } from '../hooks';
 import { redactSecrets } from '../redact';
 import { IconClose, IconFile, IconUpload } from './icons';
-import { Field, Modal, Switch, useToast } from './ui';
+import { Field, Switch } from './form';
+import { Modal } from './modal';
+import { useToast } from './toast';
 
 interface AddDialogProps {
   onClose: () => void;

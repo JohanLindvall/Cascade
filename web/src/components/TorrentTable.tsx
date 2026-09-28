@@ -1,11 +1,12 @@
-import { useEffect, useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
+import { memo, useEffect, useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { bytes, duration, percent, rate, relative } from '../format';
 import { redactSecrets } from '../redact';
 import type { SelectMods } from '../selection';
 import type { SortKey, SortState } from '../sort';
 import type { Torrent } from '../types';
-import { EmptyState, ProgressBar, type BarVariant } from './ui';
+import { useClock } from './clock';
 import { IconDown } from './icons';
+import { EmptyState, ProgressBar, type BarVariant } from './ui';
 
 interface Column {
   key: SortKey;
@@ -91,6 +92,12 @@ function messageOf(torrent: Torrent): string {
   return redactSecrets(torrent.message);
 }
 
+/** When the torrent was added, relative to now: it moves with the clock, not the row. */
+function Added({ at }: { at: number }) {
+  useClock();
+  return <>{relative(at)}</>;
+}
+
 /** Checkbox that selects one row, shared by the table and the card. */
 function RowCheck({
   torrent,
@@ -113,6 +120,15 @@ function RowCheck({
   );
 }
 
+/** What one row or card is handed. The callbacks must be stable, or every row redraws on every update. */
+interface RowProps {
+  torrent: Torrent;
+  selected: boolean;
+  focused: boolean;
+  onSelect: (hash: string, mods: SelectMods) => void;
+  onContextMenu: (hash: string, event: MouseEvent) => void;
+}
+
 interface TorrentTableProps {
   /** Render as stacked cards instead of a table (narrow viewports). */
   compact?: boolean;
@@ -121,12 +137,19 @@ interface TorrentTableProps {
   focused: string | null;
   sort: SortState;
   onSort: (key: SortKey) => void;
-  onSelect: (hash: string, mods: SelectMods) => void;
+  onSelect: RowProps['onSelect'];
   onSelectAll: (checked: boolean) => void;
-  onContextMenu: (hash: string, event: MouseEvent) => void;
-  emptyHint: string;
+  onContextMenu: RowProps['onContextMenu'];
+  /** What to say when there are no rows: still loading, nothing added, or nothing matching. */
+  empty: { title: string; hint?: string };
 }
 
+/**
+ * The torrent list: a table, or stacked cards on a narrow viewport. The state
+ * streams in up to ten times a second, but a torrent that did not change keeps
+ * its object (see stream.ts), so each row is memoized on it and only the
+ * torrents that moved are drawn again.
+ */
 export function TorrentTable({
   compact,
   torrents,
@@ -137,13 +160,13 @@ export function TorrentTable({
   onSelect,
   onSelectAll,
   onContextMenu,
-  emptyHint,
+  empty,
 }: TorrentTableProps) {
   if (torrents.length === 0) {
     return (
       <div className="table-wrap">
-        <EmptyState glyph={<IconDown size={26} />} title="Nothing here yet">
-          {emptyHint}
+        <EmptyState glyph={<IconDown size={26} />} title={empty.title}>
+          {empty.hint}
         </EmptyState>
       </div>
     );
@@ -213,81 +236,78 @@ export function TorrentTable({
           </tr>
         </thead>
         <tbody>
-          {torrents.map((torrent) => {
-            const checked = selected.has(torrent.hash);
-            const message = messageOf(torrent);
-            return (
-              <tr
-                key={torrent.hash}
-                data-hash={torrent.hash}
-                className={`${checked ? 'selected' : ''} ${focused === torrent.hash ? 'focused' : ''}`}
-                onClick={(event) =>
-                  onSelect(torrent.hash, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey })
-                }
-                onContextMenu={(event) => onContextMenu(torrent.hash, event)}
-              >
-                {/* The cell around the box is inert: a near-miss while
-                    multi-selecting must not collapse the selection to one row. */}
-                <td className="col-check" onClick={(event) => event.stopPropagation()}>
-                  <RowCheck torrent={torrent} checked={checked} onSelect={onSelect} />
-                </td>
-                <td className="col-name">
-                  <div className="name-cell">
-                    <div className="name-line">
-                      <span className="name-text" title={torrent.name}>
-                        {torrent.name || torrent.hash}
-                      </span>
-                      <TorrentTags torrent={torrent} showPrivate />
-                    </div>
-                    {message && (
-                      <div className="name-meta warn-text" title={message}>
-                        {message.slice(0, 120)}
-                      </div>
-                    )}
-                  </div>
-                </td>
-                <td className="num right">{bytes(torrent.size)}</td>
-                <td>
-                  <TorrentProgress torrent={torrent} />
-                </td>
-                <td>
-                  <StatusPill torrent={torrent} />
-                </td>
-                <td className="num col-peers right">
-                  <span className="dim">{torrent.peersConnected}</span>
-                  <span className="faint">/{torrent.peersNotConnected}</span>
-                </td>
-                <td className={`num right rate-num ${torrent.downRate ? 'down' : 'zero'}`}>{rate(torrent.downRate)}</td>
-                <td className={`num right rate-num ${torrent.upRate ? 'up' : 'zero'}`}>{rate(torrent.upRate)}</td>
-                <td className={`num col-ratio right ratio ${ratioTier(torrent.ratio)}`}>{torrent.ratio.toFixed(2)}</td>
-                <td className="num col-eta right">{etaText(torrent)}</td>
-                <td className="num col-added right faint">{relative(torrent.addedAt)}</td>
-              </tr>
-            );
-          })}
+          {torrents.map((torrent) => (
+            <TorrentRow
+              key={torrent.hash}
+              torrent={torrent}
+              selected={selected.has(torrent.hash)}
+              focused={focused === torrent.hash}
+              onSelect={onSelect}
+              onContextMenu={onContextMenu}
+            />
+          ))}
         </tbody>
       </table>
     </div>
   );
 }
 
+const TorrentRow = memo(function TorrentRow({ torrent, selected, focused, onSelect, onContextMenu }: RowProps) {
+  const message = messageOf(torrent);
+  return (
+    <tr
+      data-hash={torrent.hash}
+      className={[selected && 'selected', focused && 'focused'].filter(Boolean).join(' ')}
+      onClick={(event) => onSelect(torrent.hash, { ctrl: event.ctrlKey || event.metaKey, shift: event.shiftKey })}
+      onContextMenu={(event) => onContextMenu(torrent.hash, event)}
+    >
+      {/* The cell around the box is inert: a near-miss while
+          multi-selecting must not collapse the selection to one row. */}
+      <td className="col-check" onClick={(event) => event.stopPropagation()}>
+        <RowCheck torrent={torrent} checked={selected} onSelect={onSelect} />
+      </td>
+      <td className="col-name">
+        <div className="name-cell">
+          <div className="name-line">
+            <span className="name-text" title={torrent.name}>
+              {torrent.name || torrent.hash}
+            </span>
+            <TorrentTags torrent={torrent} showPrivate />
+          </div>
+          {message && (
+            <div className="name-meta warn-text" title={message}>
+              {message.slice(0, 120)}
+            </div>
+          )}
+        </div>
+      </td>
+      <td className="num right">{bytes(torrent.size)}</td>
+      <td>
+        <TorrentProgress torrent={torrent} />
+      </td>
+      <td>
+        <StatusPill torrent={torrent} />
+      </td>
+      <td className="num col-peers right">
+        <span className="dim">{torrent.peersConnected}</span>
+        <span className="faint">/{torrent.peersNotConnected}</span>
+      </td>
+      <td className={`num right rate-num ${torrent.downRate ? 'down' : 'zero'}`}>{rate(torrent.downRate)}</td>
+      <td className={`num right rate-num ${torrent.upRate ? 'up' : 'zero'}`}>{rate(torrent.upRate)}</td>
+      <td className={`num col-ratio right ratio ${ratioTier(torrent.ratio)}`}>{torrent.ratio.toFixed(2)}</td>
+      <td className="num col-eta right">{etaText(torrent)}</td>
+      <td className="num col-added right faint">
+        <Added at={torrent.addedAt} />
+      </td>
+    </tr>
+  );
+});
+
 /**
  * One torrent as a stacked card. Touch has no hover or right-click, so the
  * whole card is the tap target and a long press stands in for the context menu.
  */
-function TorrentCard({
-  torrent,
-  selected,
-  focused,
-  onSelect,
-  onContextMenu,
-}: {
-  torrent: Torrent;
-  selected: boolean;
-  focused: boolean;
-  onSelect: (hash: string, mods: SelectMods) => void;
-  onContextMenu: (hash: string, event: MouseEvent) => void;
-}) {
+const TorrentCard = memo(function TorrentCard({ torrent, selected, focused, onSelect, onContextMenu }: RowProps) {
   const press = useRef<number | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(press.current), []);
   // Whether the long press already opened the menu; the synthesized click that
@@ -332,7 +352,7 @@ function TorrentCard({
 
   return (
     <article
-      className={`torrent-card ${selected ? 'selected' : ''} ${focused ? 'focused' : ''}`}
+      className={['torrent-card', selected && 'selected', focused && 'focused'].filter(Boolean).join(' ')}
       data-hash={torrent.hash}
       onClick={(event) => {
         if (pressFired.current) {
@@ -379,7 +399,7 @@ function TorrentCard({
       )}
     </article>
   );
-}
+});
 
 export function StatusPill({ torrent }: { torrent: Torrent }) {
   const label =

@@ -204,6 +204,14 @@ Both that output and the tables below are generated from one catalog in the sour
 (`server/internal/options/options.go`), and CI fails if either drifts from what the container
 actually reads.
 
+A value that does not parse stops the container at start, with a message naming the variable,
+rather than quietly becoming a default. Every on/off option — the `Set 0`/`Set 1` switches and
+the rtorrent settings marked yes/no — takes `1`, `true`, `yes` or `on` and `0`, `false`, `no` or
+`off`, in any case. `RT_UMASK` is octal, as `umask` reads it (`22` means `0022`), and
+`RT_WATCH_INTERVAL` takes seconds or a time such as `00:00:10`. With your own `RT_CONFIG_FILE`
+kept, what only the generated `rtorrent.rc` would carry — the umask, the watch interval, the
+random-port switch, the SCGI port — is ignored rather than checked.
+
 <!-- generated: options -->
 ### Paths and identity
 
@@ -217,10 +225,10 @@ actually reads.
 | `RT_SESSION_DIR` | `/config/session` | rtorrent's session state |
 | `RT_WATCH_DIR` | `/watch` | .torrent files dropped here are loaded and started |
 | `RT_WATCH_ENABLE` | `1` | Set 0 to ignore the watch directory |
-| `RT_WATCH_INTERVAL` | `10` | Watch-directory poll interval, seconds |
+| `RT_WATCH_INTERVAL` | `10` | Watch-directory poll interval: seconds, MM:SS or HH:MM:SS |
 | `RT_LOG_FILE` | `/config/rtorrent.log` | rtorrent's log file, surfaced in the UI |
 | `RT_LOG_LEVEL` | `info` | Log scopes: info, debug, dht_debug, tracker_debug, … (more can be raised live from the log dialog) |
-| `RT_UMASK` | `0022` | umask rtorrent creates files with |
+| `RT_UMASK` | `0022` | umask rtorrent creates files with, in octal |
 | `CASCADE_STATE_FILE` | `/config/cascade-state.json` | Preferences, progress, add times and throttle groups |
 | `CASCADE_CHOWN_DOWNLOADS` | `0` | Set 1 to chown the download directory at startup (slow on large libraries) |
 | `RT_SESSION_LOCK_KEEP` | `0` | Set 1 to keep a leftover rtorrent.lock instead of clearing it |
@@ -331,7 +339,7 @@ Rates are in KiB/s; 0 means unlimited.
 | `CASCADE_DELETE_ROOTS` | download + completed dirs | Extra :-separated roots data may be deleted from |
 | `CASCADE_MAX_UPLOAD_MB` | `64` | Maximum combined .torrent file size per upload batch, MiB |
 | `CASCADE_POLL_MS` | `1000` | Backend sampling interval for the rate graph, ms |
-| `CASCADE_STATE_POLL_MS` | `100` | How often the torrent list is read while a page is open, ms (100-60000; the UI can override it) |
+| `CASCADE_STATE_POLL_MS` | `500` | How often the torrent list is read while a page is open, ms (100-60000; the UI can override it) |
 | `CASCADE_GAMIFY` | `1` | Set 0 to remove levels, badges and celebrations |
 | `CASCADE_WEB_ROOT` | `/app/web` | Directory the built UI is served from |
 
@@ -444,7 +452,11 @@ rtorrent's live settings are editable, with anything the running version does no
 out. Rate fields take `500k`, `2M`, `1.5 MiB/s` or `800 B/s` — a bare number is KiB/s, empty is
 unlimited — and anything else is flagged at the field and holds **Apply** back, rather than being
 read as "unlimited". The same dialog's **Interface** section sets how often the list refreshes,
-from 100 ms to a minute; the server's default is `CASCADE_STATE_POLL_MS`.
+from 100 ms to a minute; the server's default is `CASCADE_STATE_POLL_MS`. Each refresh reads every
+torrent from rtorrent, which is single-threaded, so the cost grows with both the rate and the
+library. Measured with 110 torrents, refreshing every 100 ms took about 9% of a CPU core in
+rtorrent and the 500 ms default about 2%; 500 torrents cost roughly four times as much. Nothing
+is read for it while no page is open.
 
 ![Settings](docs/screenshot-settings.png)
 
@@ -489,7 +501,9 @@ And the light theme:
 UI preferences — theme, sort column, detail-pane height — are saved server-side, so a new browser
 or a different machine picks up the same setup. They live in `/config/cascade-state.json` next to
 gamification progress, add times and throttle groups; that one file is the whole of Cascade's
-persistent state, and deleting it resets everything.
+persistent state, and deleting it resets everything. A file Cascade cannot read is not
+overwritten: it is kept as `cascade-state.json.corrupt` (or `.corrupt.1`, `.corrupt.2`, … when
+one is already there) and Cascade starts from an empty state.
 
 ### On small screens
 
@@ -518,8 +532,9 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET` | `/api/status` | Global rates, limits, backend summary and policy on their own |
 | `GET` | `/api/capabilities` | Backend version and supported feature map |
 | `GET` | `/api/game` | Level, XP and badge progress, each badge with its unit |
-| `GET`/`PATCH` | `/api/prefs` | UI preferences (theme, sort, layout) |
+| `GET`/`PATCH` | `/api/prefs` | UI preferences (theme, sort, layout, refresh interval) |
 | `GET` | `/api/torrents/:hash/files` \| `/peers` \| `/trackers` | Per-torrent detail |
+| `GET` | `/api/trackers?hashes=` | The main tracker's host for each of a comma-separated list of hashes |
 | `POST` | `/api/torrents/upload` | Multipart: repeated `torrents` file fields, `urls`, `start`, `directory`, `label` |
 | `POST` | `/api/torrents/url` | Add one magnet/URL as JSON |
 | `POST` | `/api/torrents/:hash/action/:action` | `start`, `stop`, `pause`, `resume`, `recheck`, `recheck-restart`, `announce` |
@@ -533,7 +548,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET`/`POST` | `/api/settings` | Read/write rtorrent's live settings |
 | `GET`/`POST` | `/api/throttles` | List or save groups: `name`, `up`, `down` (bytes/s) |
 | `PATCH`/`DELETE` | `/api/throttles/:name` | Change either limit without replacing the other, or delete a group |
-| `GET` | `/api/log` | Tail of the rtorrent log |
+| `GET` | `/api/log?lines=300` | Tail of the rtorrent log (1-2000 lines) |
 | `GET`/`POST` | `/api/log/scopes` | Log verbosity: raise scopes live, on top of `RT_LOG_LEVEL` |
 | `GET` | `/api/rpc/methods`, `POST` `/api/rpc` | Every rtorrent command, as JSON |
 | `POST` | `/api/rpc/help` | `system.methodHelp` / `methodSignature` for one command |
@@ -541,7 +556,10 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 
 Malformed input — a hash that is not forty hex digits, a priority outside its range, a file
 index that is not a number, a tracker that is not an announce URL — is answered with a `400`
-naming the field. Bulk routes validate every hash before applying anything, normalize case and
+naming the field. Adding a torrent the session already holds — a `.torrent` or a magnet
+with the same info hash — is a `409` naming it rather than a success: rtorrent would drop the load,
+and its label and directory, without a word. In an upload batch it is one of the per-file
+`errors`. Bulk routes validate every hash before applying anything, normalize case and
 deduplicate, then return runtime failures by hash in `errors`. Numeric settings reject null,
 booleans, fractions, unsafe integers and malformed strings; a typo cannot become unlimited.
 
@@ -549,14 +567,19 @@ Uploads accept up to 50 files and URLs combined. `CASCADE_MAX_UPLOAD_MB` bounds 
 file bytes in a batch. The response contains `added`, `errors`, `failedFiles` and `failedUrls`;
 the last two are zero-based indices into the submitted files and non-empty URL lines. The Add
 dialog keeps failed items for retry and removes successful ones. Uploaded v1 and hybrid torrents
-are structurally validated before loading; v2-only torrents are rejected with an explanation.
+are structurally validated before loading; v2-only torrents are rejected with an explanation. A
+`directory` with a control character in it (a line break, say) is refused: it would reach
+rtorrent inside a command.
+
+A change, once sent, is carried through even if the client goes away, `/RPC2` included: a closed
+tab does not leave a torrent stopped halfway through a throttle change.
 
 A browser only gets to change things from the UI's own origin. A `POST`, `PATCH` or `DELETE` that
-the browser marks as cross-site — by `Sec-Fetch-Site`, or an `Origin` with another scheme, host or port — is
-refused with a `403` before auth is even considered, so a page elsewhere cannot use a signed-in
-browser (Basic credentials ride along automatically) to add torrents or change settings. Requests
-without those headers — `curl`, scripts, other tools — are unaffected. Every response also carries
-`X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`.
+the browser marks as cross-site — by `Sec-Fetch-Site`, or an `Origin` with another scheme, host or
+port — is refused with a `403` before auth is even considered, so a page elsewhere cannot use a
+signed-in browser (Basic credentials ride along automatically) to add torrents or change settings.
+Requests without those headers — `curl`, scripts, other tools — are unaffected. Every response
+also carries `X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`.
 
 `/RPC2` lets existing tooling drive rtorrent over HTTP:
 
@@ -571,6 +594,17 @@ import xmlrpc.client
 rt = xmlrpc.client.ServerProxy("http://admin:change-me@localhost:8080/RPC2")
 print(rt.system.client_version(), rt.d.multicall2("", "main", "d.name=", "d.down.rate="))
 ```
+
+`/RPC2` also takes a JSON body — `{"method": "...", "params": [...]}` — which Cascade encodes
+for you (the answer is still XML-RPC), as the API console's `POST /api/rpc` does (that one
+answers in JSON). Either refuses a whole number outside the 64-bit range with a `400` naming it:
+rtorrent crashes on such an `<i8>` rather than faulting, and refuses `<double>` altogether, so
+there is nothing safe to send.
+
+To expose rtorrent's own SCGI socket instead, set `RT_SCGI_PORT=5000` and
+`RT_SCGI_BIND=0.0.0.0`, then publish the port. **SCGI is unauthenticated** — anyone who reaches
+it has full control of rtorrent and can run commands on the host through `execute`. Keep it on a
+private network, or prefer `/RPC2`, which sits behind Basic auth.
 
 ### The state stream
 
@@ -591,17 +625,17 @@ events:
 Each `snapshot` and `delta` carries an id. A client that reconnects with `Last-Event-ID` (as
 `EventSource` does by itself) or `?since=<id>` is sent the deltas it missed while the server still
 has them, and a snapshot otherwise. The state is read once per interval — `CASCADE_STATE_POLL_MS`,
-or the interval chosen in the UI's settings — however many clients are watching, and not at all
-while none is.
+or the interval chosen in the UI's settings — however many clients are watching, not at all while
+none is, and at once after any change made through the API. A comment line every 20 seconds keeps
+an idle stream open through proxies.
+
+A browser may open the stream only from the UI's own origin, like a change (see above): an open
+stream keeps rtorrent busy. At most 100 streams are open at once; one more is answered `503` with
+`Retry-After`.
 
 ```bash
 curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
 ```
-
-To expose rtorrent's own SCGI socket instead, set `RT_SCGI_PORT=5000` and
-`RT_SCGI_BIND=0.0.0.0`, then publish the port. **SCGI is unauthenticated** — anyone who reaches
-it has full control of rtorrent and can run commands on the host through `execute`. Keep it on a
-private network, or prefer `/RPC2`, which sits behind Basic auth.
 
 ## Notes and limitations
 
@@ -624,8 +658,12 @@ private network, or prefer `/RPC2`, which sits behind Basic auth.
   the torrent at its new location. A failed move leaves the source data in place.
 - Throttle groups cannot be removed from a running rtorrent — deleting one sets it to unlimited
   and drops it from the UI list.
-- rtorrent runs inside a detached `screen` session, so `docker exec -it cascade screen -r rtorrent`
-  gives you the real curses UI. If rtorrent dies, the entrypoint restarts it.
+- rtorrent runs inside a detached `screen` session, so `docker exec -it cascade cascade-attach`
+  gives you the real curses UI (detach with ctrl-a d). If rtorrent dies, the entrypoint restarts
+  it.
+- The image has a `HEALTHCHECK` of its own: `cascade health` asks the server's `/healthz`, which
+  answers outside Basic auth and at the root whatever `WEB_BASE_PATH` is. There is no `curl` in
+  the image, so a Compose `healthcheck:` of your own should run `cascade health` too.
 - rtorrent locks its session directory and only releases the lock on a clean shutdown, so a killed
   container (`docker rm -f`, OOM, host reboot) leaves one behind and every later start fails. The
   entrypoint clears a lock that no live process in the container holds; set
@@ -637,11 +675,13 @@ private network, or prefer `/RPC2`, which sits behind Basic auth.
 
 ## Development
 
-The whole toolchain lives in the image; no local Go or Node is required. The Makefile wraps the
-usual work — `make` on its own lists every target.
+The whole toolchain lives in the image; no local Go or Node is required (bar `make dev`, below).
+The Makefile wraps the usual work — `make` on its own lists every target.
 
 ```bash
 make build                  # build the image (Go vet + tests, web typecheck + tests)
+make test                   # just the suites: Go, web and shell, without compiling rtorrent
+make race                   # the Go suites under the race detector
 make run PORT=8080          # run it, mounting ./data, then open it in a browser
 make run OPEN=0             # ...without launching a browser
 make open                   # wait for it to answer, then open it
@@ -651,37 +691,40 @@ make build RTORRENT_VERSION=0.9.8
 make bump-rtorrent          # move the default to the newest upstream release
 make attach                 # attach to rtorrent's curses UI
 make logs / shell / stop
-python3 docker/api-smoke.py http://127.0.0.1:18080  # extra checks on a disposable running container
 ```
-
-The smoke script uses Python 3's standard library, checks real setting and throttle round trips
-and the state stream, and restores their original values. `make smoke` cleans up its container even when a check fails.
-CI and release builds run it too. `docker/scripts.test.sh` covers release-bump failures, custom
-User-Agent escaping and completion moves, and runs inside every Docker build.
 
 Both halves carry unit tests beside their sources. The server (`server/`, a Go module) is tested
 from the XML-RPC codec up to the HTTP routes: the client and the capability probe run against a
 scripted transport, the service against a fake client that records what would have reached
 rtorrent, and the HTTP layer is mounted on a spare port and driven over real requests. The web's
-tests (`web/src/*.test.ts`) use node's built-in runner — no frameworks. Both suites run inside
-every image build, so a red test fails the build exactly as a type error does; to run them alone
-(the repo root is mounted because the server's tests read the entrypoint and the README):
+tests (`web/src/**/*.test.ts`) are typechecked, then run by node's built-in runner — no
+frameworks. `docker/scripts.test.sh` covers the shell: the release bump, User-Agent escaping,
+completion moves, and the entrypoint's rc rendering, value checks and session-lock handling. All
+three run inside every image build, so a red test fails the build exactly as a type error does;
+`make test` runs them alone.
+
+`docker/api-smoke.py` (Python 3's standard library only) exercises a running container against
+the rtorrent inside it: readiness, the `/RPC2` passthrough, validation and error shapes, the
+cross-site guard, compression and cache headers, setting and throttle round trips in rtorrent's
+own units, the state stream, and the long file name patch. It restores what it changes, but
+point it at a disposable container — `make smoke` makes one and removes it even when a check
+fails, and CI and the release run the same script against every image they build:
 
 ```bash
-docker run --rm -v "$PWD":/r -w /r/server golang:1.26-alpine sh -c 'go vet ./... && go test ./... && go run . options-docs'
-docker run --rm -v "$PWD":/r -w /r/web node:22-alpine sh -c 'npm install && npm test'
+python3 docker/api-smoke.py http://127.0.0.1:18080 [container-name]
 ```
 
 The server has two dependencies: [lightning](https://github.com/JohanLindvall/lightning), which
 decodes its JSON, and [klauspost/compress](https://github.com/klauspost/compress), which
 compresses its responses with zstd or gzip.
 
-CI (GitHub Actions) runs the same checks — the server's vet and tests under the race detector, the
-option catalog check, and the web's typecheck and tests — on every push and pull request, plus a
-full image build with an API smoke test on pull requests. A compatibility matrix against rtorrent
-0.9.8 and 0.15.2 can be run from the Actions tab (**Run workflow → full-matrix**). Dependencies
-are kept up by two bots: Dependabot for the Go modules, the npm packages and the Actions, and the
-daily rtorrent workflow described under [Choosing the rtorrent version](#choosing-the-rtorrent-version).
+CI (GitHub Actions) runs the same checks — gofmt, the server's vet and tests under the race
+detector, the option catalog check, the shell tests, and the web's typecheck and tests — on every
+push and pull request, plus a full image build with the API smoke test on pull requests. A
+compatibility matrix against rtorrent 0.9.8 and 0.15.2 can be run from the Actions tab (**Run
+workflow → full-matrix**). Dependencies are kept up by two bots: Dependabot for the Go modules,
+the npm packages and the Actions, and the daily rtorrent workflow described under
+[Choosing the rtorrent version](#choosing-the-rtorrent-version).
 
 Pushing to `main` releases. The release workflow tags the commit `v0.1.<run number>`, builds the
 image for amd64 and arm64 on native runners, boots each one and probes its API, and only then
@@ -693,10 +736,13 @@ instead of an auto-generated one.
 than a connection error. The launcher is `xdg-open` (`BROWSER=` overrides it, `open` is used as a
 fallback on macOS); with no display detected it just prints the URL.
 
-Working on the frontend with live reload, against a running container:
+Working on the frontend with live reload, against a running container — the one target that needs
+a local Node:
 
 ```bash
-cd web && npm install && npm run dev     # proxies /api to localhost:8080
+make dev                                 # cd web && npm ci && npm run dev
+                                         # proxies /api to localhost:8080
+CASCADE_DEV_TARGET=http://nas:8080 make dev   # ...or to a container elsewhere
 ```
 
 Layout:
@@ -704,8 +750,10 @@ Layout:
 ```
 Makefile       build/run/test wrappers around Docker
 server/        the Go server: XML-RPC codec, SCGI transport, capability probe, REST API, state stream
-web/src/       React UI (components/, styles.css)
-docker/        entrypoint that renders rtorrent.rc and supervises both processes
+web/src/       React UI (app/, components/, styles.css)
+docker/        entrypoint that renders rtorrent.rc and supervises both processes,
+               cascade-attach and the completion-move helper, the libtorrent/rtorrent
+               patches, and the smoke and shell tests
 ```
 
 See [AGENTS.md](AGENTS.md) for the architecture details and the rtorrent quirks worth knowing

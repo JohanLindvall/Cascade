@@ -144,6 +144,14 @@ func TestBareNewlinesSeparateHeadersToo(t *testing.T) {
 	}
 }
 
+func TestAReplyWithNoHeadersKeepsItsBlankLines(t *testing.T) {
+	body := "<?xml version=\"1.0\"?>\n<methodResponse><params><param><value><string>a\n\nb</string></value></param></params></methodResponse>"
+	target, _ := fakeSCGI(t, []byte(body))
+	if reply, err := Request(context.Background(), target, []byte("x")); err != nil || string(reply) != body {
+		t.Fatalf("%q %v", reply, err)
+	}
+}
+
 func TestAnEmptyReplyIsRtorrentDroppingTheRequest(t *testing.T) {
 	target, _ := fakeSCGI(t, nil)
 	_, err := Request(context.Background(), target, []byte("x"))

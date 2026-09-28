@@ -115,6 +115,17 @@ func TestBooleansReadTheUsualSpellingsAndEmptyMeansUnset(t *testing.T) {
 	if _, err := Load(env(map[string]string{"WEB_PORT": "eighty"})); err == nil || !strings.Contains(err.Error(), "WEB_PORT") {
 		t.Errorf("WEB_PORT=eighty: %v", err)
 	}
+	// A typo is refused rather than read as off.
+	for _, value := range []string{"ture", "enabled", "2"} {
+		if _, err := Load(env(map[string]string{"CASCADE_ALLOW_RAW_RPC": value})); err == nil || !strings.Contains(err.Error(), "CASCADE_ALLOW_RAW_RPC") {
+			t.Errorf("CASCADE_ALLOW_RAW_RPC=%s: %v", value, err)
+		}
+	}
+	for value, want := range map[string]bool{"Off": false, "ON": true, "false": false, "1": true} {
+		if got := load(t, map[string]string{"CASCADE_ALLOW_DATA_DELETE": value}).AllowDataDelete; got != want {
+			t.Errorf("CASCADE_ALLOW_DATA_DELETE=%s: %v", value, got)
+		}
+	}
 }
 
 func TestInvalidPortsIntervalsAndUploadLimitsFailEarly(t *testing.T) {

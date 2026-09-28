@@ -17,9 +17,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode"
 
 	"github.com/JohanLindvall/Cascade/server/internal/httperr"
+	"github.com/JohanLindvall/Cascade/server/internal/jsnum"
 )
 
 // The kinds of Target.
@@ -46,7 +46,8 @@ var (
 // unix:/path, /path, ./path, host:port, scgi://host:port, [v6]:port, a bare
 // port (on 127.0.0.1), and anything else as a socket path.
 func ParseTarget(raw string) (Target, error) {
-	value := strings.TrimFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || r == '\uFEFF' })
+	// Trimmed as the TypeScript server trimmed it: JavaScript's whitespace.
+	value := strings.TrimFunc(raw, jsnum.IsSpace)
 	if value == "" || value == "unix:" {
 		return Target{}, errors.New("SCGI endpoint must not be empty")
 	}
@@ -120,7 +121,13 @@ func buildHeaders(bodyLength int) []byte {
 	return []byte(strconv.Itoa(len(headers)) + ":" + headers + ",")
 }
 
+// stripHTTPHeaders drops the CGI-style header block rtorrent puts before the
+// XML. A reply that starts with the XML has none, and is not searched for a
+// blank line — its body may well contain one.
 func stripHTTPHeaders(response []byte) []byte {
+	if bytes.HasPrefix(bytes.TrimLeft(response, " \t\r\n"), []byte("<")) {
+		return response
+	}
 	for _, separator := range []string{"\r\n\r\n", "\n\n"} {
 		if index := bytes.Index(response, []byte(separator)); index >= 0 {
 			return response[index+len(separator):]

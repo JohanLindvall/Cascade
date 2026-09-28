@@ -188,12 +188,6 @@ export interface StateResponse {
   game: GameState;
 }
 
-export interface LoadOptions {
-  start: boolean;
-  directory?: string;
-  label?: string;
-}
-
 export interface LogScopeState {
   /** Baked into rtorrent.rc by RT_LOG_LEVEL; fixed until the container restarts. */
   boot: string[];
@@ -201,6 +195,15 @@ export interface LogScopeState {
   extra: string[];
   available: string[];
   supported: boolean;
+}
+
+/** Answers POST /api/log/scopes: the new state, and what the change could not do. */
+export interface LogScopeChange extends LogScopeState {
+  /** Switched off but still attached for this rtorrent session: nothing can
+   *  detach a scope, so it stops only when rtorrent restarts. */
+  stillActive: string[];
+  /** Scopes this build refused. */
+  failed: string[];
 }
 
 export interface GlobalSettings {
@@ -308,6 +311,12 @@ export interface GameState {
 export interface ThrottleGroup {
   name: string;
   /** Bytes per second; 0 means unlimited. rtorrent groups have KiB/s precision. */
+  up: number;
+  down: number;
+}
+
+/** A throttle group's current throughput, bytes per second. */
+export interface ThrottleRate {
   up: number;
   down: number;
 }

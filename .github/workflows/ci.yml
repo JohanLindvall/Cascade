@@ -9,6 +9,10 @@
 # Pushes to main skip the smoke job: release.yml builds those commits for both
 # architectures and runs the same probes against each before it publishes
 # anything, so repeating an amd64-only build here would be pure duplication.
+#
+# Every probe of a running image is docker/api-smoke.py, the same script
+# `make smoke` and the release run, so the three cannot drift apart. The
+# toolchain versions are the Dockerfile's ARGs, read from there.
 name: CI
 
 on:
@@ -22,15 +26,32 @@ on:
         type: boolean
         default: false
 
+permissions:
+  contents: read
+
+# A newer push to a pull request makes the run in flight moot.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     name: Test server + web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Toolchain versions
+        id: versions
+        run: |
+          set -eu
+          for arg in GO_VERSION NODE_VERSION; do
+            value="$(sed -n "s/^ARG $arg=//p" Dockerfile)"
+            [ -n "$value" ] || { echo "::error::no ARG $arg in the Dockerfile"; exit 1; }
+            echo "$arg=$value" >> "$GITHUB_OUTPUT"
+          done
       - uses: actions/setup-go@v6
         with:
-          go-version: '1.26'
+          go-version: ${{ steps.versions.outputs.GO_VERSION }}
           cache-dependency-path: server/go.sum
       - name: Server formatting
         working-directory: server
@@ -50,15 +71,13 @@ jobs:
         run: sh docker/scripts.test.sh
       - uses: actions/setup-node@v7
         with:
-          node-version: 22
-          # setup-node v5+ turns caching on by itself once package.json grows a
-          # "packageManager" field, and then fails for want of a lockfile —
-          # the web deliberately has none (the image runs a plain install).
-          package-manager-cache: false
+          node-version: ${{ steps.versions.outputs.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - name: Web (typecheck + production build)
         working-directory: web
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
       - name: Web unit tests
         working-directory: web
@@ -70,78 +89,34 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: The default rtorrent
+        id: rtorrent
+        run: echo "version=$(sed -n 's/^ARG RTORRENT_VERSION=//p' Dockerfile)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
+      # The release's amd64 cache holds main's compiled rtorrent, which a pull
+      # request that leaves rtorrent alone can reuse rather than rebuild.
       - name: Build image (compiles rtorrent from source)
         uses: docker/build-push-action@v7
         with:
           context: .
           tags: cascade:ci
           load: true
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Boot and probe the API
+          cache-from: |
+            type=gha,scope=smoke
+            type=gha,scope=${{ steps.rtorrent.outputs.version }}-linux-amd64
+          cache-to: type=gha,mode=max,scope=smoke
+      # Includes the libtorrent patch in docker/patches: a torrent whose file
+      # name is longer than Linux allows must start, under a shortened name.
+      - name: Boot and exercise the API
         run: |
-          docker run -d --name cascade-ci -p 18080:8080 -e RT_DHT=off cascade:ci
-          for _ in $(seq 1 60); do
-            curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break
-            if [ -n "$(docker ps -aq --filter name=^cascade-ci$ --filter status=exited)" ]; then
-              echo "container exited"; docker logs cascade-ci; exit 1
-            fi
-            sleep 1
-          done
-          set -x
-          curl -fsS http://127.0.0.1:18080/healthz | grep '"ok":true'
-          curl -fsS http://127.0.0.1:18080/api/capabilities | grep -o '"clientVersion":"[^"]*"'
-          curl -fsS http://127.0.0.1:18080/api/state >/dev/null
-          curl -fsS http://127.0.0.1:18080/api/settings >/dev/null
-          curl -fsS -X POST http://127.0.0.1:18080/RPC2 -H 'content-type: text/xml' \
-            --data '<?xml version="1.0"?><methodCall><methodName>system.client_version</methodName></methodCall>' \
-            | grep -o '<string>[^<]*</string>'
-          curl -fsS http://127.0.0.1:18080/ | grep -o '<title>[^<]*</title>'
-      # The libtorrent patch in docker/patches: a torrent whose file name is
-      # longer than Linux allows must start (and create a shortened file)
-      # rather than stop with "Filename too long".
-      - name: Settings, throttle and stream round trips
-        run: python3 docker/api-smoke.py http://127.0.0.1:18080
-      - name: A file name over 255 bytes is shortened, not refused
-        run: |
-          python3 - <<'EOF'
-          import hashlib, json, time, urllib.request
-          def ben(v):
-              if isinstance(v, int): return b'i%de' % v
-              if isinstance(v, bytes): return b'%d:' % len(v) + v
-              if isinstance(v, str): return ben(v.encode())
-              if isinstance(v, list): return b'l' + b''.join(map(ben, v)) + b'e'
-              return b'd' + b''.join(ben(k) + ben(v[k]) for k in sorted(v)) + b'e'
-          name = 'หลวงพ่อ' * 20 + '.mp4'  # 20 x 7 Thai chars = 420 bytes
-          assert len(name.encode()) > 255
-          data = b'7' * (256 * 1024)
-          info = {'name': name, 'length': len(data), 'piece length': 262144, 'pieces': hashlib.sha1(data).digest()}
-          body = ben({'announce': 'http://tracker.invalid/announce', 'info': info})
-          boundary = 'cascadeci'
-          form = (f'--{boundary}\r\nContent-Disposition: form-data; name="torrents"; filename="long.torrent"\r\n'
-                  f'Content-Type: application/x-bittorrent\r\n\r\n').encode() + body + f'\r\n--{boundary}--\r\n'.encode()
-          req = urllib.request.Request('http://127.0.0.1:18080/api/torrents/upload', data=form,
-                                       headers={'content-type': f'multipart/form-data; boundary={boundary}'})
-          print(urllib.request.urlopen(req).read().decode())
-          for _ in range(30):
-              state = json.load(urllib.request.urlopen('http://127.0.0.1:18080/api/state'))
-              torrent = next((t for t in state['torrents'] if t['name'] == name), None)
-              if torrent and torrent['status'] != 'checking':
-                  break
-              time.sleep(1)
-          print(torrent['status'], torrent['message'])
-          assert torrent['status'] != 'error', torrent['message']
-          EOF
-          # ...and the file on disk is the shortened name, "~" and its tag.
-          # (Not ls -b: the image's BusyBox ls has no such flag.)
-          test "$(docker exec cascade-ci find /downloads -maxdepth 1 -name '*~*' | wc -l)" -ge 1
+          docker run -d --name cascade-ci --stop-timeout 60 -p 18080:8080 -e RT_DHT=off cascade:ci
+          python3 docker/api-smoke.py http://127.0.0.1:18080 cascade-ci
       - name: Container log on failure
         if: failure()
         run: docker logs cascade-ci 2>&1 | tail -50 || true
       - name: Teardown
         if: always()
-        run: docker stop -t 20 cascade-ci >/dev/null 2>&1 || true
+        run: docker stop -t 60 cascade-ci >/dev/null 2>&1 || true
 
   compat:
     name: rtorrent ${{ matrix.rtorrent }}
@@ -153,6 +128,9 @@ jobs:
         rtorrent: ['0.9.8', '0.15.2']
     steps:
       - uses: actions/checkout@v7
+      - name: The default rtorrent
+        id: rtorrent
+        run: echo "version=$(sed -n 's/^ARG RTORRENT_VERSION=//p' Dockerfile)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v4
       - name: Build against rtorrent ${{ matrix.rtorrent }}
         uses: docker/build-push-action@v7
@@ -161,24 +139,23 @@ jobs:
           build-args: RTORRENT_VERSION=${{ matrix.rtorrent }}
           tags: cascade:compat
           load: true
-          cache-from: type=gha
-      - name: Boot and probe the API
+          # The server and web stages do not depend on the rtorrent version.
+          # The release's amd64 cache holds main's, and every ref can read it;
+          # the smoke scope is often empty here — pushes never write it, and
+          # the smoke job of this same run exports it only after this build
+          # has started.
+          cache-from: |
+            type=gha,scope=compat-${{ matrix.rtorrent }}
+            type=gha,scope=${{ steps.rtorrent.outputs.version }}-linux-amd64
+            type=gha,scope=smoke
+          cache-to: type=gha,mode=max,scope=compat-${{ matrix.rtorrent }}
+      - name: Boot and exercise the API
         run: |
-          docker run -d --name cascade-compat -p 18080:8080 -e RT_DHT=off cascade:compat
-          for _ in $(seq 1 60); do
-            curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break
-            if [ -n "$(docker ps -aq --filter name=^cascade-compat$ --filter status=exited)" ]; then
-              echo "container exited"; docker logs cascade-compat; exit 1
-            fi
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:18080/api/capabilities | grep -o '"clientVersion":"[^"]*"'
-          curl -fsS http://127.0.0.1:18080/api/state >/dev/null
-          curl -fsS http://127.0.0.1:18080/api/settings >/dev/null
-          python3 docker/api-smoke.py http://127.0.0.1:18080
+          docker run -d --name cascade-compat --stop-timeout 60 -p 18080:8080 -e RT_DHT=off cascade:compat
+          python3 docker/api-smoke.py http://127.0.0.1:18080 cascade-compat
       - name: Container log on failure
         if: failure()
         run: docker logs cascade-compat 2>&1 | tail -50 || true
       - name: Teardown
         if: always()
-        run: docker stop -t 20 cascade-compat >/dev/null 2>&1 || true
+        run: docker stop -t 60 cascade-compat >/dev/null 2>&1 || true

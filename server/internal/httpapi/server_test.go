@@ -47,12 +47,20 @@ type stubService struct {
 	mu    sync.Mutex
 	calls []stubCall
 	state func(context.Context) (contracts.StateResponse, error)
+	// Called with the context an action ran under, when set.
+	onAction func(context.Context)
+	// What a method answers after it is recorded, whatever it was asked:
+	// a change that went through and then failed.
+	fail map[string]error
 }
 
 func (s *stubService) record(method string, args ...any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, stubCall{method, args})
+	if err := s.fail[method]; err != nil {
+		return err
+	}
 	if len(args) > 0 && args[0] == other {
 		return httperr.New(http.StatusBadGateway, "rtorrent said no")
 	}
@@ -90,7 +98,10 @@ func (s *stubService) State(ctx context.Context) (contracts.StateResponse, error
 	}
 	return contracts.StateResponse{Torrents: []contracts.Torrent{}}, s.record("state")
 }
-func (s *stubService) Action(_ context.Context, hash, action string) error {
+func (s *stubService) Action(ctx context.Context, hash, action string) error {
+	if s.onAction != nil {
+		s.onAction(ctx)
+	}
 	return s.record("action", hash, action)
 }
 func (s *stubService) Remove(_ context.Context, hash string, deleteData bool) error {

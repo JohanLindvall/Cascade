@@ -161,9 +161,9 @@ func (f *FakeClient) MulticallSettled(_ context.Context, calls []rtorrent.Call) 
 		var fault *xmlrpc.Fault
 		switch {
 		case errors.As(err, &fault):
-			results[i] = rtorrent.Result{Err: &xmlrpc.Fault{Code: fault.Code, Message: call.Method + ": " + fault.Message}}
+			results[i] = rtorrent.Result{Err: rtorrent.NamedFault(call.Method, fault)}
 		case err != nil:
-			results[i] = rtorrent.Result{Err: &xmlrpc.Fault{Code: -1, Message: call.Method + ": " + err.Error()}}
+			results[i] = rtorrent.Result{Err: rtorrent.NamedFault(call.Method, &xmlrpc.Fault{Code: -1, Message: err.Error()})}
 		default:
 			results[i] = rtorrent.Result{Value: value}
 		}

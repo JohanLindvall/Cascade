@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
 	"net/http"
@@ -19,15 +20,19 @@ func basicAuth(w http.ResponseWriter, r *http.Request, user, password string) bo
 		decoded, _ := base64.RawStdEncoding.DecodeString(strings.TrimRight(header[len("Basic "):], "="))
 		// A colon may sit inside the password; only the first one separates.
 		gotUser, gotPass, _ := strings.Cut(string(decoded), ":")
-		// Both halves are always compared, so the timing does not say which
-		// one was wrong.
-		userOK := subtle.ConstantTimeCompare([]byte(gotUser), []byte(user))
-		passOK := subtle.ConstantTimeCompare([]byte(gotPass), []byte(password))
-		if userOK&passOK == 1 {
+		// Both halves are always compared, and as digests of one length, so
+		// the timing says neither which one was wrong nor how long either is.
+		if sameSecret(gotUser, user)&sameSecret(gotPass, password) == 1 {
 			return true
 		}
 	}
 	w.Header().Set("WWW-Authenticate", `Basic realm="Cascade", charset="UTF-8"`)
 	writeText(w, http.StatusUnauthorized, "authentication required")
 	return false
+}
+
+// sameSecret is 1 when a and b are equal, in time that depends on neither.
+func sameSecret(a, b string) int {
+	digestA, digestB := sha256.Sum256([]byte(a)), sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(digestA[:], digestB[:])
 }

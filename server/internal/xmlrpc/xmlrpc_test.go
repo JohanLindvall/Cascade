@@ -7,6 +7,7 @@ package xmlrpc
 // endpoint emits.
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"reflect"
@@ -82,6 +83,32 @@ func TestIntegerPast32BitsTravelsAsI8(t *testing.T) {
 		}
 		if got := roundTrip(t, value); got != int64(size) {
 			t.Errorf("%T came back as %#v", value, got)
+		}
+	}
+}
+
+func TestAWholeNumberPastInt64IsRefusedRatherThanSent(t *testing.T) {
+	// An <i8> rtorrent cannot read does not fault, it kills rtorrent.
+	for _, value := range []any{1e19, -1e19, 1e21, float64(math.MaxInt64), float32(1e19),
+		json.Number("9223372036854775808"), json.Number("1e21")} {
+		if call, err := EncodeCall("x", []any{value}); err == nil || !strings.Contains(err.Error(), "64-bit") {
+			t.Errorf("%T %v: %v\n%s", value, value, err, call)
+		}
+	}
+	// Up to the edges, the float's own value in plain digits.
+	for _, c := range []struct {
+		value any
+		want  string
+	}{
+		{float64(math.MinInt64), "<i8>-9223372036854775808</i8>"},
+		{math.Nextafter(1<<63, 0), "<i8>9223372036854774784</i8>"},
+		{json.Number("9.2e18"), "<i8>9200000000000000000</i8>"},
+		{json.Number("1e3"), "<i4>1000</i4>"},
+		{math.Copysign(0, -1), "<i4>0</i4>"},
+	} {
+		call, err := EncodeCall("x", []any{c.value})
+		if err != nil || !strings.Contains(string(call), c.want) {
+			t.Errorf("%v: %v, want %s in\n%s", c.value, err, c.want, call)
 		}
 	}
 }
@@ -237,6 +264,16 @@ func TestBrokenResponsesFailInsteadOfBecomingData(t *testing.T) {
 	}
 }
 
+func TestAProcessingInstructionEndsAtItsQuestionMark(t *testing.T) {
+	// The CDATA keeps the fast path out, so this is the permissive parser's
+	// reading: the quoted document inside the declaration is not the answer.
+	xml := `<?xml version="1.0" x="<methodResponse><params><param><value>evil</value></param></params></methodResponse>"?>` +
+		`<methodResponse><params><param><value><![CDATA[good]]></value></param></params></methodResponse>`
+	if got, err := DecodeResponse([]byte(xml)); err != nil || got != "good" {
+		t.Fatalf("got %#v, %v", got, err)
+	}
+}
+
 func TestInvalidTypedValuesDoNotBecomeZeroOrFalse(t *testing.T) {
 	for _, value := range []string{"<i4>1.5</i4>", "<i8>bad</i8>", "<double>Infinity</double>", "<double></double>", "<boolean>yes</boolean>"} {
 		xml := "<methodResponse><params><param><value>" + value + "</value></param></params></methodResponse>"
@@ -296,6 +333,22 @@ func TestEncodingOtherGoTypes(t *testing.T) {
 	}
 }
 
+func TestAJSONNumberIntegerIsSentExactly(t *testing.T) {
+	// Past 2^53 a float64 would round the last digits away.
+	call, err := EncodeCall("m", []any{json.Number("9007199254740993"), json.Number("7"), json.Number("2.5")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"<i8>9007199254740993</i8>", "<i4>7</i4>", "<double>2.5</double>"} {
+		if !strings.Contains(string(call), want) {
+			t.Errorf("no %s in %s", want, call)
+		}
+	}
+	if _, err := EncodeCall("m", []any{json.Number("junk")}); err == nil {
+		t.Error("a json.Number that is no number was encoded")
+	}
+}
+
 func TestEncodedResponsesAndFaultsDecode(t *testing.T) {
 	body, err := EncodeResponse([]any{"x", int64(1)})
 	if err != nil {
@@ -319,43 +372,13 @@ func TestFaultFromToleratesMissingParts(t *testing.T) {
 		{map[string]any{}, Fault{-1, "unknown fault"}},
 		{map[string]any{"faultCode": "junk", "faultString": int64(7)}, Fault{-1, "7"}},
 		{map[string]any{"faultCode": "-503"}, Fault{-503, "unknown fault"}},
+		// A code is an i4: one far outside it is no code at all.
+		{map[string]any{"faultCode": 1e300, "faultString": "x"}, Fault{-1, "x"}},
+		{map[string]any{"faultCode": "-Infinity", "faultString": "x"}, Fault{-1, "x"}},
 		{"just text", Fault{-1, "just text"}},
 	} {
 		if got := FaultFrom(c.value); *got != c.want {
 			t.Errorf("%#v: got %#v", c.value, *got)
-		}
-	}
-}
-
-func TestFormatNumberWritesNumbersTheBrowserWay(t *testing.T) {
-	// At run time, not as a constant: Go folds 0.1 + 0.2 exactly.
-	tenth, fifth := 0.1, 0.2
-	for _, c := range []struct {
-		in   float64
-		want string
-	}{
-		{0, "0"},
-		{math.Copysign(0, -1), "0"},
-		{1, "1"},
-		{-7, "-7"},
-		{2.5, "2.5"},
-		{tenth + fifth, "0.30000000000000004"},
-		{-0.1, "-0.1"},
-		{1e20, "100000000000000000000"},
-		{123456789012345680000, "123456789012345680000"},
-		{1e21, "1e+21"},
-		{1.5e22, "1.5e+22"},
-		{0.000001, "0.000001"},
-		{1e-7, "1e-7"},
-		{1.5e-7, "1.5e-7"},
-		{5e-324, "5e-324"},
-		{math.MaxFloat64, "1.7976931348623157e+308"},
-		{math.NaN(), "NaN"},
-		{math.Inf(1), "Infinity"},
-		{math.Inf(-1), "-Infinity"},
-	} {
-		if got := FormatNumber(c.in); got != c.want {
-			t.Errorf("FormatNumber(%v) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }

@@ -11,12 +11,10 @@ package prefs
 import (
 	"encoding/json"
 	"math"
-	"math/big"
-	"regexp"
 	"slices"
-	"strconv"
 	"strings"
-	"unicode"
+
+	"github.com/JohanLindvall/Cascade/server/internal/jsnum"
 )
 
 // Themes are the theme modes the UI knows.
@@ -58,6 +56,14 @@ func Default() Preferences {
 		Theme: "system", SortKey: "addedAt", SortDir: "desc", DetailHeight: 280,
 		SeenBadges: []string{}, StatePollMs: nil,
 	}
+}
+
+// Equal reports whether two sets of preferences say the same thing.
+func (p Preferences) Equal(q Preferences) bool {
+	samePoll := p.StatePollMs == nil && q.StatePollMs == nil ||
+		p.StatePollMs != nil && q.StatePollMs != nil && *p.StatePollMs == *q.StatePollMs
+	return p.Theme == q.Theme && p.SortKey == q.SortKey && p.SortDir == q.SortDir &&
+		p.DetailHeight == q.DetailHeight && slices.Equal(p.SeenBadges, q.SeenBadges) && samePoll
 }
 
 // IsTheme reports whether v names a theme mode.
@@ -105,7 +111,7 @@ func Sanitize(current Preferences, patch any) Preferences {
 		next.SortDir = "asc"
 	}
 	if height := numeric(merged("detailHeight", float64(current.DetailHeight))); isFinite(height) {
-		next.DetailHeight = int(clamp(round(height), DetailHeightMin, DetailHeightMax))
+		next.DetailHeight = int(clamp(jsnum.Round(height), DetailHeightMin, DetailHeightMax))
 	}
 	if list, ok := merged("seenBadges", badges).([]any); ok {
 		// Unique ids in first-seen order, the first seenBadgesMax of them:
@@ -120,9 +126,9 @@ func Sanitize(current Preferences, patch any) Preferences {
 			case string:
 				id = v
 			case float64:
-				id = NumberString(v)
+				id = jsnum.Format(v)
 			case json.Number:
-				id = NumberString(Number(v.String()))
+				id = jsnum.Format(jsnum.Parse(v.String()))
 			default:
 				continue
 			}
@@ -134,7 +140,7 @@ func Sanitize(current Preferences, patch any) Preferences {
 	}
 	// Anything that is not a number, null included, means "the server's default".
 	if poll := numeric(merged("statePollMs", currentPoll)); isFinite(poll) {
-		ms := int(clamp(round(poll), StatePollMsMin, StatePollMsMax))
+		ms := int(clamp(jsnum.Round(poll), StatePollMsMin, StatePollMsMax))
 		next.StatePollMs = &ms
 	}
 	return next
@@ -146,16 +152,16 @@ func Normalize(v any) Preferences {
 }
 
 // numeric reads a number the way the browser's copy does: numbers as they
-// are, non-blank strings through Number(), and everything else as NaN.
+// are, non-blank strings through jsnum.Parse(), and everything else as NaN.
 func numeric(value any) float64 {
 	switch v := value.(type) {
 	case float64:
 		return v
 	case json.Number:
-		return Number(v.String())
+		return jsnum.Parse(v.String())
 	case string:
-		if strings.TrimFunc(v, isJSSpace) != "" {
-			return Number(v)
+		if strings.TrimFunc(v, jsnum.IsSpace) != "" {
+			return jsnum.Parse(v)
 		}
 	}
 	return math.NaN()
@@ -164,114 +170,3 @@ func numeric(value any) float64 {
 func isFinite(f float64) bool { return !math.IsNaN(f) && !math.IsInf(f, 0) }
 
 func clamp(f, lo, hi float64) float64 { return math.Min(hi, math.Max(lo, f)) }
-
-// round is Math.round: the nearest integer, halves toward +Infinity.
-func round(f float64) float64 {
-	floor := math.Floor(f)
-	if f-floor >= 0.5 {
-		return floor + 1
-	}
-	return floor
-}
-
-// isJSSpace is the whitespace String.prototype.trim and Number() strip:
-// WhiteSpace and LineTerminator, which unicode.IsSpace does not match
-// exactly (it adds U+0085 and lacks U+FEFF).
-func isJSSpace(r rune) bool {
-	switch r {
-	case '\t', '\n', '\v', '\f', '\r', '\u2028', '\u2029', '\uFEFF':
-		return true
-	}
-	return unicode.Is(unicode.Zs, r)
-}
-
-var (
-	decimalLiteral = regexp.MustCompile(`^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$`)
-	radixLiteral   = regexp.MustCompile(`^0([xXoObB])([0-9a-fA-F]+)$`)
-)
-
-// Number converts a string the way JavaScript's Number() does: surrounding
-// whitespace ignored, "" is 0, decimal and exponent forms, unsigned 0x/0o/0b
-// integers, and Infinity; anything else is NaN.
-func Number(s string) float64 {
-	s = strings.TrimFunc(s, isJSSpace)
-	switch s {
-	case "":
-		return 0
-	case "Infinity", "+Infinity":
-		return math.Inf(1)
-	case "-Infinity":
-		return math.Inf(-1)
-	}
-	if m := radixLiteral.FindStringSubmatch(s); m != nil {
-		base := 16
-		switch m[1] {
-		case "o", "O":
-			base = 8
-		case "b", "B":
-			base = 2
-		}
-		n, ok := new(big.Int).SetString(m[2], base)
-		if !ok {
-			return math.NaN()
-		}
-		f, _ := new(big.Float).SetInt(n).Float64()
-		return f
-	}
-	if !decimalLiteral.MatchString(s) {
-		return math.NaN()
-	}
-	// The literal is validated, so the only error left is a range one, and
-	// ParseFloat then answers the ±Inf or 0 that JavaScript would.
-	f, _ := strconv.ParseFloat(s, 64)
-	return f
-}
-
-// NumberString formats a number as JavaScript's String(n) does: the shortest
-// digits that round-trip, positional from 1e-6 up to 1e21 and exponential
-// (1e+21, 1.5e-7) outside that.
-func NumberString(f float64) string {
-	switch {
-	case math.IsNaN(f):
-		return "NaN"
-	case math.IsInf(f, 1):
-		return "Infinity"
-	case math.IsInf(f, -1):
-		return "-Infinity"
-	case f == 0:
-		return "0"
-	}
-	sign := ""
-	if f < 0 {
-		sign, f = "-", -f
-	}
-	// 'e' with precision -1 gives the shortest round-trip digits: d.ddde±x.
-	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(f, 'e', -1, 64), "e")
-	digits := strings.Replace(mantissa, ".", "", 1)
-	exp, _ := strconv.Atoi(exponent)
-	k, n := len(digits), exp+1 // digits × 10^(n−k) is the value
-	switch {
-	case k <= n && n <= 21:
-		return sign + digits + strings.Repeat("0", n-k)
-	case 0 < n && n <= 21:
-		return sign + digits[:n] + "." + digits[n:]
-	case -6 < n && n <= 0:
-		return sign + "0." + strings.Repeat("0", -n) + digits
-	}
-	expSign := "+"
-	if n-1 < 0 {
-		expSign = "-"
-	}
-	e := strconv.Itoa(abs(n - 1))
-	if k == 1 {
-		return sign + digits + "e" + expSign + e
-	}
-	return sign + digits[:1] + "." + digits[1:] + "e" + expSign + e
-}
-
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
-}

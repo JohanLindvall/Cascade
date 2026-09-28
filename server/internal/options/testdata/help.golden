@@ -41,11 +41,11 @@ PATHS AND IDENTITY
   RT_SESSION_DIR             rtorrent's session state [/config/session]
   RT_WATCH_DIR               .torrent files dropped here are loaded and started [/watch]
   RT_WATCH_ENABLE            Set 0 to ignore the watch directory [1]
-  RT_WATCH_INTERVAL          Watch-directory poll interval, seconds [10]
+  RT_WATCH_INTERVAL          Watch-directory poll interval: seconds, MM:SS or HH:MM:SS [10]
   RT_LOG_FILE                rtorrent's log file, surfaced in the UI [/config/rtorrent.log]
   RT_LOG_LEVEL               Log scopes: info, debug, dht_debug, tracker_debug, … (more can be
                              raised live from the log dialog) [info]
-  RT_UMASK                   umask rtorrent creates files with [0022]
+  RT_UMASK                   umask rtorrent creates files with, in octal [0022]
   CASCADE_STATE_FILE         Preferences, progress, add times and throttle groups
                              [/config/cascade-state.json]
   CASCADE_CHOWN_DOWNLOADS    Set 1 to chown the download directory at startup (slow on large
@@ -145,7 +145,7 @@ WEB SERVER
   CASCADE_MAX_UPLOAD_MB      Maximum combined .torrent file size per upload batch, MiB [64]
   CASCADE_POLL_MS            Backend sampling interval for the rate graph, ms [1000]
   CASCADE_STATE_POLL_MS      How often the torrent list is read while a page is open, ms
-                             (100-60000; the UI can override it) [100]
+                             (100-60000; the UI can override it) [500]
   CASCADE_GAMIFY             Set 0 to remove levels, badges and celebrations [1]
   CASCADE_WEB_ROOT           Directory the built UI is served from [/app/web]
 

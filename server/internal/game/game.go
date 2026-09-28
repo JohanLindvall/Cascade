@@ -120,14 +120,20 @@ var Achievements = []Def{
 
 /* --------------------------------- levels -------------------------------- */
 
+// maxXP bounds XP to what the browser's numbers carry exactly; a hand-edited
+// state file can hold any finite count, and past this the level curve would
+// overflow.
+const maxXP = 1<<53 - 1
+
 // XPFor weights XP towards uploading: sharing is the part worth rewarding.
 func XPFor(stats contracts.GameStats, unlockedCount int) int64 {
-	return int64(math.Floor(
+	xp := math.Floor(
 		stats.LifetimeUp/mib*2 +
 			stats.LifetimeDown/mib*0.5 +
 			stats.Completed*100 +
 			float64(unlockedCount)*250,
-	))
+	)
+	return int64(math.Min(xp, maxXP))
 }
 
 const levelStep = 150

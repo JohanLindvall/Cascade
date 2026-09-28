@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { THEME_MODES, type ResolvedTheme, type ThemeMode } from '../theme';
-import { IconCheck, IconMoon, IconSkull, IconSun, IconTerminal, type IconProps } from './icons';
-import { useMenuKeys } from './ui';
+import { IconMoon, IconSkull, IconSun, IconTerminal, type IconProps } from './icons';
+import { MenuItem, useMenuKeys } from './menu';
 
 const GLYPHS: Record<ThemeMode, ComponentType<IconProps>> = {
   system: IconSun,
@@ -67,29 +67,28 @@ function ThemeMenu({
   useMenuKeys(ref, onClose);
   return (
     <div className="menu theme-menu" role="menu" aria-label="Theme" ref={ref}>
-      <div className="heading">Theme</div>
+      {/* The menu's label says this already; the heading is for the eye. */}
+      <div className="heading" aria-hidden="true">
+        Theme
+      </div>
       {THEME_MODES.map((item) => {
         const ItemGlyph = GLYPHS[item.mode];
-        const current = mode === item.mode;
         return (
-          <button
+          <MenuItem
             key={item.mode}
-            role="menuitemradio"
-            aria-checked={current}
+            icon={<ItemGlyph size={13} />}
+            label={
+              <>
+                {item.label}
+                <span className="theme-hint">{item.hint}</span>
+              </>
+            }
+            checked={mode === item.mode}
             onClick={() => {
               onChange(item.mode);
               onClose();
             }}
-          >
-            <span className="menu-icon">
-              <ItemGlyph size={13} />
-            </span>
-            <span className="theme-label">
-              {item.label}
-              <span className="theme-hint">{item.hint}</span>
-            </span>
-            {current && <IconCheck size={13} className="theme-current" />}
-          </button>
+          />
         );
       })}
     </div>

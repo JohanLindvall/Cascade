@@ -1,6 +1,7 @@
 # Cascade — build, run and test targets.
 #
-# Everything runs through Docker: no local Go or Node toolchain is required.
+# Everything but `make dev` runs through Docker: no local Go or Node toolchain
+# is required. The toolchain versions are the Dockerfile's, read from there.
 
 IMAGE            ?= cascade
 TAG              ?= latest
@@ -18,9 +19,11 @@ URL               = http://localhost:$(PORT)
 # rtorrent is always compiled from an upstream tag. The default release is
 # the Dockerfile's ARG RTORRENT_VERSION, read from there rather than repeated
 # (make bump-rtorrent moves it).
-ALPINE_VERSION   ?= 3.22
-DEFAULT_RTORRENT := $(shell sed -n 's/^ARG RTORRENT_VERSION=//p' Dockerfile)
+dockerfile_arg    = $(shell sed -n 's/^ARG $(1)=//p' Dockerfile)
+DEFAULT_RTORRENT := $(call dockerfile_arg,RTORRENT_VERSION)
 RTORRENT_VERSION ?= $(DEFAULT_RTORRENT)
+ALPINE_VERSION   ?= $(call dockerfile_arg,ALPINE_VERSION)
+GO_VERSION       := $(call dockerfile_arg,GO_VERSION)
 LIBTORRENT_VERSION ?=
 
 # What the client calls itself: USER_AGENT is the HTTP header trackers read,
@@ -47,8 +50,8 @@ BUILD_ARGS = --build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
 REF = $(IMAGE):$(TAG)
 
 .DEFAULT_GOAL := help
-.PHONY: help build matrix bump-rtorrent run open stop logs shell attach \
-        rtorrent-log smoke clean distclean dev version
+.PHONY: help build test race matrix bump-rtorrent run open stop logs shell \
+        attach rtorrent-log smoke clean distclean dev version
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nCascade\n\nUsage: make \033[36m<target>\033[0m [VAR=value]\n\nTargets:\n"} \
@@ -63,6 +66,18 @@ help: ## Show this help
 
 build: ## Build the image (also tests the Go server, typechecks and tests the web)
 	docker build $(BUILD_ARGS) -t $(REF) .
+
+test: ## Run every suite the build runs — Go, web, shell — without compiling rtorrent
+	docker build --target server --output type=cacheonly .
+	docker build --target web --output type=cacheonly .
+
+race: ## Run the Go suites under the race detector
+	@# The repository root, not just server/: the option catalog's tests read
+	@# the README and the entrypoint. Named volumes keep modules and the build
+	@# cache between runs.
+	docker run --rm -v "$(CURDIR):/src:ro" -w /src/server \
+	  -v cascade-go-mod:/go/pkg/mod -v cascade-go-build:/root/.cache/go-build \
+	  golang:$(GO_VERSION) go test -race ./...
 
 matrix: ## Build the rtorrent versions the UI is tested against
 	@for v in 0.9.8 0.15.2 $(DEFAULT_RTORRENT); do \
@@ -129,12 +144,12 @@ shell: ## Open a shell inside the container
 	docker exec -it $(CONTAINER) sh
 
 attach: ## Attach to rtorrent's curses UI (detach with ctrl-a d)
-	docker exec -it $(CONTAINER) sh -c 'SCREENDIR=/run/rtorrent/screen screen -r rtorrent'
+	docker exec -it $(CONTAINER) cascade-attach
 
 ##@ Develop
 
-dev: ## Run the Vite dev server against a running container
-	cd web && npm install && npm run dev
+dev: ## Run the Vite dev server against a container on port 8080 (needs local Node)
+	cd web && npm ci && npm run dev
 
 version: ## Report which rtorrent the built image contains, and how it presents itself
 	@docker run --rm --entrypoint rtorrent $(REF) -h 2>&1 | head -n1
@@ -148,22 +163,18 @@ smoke: ## Build, boot, exercise the API, then tear down (requires Python 3)
 	@set -eu; \
 	name="cascade-smoke-$$$$"; \
 	cleanup() { \
-	  docker stop -t 20 "$$name" >/dev/null 2>&1 || true; \
+	  docker stop -t 60 "$$name" >/dev/null 2>&1 || true; \
 	  docker rm -v "$$name" >/dev/null 2>&1 || true; \
 	}; \
 	trap cleanup 0; trap 'exit 130' INT; trap 'exit 143' TERM; \
 	docker run -d --name "$$name" -p 127.0.0.1:18999:8080 -e RT_DHT=off $(REF) >/dev/null; \
-	python3 docker/api-smoke.py http://127.0.0.1:18999 || { docker logs "$$name"; exit 1; }; \
-	printf 'xml-rpc /RPC2: '; \
-	curl -fsS -X POST http://127.0.0.1:18999/RPC2 -H 'content-type: text/xml' \
-	  --data '<?xml version="1.0"?><methodCall><methodName>system.client_version</methodName></methodCall>' \
-	  | grep -o '<string>[^<]*</string>'; \
-	echo "smoke test passed"
+	python3 docker/api-smoke.py http://127.0.0.1:18999 "$$name" || { docker logs "$$name"; exit 1; }
 
 ##@ Clean
 
-clean: stop ## Remove containers built from this image
-	@docker rm -f cascade-smoke >/dev/null 2>&1 || true
+clean: stop ## Remove the container and any smoke test's left behind
+	@ids="$$(docker ps -aq --filter name=^cascade-smoke-)"; \
+	if [ -n "$$ids" ]; then docker stop -t 60 $$ids >/dev/null; docker rm -v $$ids >/dev/null; fi
 
 distclean: clean ## Also remove the images
 	docker rmi -f $(REF) $(IMAGE):0.9.8 $(IMAGE):0.15.2 $(IMAGE):$(DEFAULT_RTORRENT) >/dev/null 2>&1 || true

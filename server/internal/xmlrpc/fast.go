@@ -118,6 +118,13 @@ func (p *scanner) textUntil(name string) (string, bool) {
 	return text, true
 }
 
+// owned is text the caller may keep. The scanner's text is a window onto the
+// whole response, and one hash kept as a map key would otherwise hold every
+// byte of the half-megabyte listing it arrived in for as long as it lives.
+func owned(text string) string {
+	return strings.Clone(decodeEntities(text))
+}
+
 // trimmed is a number's or a boolean's text. The permissive parser also
 // trims Unicode space and decodes entities first; text that needs either
 // fails the strict checks below and is declined.
@@ -139,7 +146,7 @@ func (p *scanner) value() (any, error) {
 	text := p.s[p.i : p.i+lt]
 	p.i += lt
 	if p.lit("</value>") {
-		return decodeEntities(text), nil // an untyped value is a string
+		return owned(text), nil // an untyped value is a string
 	}
 	if strings.Trim(text, " \t\r\n") != "" {
 		return nil, errDecline
@@ -163,12 +170,11 @@ func (p *scanner) typed() (any, error) {
 	if gt < 0 {
 		return nil, errDecline
 	}
+	// A tag with attributes, a comment, CDATA or a closing tag where a type
+	// belongs is none of the names switched on below, and is declined there.
 	tag := p.s[p.i+1 : p.i+gt]
 	empty := strings.HasSuffix(tag, "/")
 	tag = strings.TrimSuffix(tag, "/")
-	if tag == "" || strings.ContainsAny(tag, " \t\r\n/<>?!=\"'") {
-		return nil, errDecline
-	}
 	p.i += gt + 1
 
 	switch tag {
@@ -177,7 +183,7 @@ func (p *scanner) typed() (any, error) {
 			return "", nil
 		}
 		if text, ok := p.textUntil(tag); ok {
-			return decodeEntities(text), nil
+			return owned(text), nil
 		}
 	case "i4", "i8", "int", "ex.i8":
 		// In base 10 ParseInt takes exactly what integerText describes, and
@@ -261,7 +267,7 @@ func (p *scanner) typed() (any, error) {
 			if !p.lit("</member>") {
 				return nil, errDecline
 			}
-			record[decodeEntities(name)] = value
+			record[owned(name)] = value
 		}
 		p.depth--
 		return record, nil

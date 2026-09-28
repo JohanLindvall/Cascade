@@ -6,6 +6,7 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -37,6 +38,10 @@ const (
 	// What a subscriber may fall behind by before it is dropped; it
 	// reconnects and catches up from what is kept.
 	subscriberBuffer = 256
+	// The open streams one hub serves. Each holds a goroutine, a queue and a
+	// compressor for as long as it is open, and without Basic auth anyone who
+	// can reach the port can open them; a household's tabs come nowhere near.
+	maxSubscribers = 100
 	// How long one fetch of the state may take (rtorrent's own SCGI timeout
 	// is 30s).
 	fetchTimeout = 35 * time.Second
@@ -46,6 +51,11 @@ const (
 	maxInterval = time.Minute
 )
 
+// ErrTooManySubscribers refuses a subscriber past maxSubscribers.
+var ErrTooManySubscribers = errors.New("too many open streams")
+
+// Event is one server-sent event: a snapshot or a delta (which carry an ID a
+// reconnecting client can resume from), a failure or an ok.
 type Event struct {
 	Name string
 	ID   string
@@ -69,6 +79,8 @@ func (e Event) Frame() []byte {
 	return []byte(b.String())
 }
 
+// Subscriber is one open stream. Events is closed when the hub drops it for
+// falling behind.
 type Subscriber struct {
 	Events chan Event
 	// Set until the subscriber has had a snapshot: until then deltas mean
@@ -95,6 +107,9 @@ type Hub struct {
 	snapshot *Event // cached for the current rev
 }
 
+// NewHub makes a hub that reads the state with fetch — JSON, as GET
+// /api/state answers — every interval until the state names an interval of
+// its own (status.statePollMs).
 func NewHub(fetch func(context.Context) ([]byte, error), interval time.Duration) *Hub {
 	return &Hub{
 		fetch:    fetch,
@@ -116,9 +131,12 @@ func (h *Hub) id(rev uint64) string {
 // Subscribe adds a subscriber and queues what it needs first: the deltas
 // after since when they are all still kept, else a snapshot — at once when
 // the state is fresh, after the next read when it is not.
-func (h *Hub) Subscribe(since string) *Subscriber {
+func (h *Hub) Subscribe(since string) (*Subscriber, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if len(h.subs) >= maxSubscribers {
+		return nil, ErrTooManySubscribers
+	}
 	s := &Subscriber{Events: make(chan Event, subscriberBuffer)}
 	h.subs[s] = struct{}{}
 	fresh := h.state != nil && time.Since(h.stateAt) <= 2*h.interval+fetchTimeout/10
@@ -141,7 +159,7 @@ func (h *Hub) Subscribe(since string) *Subscriber {
 	} else if !fresh {
 		h.wakeLocked()
 	}
-	return s
+	return s, nil
 }
 
 // replayAfter returns the deltas after the event since named, and whether
@@ -170,6 +188,7 @@ func (h *Hub) replayAfter(since string) ([]Event, bool) {
 	return out, len(out) < subscriberBuffer/2
 }
 
+// Unsubscribe removes a subscriber; polling stops with the last one.
 func (h *Hub) Unsubscribe(s *Subscriber) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -3,9 +3,9 @@ import { useEffect, useLayoutEffect, useRef, type MutableRefObject } from 'react
 /**
  * A ref that always holds the latest value, for callbacks read from inside a
  * long-lived effect (a timer, a window listener) that must not restart every
- * time the parent re-renders — and the app re-renders on every poll. The ref
- * is written in a layout effect rather than during render, which React
- * forbids: a render may be thrown away, and its writes with it.
+ * time the parent re-renders — and the app re-renders on every update of the
+ * state. The ref is written in a layout effect rather than during render,
+ * which React forbids: a render may be thrown away, and its writes with it.
  */
 export function useLatest<T>(value: T): MutableRefObject<T> {
   const ref = useRef(value);

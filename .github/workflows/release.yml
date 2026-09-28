@@ -14,6 +14,10 @@
 # The tag this workflow pushes does not re-trigger it: GitHub deliberately does
 # not run workflows for refs created with GITHUB_TOKEN, which is why the tag is
 # created here rather than in a separate workflow.
+#
+# Values reach the scripts through env rather than ${{ }} inside `run`, where
+# they would be pasted into the script text — a tag name is whatever its
+# pusher typed.
 name: Release
 
 on:
@@ -46,17 +50,25 @@ jobs:
 
       - name: Resolve the version and image name
         id: resolve
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           set -eu
-          if [ "${{ github.ref_type }}" = "tag" ]; then
-            version="${{ github.ref_name }}"
+          if [ "$REF_TYPE" = "tag" ]; then
+            version="$REF_NAME"
           else
             # run_number is monotonic per workflow, so auto tags never collide
             # or go backwards. Explicit vX.Y.Z tags are the real releases.
-            version="v0.1.${{ github.run_number }}"
+            version="v0.1.$RUN_NUMBER"
           fi
+          # A tag becomes an image tag, which allows only these characters.
+          printf '%s' "$version" | grep -Eqx '[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}' ||
+            { echo "::error::$version cannot be an image tag"; exit 1; }
           # GHCR rejects uppercase in image names; the owner login has it.
-          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          owner="$(printf '%s' "$OWNER" | tr '[:upper:]' '[:lower:]')"
           rtorrent="$(sed -n 's/^ARG RTORRENT_VERSION=//p' Dockerfile)"
           [ -n "$rtorrent" ] || { echo "no ARG RTORRENT_VERSION in the Dockerfile" >&2; exit 1; }
           {
@@ -70,9 +82,10 @@ jobs:
 
       - name: Tag the commit
         if: github.ref_type != 'tag'
+        env:
+          version: ${{ steps.resolve.outputs.version }}
         run: |
           set -eu
-          version='${{ steps.resolve.outputs.version }}'
           if git rev-parse "$version" >/dev/null 2>&1; then
             echo "$version already exists — reusing it (re-run?)"
             exit 0
@@ -136,30 +149,24 @@ jobs:
       # genuinely exercised on arm64. A build that fails here never reaches the
       # publish job, so no tag is ever created for an image that will not boot.
       - name: Verify this build runs
+        env:
+          ref: ${{ needs.version.outputs.image }}@${{ steps.build.outputs.digest }}
         run: |
           set -eu
-          ref='${{ needs.version.outputs.image }}@${{ steps.build.outputs.digest }}'
-          docker run -d --name verify -p 18080:8080 -e RT_DHT=off "$ref"
-          for _ in $(seq 1 90); do
-            curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1 && break
-            sleep 1
-          done
-          curl -fsS http://127.0.0.1:18080/healthz | grep '"ok":true'
-          curl -fsS http://127.0.0.1:18080/api/capabilities | grep -o '"clientVersion":"[^"]*"'
-          curl -fsS http://127.0.0.1:18080/api/state >/dev/null
-          curl -fsS http://127.0.0.1:18080/ | grep -o '<title>[^<]*</title>'
-          python3 docker/api-smoke.py http://127.0.0.1:18080
-          docker stop -t 20 verify >/dev/null
+          docker run -d --name verify --stop-timeout 60 -p 18080:8080 -e RT_DHT=off "$ref"
+          python3 docker/api-smoke.py http://127.0.0.1:18080 verify
+          docker stop -t 60 verify >/dev/null
 
       - name: Container log on failure
         if: failure()
         run: docker logs verify 2>&1 | tail -50 || true
 
       - name: Export the digest
+        env:
+          digest: ${{ steps.build.outputs.digest }}
         run: |
           set -eu
           mkdir -p /tmp/digests
-          digest='${{ steps.build.outputs.digest }}'
           touch "/tmp/digests/${digest#sha256:}"
 
       - uses: actions/upload-artifact@v7
@@ -195,13 +202,15 @@ jobs:
 
       - name: Join the per-platform builds into one manifest
         working-directory: /tmp/digests
+        env:
+          image: ${{ needs.version.outputs.image }}
+          version: ${{ needs.version.outputs.version }}
+          rtorrent: ${{ matrix.rtorrent }}
+          default_rtorrent: ${{ needs.version.outputs.rtorrent }}
         run: |
           set -eu
-          image='${{ needs.version.outputs.image }}'
-          version='${{ needs.version.outputs.version }}'
-          rtorrent='${{ matrix.rtorrent }}'
           set -- --tag "${image}:${version}-${rtorrent}"
-          if [ "$rtorrent" = '${{ needs.version.outputs.rtorrent }}' ]; then
+          if [ "$rtorrent" = "$default_rtorrent" ]; then
             set -- "$@" --tag "${image}:${version}" --tag "${image}:latest"
           fi
           # One digest file per platform, named by the digest the build pushed.
@@ -211,9 +220,10 @@ jobs:
           docker buildx imagetools create "$@"
 
       - name: Show what was published
+        env:
+          ref: ${{ needs.version.outputs.image }}:${{ needs.version.outputs.version }}-${{ matrix.rtorrent }}
         run: |
           set -eu
-          ref='${{ needs.version.outputs.image }}:${{ needs.version.outputs.version }}-${{ matrix.rtorrent }}'
           docker buildx imagetools inspect "$ref"
           {
             echo "### \`$ref\`"

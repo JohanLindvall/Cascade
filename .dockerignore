@@ -7,3 +7,10 @@ data
 # The server's tests check the option catalog against it.
 !README.md
 .github
+# Build state from local tooling, which must not steer the image's own
+# builds (a stale tsbuildinfo tells tsc -b there is nothing to check).
+**/*.tsbuildinfo
+/server/cascade
+/server/*.test
+# Test torrents dropped into the working tree while debugging.
+**/*.torrent

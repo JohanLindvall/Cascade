@@ -184,66 +184,29 @@ func TestIsThemeAndIsSortKey(t *testing.T) {
 	}
 }
 
-func TestNumberFollowsJavaScript(t *testing.T) {
-	for _, c := range []struct {
-		in   string
-		want float64
-	}{
-		{"", 0},
-		{"  ", 0},
-		{"42", 42},
-		{"007", 7},
-		{"-7", -7},
-		{"1e3", 1000},
-		{"1E-2", 0.01},
-		{"0x10", 16},
-		{"0XfF", 255},
-		{"0b101", 5},
-		{"0o17", 15},
-		{"1e400", math.Inf(1)},
-		{"-1e400", math.Inf(-1)},
-		{"Infinity", math.Inf(1)},
-		{"\t12\n", 12},
-		{"0xffffffffffffffffff", 4722366482869645213696}, // past uint64, rounded as JS rounds
+func TestEqualComparesEveryField(t *testing.T) {
+	poll := func(ms int) *int { return &ms }
+	base := Default()
+	if !base.Equal(Default()) {
+		t.Fatal("two defaults differ")
+	}
+	for name, change := range map[string]func(*Preferences){
+		"theme":        func(p *Preferences) { p.Theme = "dark" },
+		"sortKey":      func(p *Preferences) { p.SortKey = "name" },
+		"sortDir":      func(p *Preferences) { p.SortDir = "asc" },
+		"detailHeight": func(p *Preferences) { p.DetailHeight = 300 },
+		"seenBadges":   func(p *Preferences) { p.SeenBadges = []string{"a"} },
+		"statePollMs":  func(p *Preferences) { p.StatePollMs = poll(1000) },
 	} {
-		if got := Number(c.in); got != c.want {
-			t.Errorf("Number(%q) = %v, want %v", c.in, got, c.want)
+		other := Default()
+		change(&other)
+		if base.Equal(other) || other.Equal(base) {
+			t.Errorf("a different %s compares equal", name)
 		}
 	}
-	for _, in := range []string{"abc", "1,000", "1 000", "--1", "0x", "-0x1", "0b2", "0o8", "infinity", "inf", "nan", "1_0", "0x1p3", "."} {
-		if got := Number(in); !math.IsNaN(got) {
-			t.Errorf("Number(%q) = %v, want NaN", in, got)
-		}
-	}
-}
-
-func TestNumberStringFollowsJavaScript(t *testing.T) {
-	for _, c := range []struct {
-		in   float64
-		want string
-	}{
-		{0, "0"},
-		{math.Copysign(0, -1), "0"},
-		{1, "1"},
-		{-1, "-1"},
-		{1.5, "1.5"},
-		{100, "100"},
-		{0.1, "0.1"},
-		{0.000001, "0.000001"},
-		{1e-7, "1e-7"},
-		{1.5e-7, "1.5e-7"},
-		{-2.5e-10, "-2.5e-10"},
-		{1e20, "100000000000000000000"},
-		{123456789012345680000, "123456789012345680000"},
-		{1e21, "1e+21"},
-		{1.25e22, "1.25e+22"},
-		{math.MaxFloat64, "1.7976931348623157e+308"},
-		{math.NaN(), "NaN"},
-		{math.Inf(1), "Infinity"},
-		{math.Inf(-1), "-Infinity"},
-	} {
-		if got := NumberString(c.in); got != c.want {
-			t.Errorf("NumberString(%v) = %q, want %q", c.in, got, c.want)
-		}
+	a, b := Default(), Default()
+	a.StatePollMs, b.StatePollMs = poll(500), poll(500)
+	if !a.Equal(b) {
+		t.Error("the same interval behind two pointers compares different")
 	}
 }
