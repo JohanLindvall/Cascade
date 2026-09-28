@@ -538,7 +538,7 @@ func TestALinkRtorrentCouldNotFetchIsRefusedBeforeAnyLoad(t *testing.T) {
 }
 
 func TestAMagnetLoadIsConfirmedByItsOwnHashWithTheLabelEncoded(t *testing.T) {
-	client := backend().Answer("d.hash", hash)
+	client := loadedBy(backend(), "load.start", hash)
 	s := newService(t, client, nil)
 	err := s.AddTorrentURL(ctx, "magnet:?xt=urn:btih:"+strings.ToLower(hash), contracts.LoadOptions{
 		Start: true, Label: "tv shows", Directory: "/downloads/tv",

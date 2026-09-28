@@ -465,6 +465,11 @@ directory or label, or for magnets and URLs. Because the drop path has no dialog
   reason.
 - The same parse yields the info hash, and the load is confirmed by waiting for that hash to appear
   in the session. `load.*` is queued, not immediate, so "the call returned" is not "it loaded".
+- That wait cannot tell a new torrent from one already there, and rtorrent drops a second load of
+  a hash without a word — the label and directory it carried with it. So the session is asked
+  first (`refuseLoaded`), and a torrent it already holds is a `409` naming it, for a file and a
+  magnet alike. A fetched URL has no hash until rtorrent has fetched it; its wait for a new torrent
+  fails instead, and the message lists "already loaded" among the reasons.
 - The directory rides into rtorrent inside a command string (`d.directory.set="…"`), where
   quotes and backslashes are escaped but a line break could end the command and start another,
   so a directory with a control character is refused (`checkLoadOptions`); the label goes in
@@ -623,10 +628,10 @@ Two other things are easy to get wrong here:
   `internal/stream`'s hub reads the state once per interval however many pages are open, not at
   all while none is, and straight after any request that may have changed something, so an
   action's effect arrives without the page asking. That wake is in `route` (`server.go`): every
-  request but GET, HEAD and OPTIONS wakes the hub unless it was answered 400, 404, 413 or 415
-  (`refusedAsSent`) — refusals the API and the service make before asking rtorrent to change
+  request but GET, HEAD and OPTIONS wakes the hub unless it was answered 400, 404, 409, 413 or
+  415 (`refusedAsSent`) — refusals the API and the service make before asking rtorrent to change
   anything. A 403 or a 5xx still wakes it: a data delete is refused with 403 *after* the torrent
-  was erased, and a failure can follow half a change. So a 400, 404, 413 or 415 must never follow
+  was erased, and a failure can follow half a change. So a 400, 404, 409, 413 or 415 must never follow
   a change — keep that true when adding one deep in the service. The interval is
   `status.statePollMs` — the user's preference, else
   `CASCADE_STATE_POLL_MS` (500 ms) — within 100 ms to a minute. The state is held as a tree whose

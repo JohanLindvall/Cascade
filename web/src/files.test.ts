@@ -51,8 +51,10 @@ test('droppedFiles also reads file-kind items when .files is empty', () => {
 
 test('droppedFiles does not double-count a file both sources report', () => {
   const a = file('a.torrent');
-  // A fresh File with the same name/size/mtime is the same drop, deduped.
-  const same = new File([], 'a.torrent');
+  // A fresh File with the same name/size/mtime is the same drop, deduped. The
+  // mtime is copied rather than left to the constructor, which stamps the
+  // current time: a millisecond between the two lines made them differ.
+  const same = new File([], 'a.torrent', { lastModified: a.lastModified });
   const got = droppedFiles({ files: [a], items: [fileItem(same)] });
   assert.equal(got.length, 1);
 });

@@ -556,7 +556,10 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 
 Malformed input — a hash that is not forty hex digits, a priority outside its range, a file
 index that is not a number, a tracker that is not an announce URL — is answered with a `400`
-naming the field. Bulk routes validate every hash before applying anything, normalize case and
+naming the field. Adding a torrent the session already holds — a `.torrent` or a magnet
+with the same info hash — is a `409` naming it rather than a success: rtorrent would drop the load,
+and its label and directory, without a word. In an upload batch it is one of the per-file
+`errors`. Bulk routes validate every hash before applying anything, normalize case and
 deduplicate, then return runtime failures by hash in `errors`. Numeric settings reject null,
 booleans, fractions, unsafe integers and malformed strings; a typo cannot become unlimited.
 
@@ -737,7 +740,7 @@ Working on the frontend with live reload, against a running container — the on
 a local Node:
 
 ```bash
-make dev                                 # cd web && npm install && npm run dev
+make dev                                 # cd web && npm ci && npm run dev
                                          # proxies /api to localhost:8080
 CASCADE_DEV_TARGET=http://nas:8080 make dev   # ...or to a container elsewhere
 ```

@@ -37,6 +37,9 @@ func (s *Service) loadTorrentFile(ctx context.Context, data []byte, parsed torre
 	if err := s.caps.Ensure(ctx); err != nil {
 		return err
 	}
+	if err := s.refuseLoaded(ctx, parsed.InfoHash); err != nil {
+		return err
+	}
 	dialect := s.caps.Dialect()
 	method := dialect.LoadRaw
 	if options.Start {
@@ -60,6 +63,27 @@ func (s *Service) loadTorrentFile(ctx context.Context, data []byte, parsed torre
 		return httperr.Newf(http.StatusBadGateway, `rtorrent did not accept "%s" — see the rtorrent log`, name)
 	}
 	return nil
+}
+
+// refuseLoaded is a 409 naming a torrent the session already holds, and nil
+// when it does not. rtorrent drops a second load of a hash without a word —
+// the label and directory it carried with it — and the wait that follows
+// would take the copy already there for the new one, reporting success for a
+// load that did nothing. A fetched URL has no hash to ask about beforehand;
+// its wait for a new torrent fails instead, and its message says why it may.
+func (s *Service) refuseLoaded(ctx context.Context, hash string) error {
+	results, err := s.client.MulticallSettled(ctx, []rtorrent.Call{call("d.hash", hash), call("d.name", hash)})
+	if err != nil {
+		return err
+	}
+	if results[0].Err != nil || !strings.EqualFold(rtorrent.Text(results[0].Value), hash) {
+		return nil
+	}
+	name := hash
+	if results[1].Err == nil && rtorrent.Text(results[1].Value) != "" {
+		name = rtorrent.Text(results[1].Value)
+	}
+	return httperr.Newf(http.StatusConflict, `"%s" is already loaded`, name)
 }
 
 // waitForTorrent polls briefly for a hash to appear in the session.
@@ -135,6 +159,9 @@ func (s *Service) loadTorrentURL(ctx context.Context, link, wanted string, optio
 	params := append([]any{"", link}, s.loadCommands(options)...)
 
 	if wanted != "" {
+		if err := s.refuseLoaded(ctx, wanted); err != nil {
+			return err
+		}
 		if _, err := s.client.Call(ctx, method, params...); err != nil {
 			return err
 		}

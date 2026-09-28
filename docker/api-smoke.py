@@ -170,13 +170,23 @@ def check_long_file_name(cascade):
     boundary = 'cascade-smoke-' + uuid.uuid4().hex
     form = (f'--{boundary}\r\nContent-Disposition: form-data; name="torrents"; filename="long.torrent"\r\n'
             'Content-Type: application/x-bittorrent\r\n\r\n').encode() + torrent + f'\r\n--{boundary}--\r\n'.encode()
-    status, _, body = cascade.fetch('/api/torrents/upload', form, 'POST',
-                                    {'content-type': f'multipart/form-data; boundary={boundary}'})
-    result = json.loads(body)
-    assert status == 200 and result['added'] == 1, (status, result)
+
+    def upload():
+        status, _, body = cascade.fetch('/api/torrents/upload', form, 'POST',
+                                        {'content-type': f'multipart/form-data; boundary={boundary}'})
+        assert status == 200, (status, body)
+        return json.loads(body)
+
+    result = upload()
+    assert result['added'] == 1, result
 
     info_hash = hashlib.sha1(bencode(info)).hexdigest().upper()
     try:
+        # rtorrent drops a second load of a hash without a word; Cascade asks
+        # the session first and says so, where it used to report success.
+        again = upload()
+        assert again['added'] == 0 and again['failedFiles'] == [0], again
+        assert f'"{name}" is already loaded' in again['errors'][0], again
         for _ in range(30):
             torrent = next((t for t in cascade.api('/api/state')['torrents'] if t['hash'] == info_hash), None)
             files = cascade.api(f'/api/torrents/{info_hash}/files') if torrent else []

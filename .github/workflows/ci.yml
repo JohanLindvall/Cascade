@@ -72,14 +72,12 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: ${{ steps.versions.outputs.NODE_VERSION }}
-          # setup-node v5+ turns caching on by itself once package.json grows a
-          # "packageManager" field, and then fails for want of a lockfile —
-          # the web deliberately has none (the image runs a plain install).
-          package-manager-cache: false
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - name: Web (typecheck + production build)
         working-directory: web
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
       - name: Web unit tests
         working-directory: web

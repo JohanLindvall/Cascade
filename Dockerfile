@@ -31,7 +31,7 @@
 # files, and the server is a single Go binary.
 
 ARG ALPINE_VERSION=3.22
-ARG NODE_VERSION=22
+ARG NODE_VERSION=24
 ARG GO_VERSION=1.26
 
 # --------------------------------------------------------------------------
@@ -40,8 +40,10 @@ ARG GO_VERSION=1.26
 FROM node:${NODE_VERSION}-alpine AS web
 WORKDIR /src
 
-COPY web/package.json web/
-RUN cd web && npm install --no-audit --no-fund --loglevel=error
+# The lockfile pins every package, transitive ones included, so the image
+# builds from exactly what CI tested.
+COPY web/package.json web/package-lock.json web/
+RUN cd web && npm ci --no-audit --no-fund --loglevel=error
 
 COPY web/ web/
 # The client's half of the delta protocol is tested against the server's

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,9 +29,23 @@ func singleFile(t *testing.T) ([]byte, string) {
 	return []byte("d4:info" + info + "e"), strings.ToUpper(hex.EncodeToString(sum[:]))
 }
 
+// loadedBy is a session that holds infoHash once load has been called, and
+// answers d.hash for it with rtorrent's not-found fault until then.
+func loadedBy(client *rtorrenttest.FakeClient, load, infoHash string) *rtorrenttest.FakeClient {
+	var loaded atomic.Bool
+	return client.
+		Answer(load, func([]any) any { loaded.Store(true); return 0 }).
+		Answer("d.hash", func([]any) (any, error) {
+			if !loaded.Load() {
+				return nil, &xmlrpc.Fault{Code: -501, Message: "Could not find info-hash."}
+			}
+			return infoHash, nil
+		})
+}
+
 func TestAnUploadIsLoadedWithItsOptionsAndConfirmedByItsHash(t *testing.T) {
 	data, infoHash := singleFile(t)
-	client := backend().Answer("d.hash", infoHash)
+	client := loadedBy(backend(), "load.raw_start", infoHash)
 	s := newService(t, client, nil)
 	err := s.AddTorrentFile(ctx, data, contracts.LoadOptions{Start: true, Directory: `/downloads/a "b"`, Label: "x&y"})
 	if err != nil {
@@ -42,8 +57,34 @@ func TestAnUploadIsLoadedWithItsOptionsAndConfirmedByItsHash(t *testing.T) {
 		t.Fatalf("%#v", load)
 	}
 	// Not started: the plain load.
+	client = loadedBy(backend(), "load.raw", infoHash)
+	s = newService(t, client, nil)
 	if err := s.AddTorrentFile(ctx, data, contracts.LoadOptions{}); err != nil || len(client.CallsTo("load.raw")) != 1 {
 		t.Fatalf("%v %v", err, client.CallsTo("load.raw"))
+	}
+}
+
+func TestATorrentTheSessionHoldsIsA409NamingItAndIsNotLoadedAgain(t *testing.T) {
+	data, infoHash := singleFile(t)
+	for name, add := range map[string]func(s subject) error{
+		"a file": func(s subject) error {
+			return s.AddTorrentFile(ctx, data, contracts.LoadOptions{Start: true, Label: "new label"})
+		},
+		"a magnet": func(s subject) error {
+			return s.AddTorrentURL(ctx, "magnet:?xt=urn:btih:"+strings.ToLower(infoHash), contracts.LoadOptions{Start: true})
+		},
+	} {
+		client := backend().Answer("d.hash", infoHash).Answer("d.name", "Already here")
+		err := add(newService(t, client, nil))
+		if status(t, err) != 409 || !strings.Contains(err.Error(), `"Already here" is already loaded`) {
+			t.Errorf("%s: %v", name, err)
+		}
+		// rtorrent would drop the load, and the label with it, without a word.
+		for _, method := range []string{"load.raw_start", "load.start", "d.custom1.set"} {
+			if calls := client.CallsTo(method); len(calls) != 0 {
+				t.Errorf("%s: %s was called: %v", name, method, calls)
+			}
+		}
 	}
 }
 

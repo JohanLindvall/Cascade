@@ -391,6 +391,7 @@ func TestOnlyARequestRefusedAsSentLeavesTheStreamAlone(t *testing.T) {
 	h.service.state = source.state
 	h.service.fail = map[string]error{
 		"setTorrentThrottle": &xmlrpc.Fault{Code: -501, Message: "Could not find info-hash"},
+		"addTorrentUrl":      httperr.New(http.StatusConflict, `"a" is already loaded`),
 	}
 	resp := raw(t, h.base+"/api/stream", nil)
 	events := bufio.NewReader(resp.Body)
@@ -408,6 +409,7 @@ func TestOnlyARequestRefusedAsSentLeavesTheStreamAlone(t *testing.T) {
 		{"PATCH", "/api/torrents/" + hash, `{"priority":"high"}`, 400},
 		{"POST", "/api/torrents/action/start", `{"hashes":`, 400},
 		{"POST", "/api/no/such/thing", "{}", 404},
+		{"POST", "/api/torrents/url", `{"url":"magnet:?xt=urn:btih:` + hash + `"}`, 409},
 	} {
 		if r := send(t, c.method, h.base+c.path, c.body, nil); r.status != c.status {
 			t.Fatalf("%s %s: %d %s", c.method, c.path, r.status, r.raw)

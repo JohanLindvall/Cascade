@@ -149,7 +149,7 @@ attach: ## Attach to rtorrent's curses UI (detach with ctrl-a d)
 ##@ Develop
 
 dev: ## Run the Vite dev server against a container on port 8080 (needs local Node)
-	cd web && npm install && npm run dev
+	cd web && npm ci && npm run dev
 
 version: ## Report which rtorrent the built image contains, and how it presents itself
 	@docker run --rm --entrypoint rtorrent $(REF) -h 2>&1 | head -n1
