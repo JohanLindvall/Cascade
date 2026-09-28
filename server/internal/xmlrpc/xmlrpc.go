@@ -21,10 +21,11 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/JohanLindvall/Cascade/server/internal/httperr"
+	"github.com/JohanLindvall/Cascade/server/internal/jsnum"
 )
 
 // Fault is an XML-RPC fault: rtorrent refusing a command, with its code and
@@ -101,6 +102,12 @@ func encodeValue(out *bytes.Buffer, value any) error {
 			return err
 		}
 	case json.Number:
+		// An integer literal is sent exactly, even past 2^53 where a float64
+		// would round it.
+		if n, err := strconv.ParseInt(string(v), 10, 64); err == nil {
+			encodeInt(out, n)
+			break
+		}
 		f, err := strconv.ParseFloat(string(v), 64)
 		if err != nil {
 			return fmt.Errorf("xmlrpc: cannot encode the number %q", string(v))
@@ -153,25 +160,25 @@ func encodeFloat(out *bytes.Buffer, v float64) error {
 		return errors.New("XML-RPC numbers must be finite")
 	}
 	if v == math.Trunc(v) {
-		if v <= math.MaxInt32 && v >= math.MinInt32 {
-			out.WriteString("<i4>")
-			out.WriteString(FormatNumber(v))
-			out.WriteString("</i4>")
-		} else {
-			out.WriteString("<i8>")
-			out.WriteString(FormatNumber(v))
-			out.WriteString("</i8>")
+		// Past int64 there is no <i8> to write: "1e+21" or twenty digits
+		// there do not fault, they kill rtorrent (xmlrpc-c 1.51.8, 0.16.24).
+		// rtorrent refuses <double> outright, so a whole number that does
+		// not fit is the caller's mistake to hear about.
+		if v < -(1<<63) || v >= 1<<63 {
+			return fmt.Errorf("%s is past the 64-bit integers XML-RPC can carry", jsnum.Format(v))
 		}
+		encodeInt(out, int64(v))
 		return nil
 	}
 	out.WriteString("<double>")
-	out.WriteString(FormatNumber(v))
+	out.WriteString(jsnum.Format(v))
 	out.WriteString("</double>")
 	return nil
 }
 
 // EncodeCall serializes a methodCall. It fails only for a value XML-RPC
-// cannot carry: a non-finite number, or a Go type with no XML-RPC shape.
+// cannot carry: a non-finite number, a whole number past int64, or a Go type
+// with no XML-RPC shape.
 func EncodeCall(method string, params []any) ([]byte, error) {
 	var out bytes.Buffer
 	out.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
@@ -267,8 +274,6 @@ type token struct {
 	name string
 }
 
-func isSpace(r rune) bool { return unicode.IsSpace(r) || r == '\uFEFF' }
-
 func tokenize(xml string) ([]token, error) {
 	var tokens []token
 	length := len(xml)
@@ -299,7 +304,13 @@ func tokenize(xml string) ([]token, error) {
 			tokens = append(tokens, token{textToken, strings.ReplaceAll(xml[lt+9:stop], "&", "&amp;")})
 			i = skipPast(xml, lt, "]]>")
 			continue
-		case strings.HasPrefix(rest, "<?"), strings.HasPrefix(rest, "<!"):
+		case strings.HasPrefix(rest, "<?"):
+			// A processing instruction ends at "?>", not at the first ">": a
+			// quoted ">" inside one must not let what follows read as tags,
+			// and the fast path ends the declaration at the same place.
+			i = skipPast(xml, lt, "?>")
+			continue
+		case strings.HasPrefix(rest, "<!"):
 			i = skipPast(xml, lt, ">")
 			continue
 		}
@@ -307,17 +318,17 @@ func tokenize(xml string) ([]token, error) {
 		if gt < 0 {
 			break
 		}
-		tag := strings.TrimFunc(rest[1:gt], isSpace)
+		tag := strings.TrimFunc(rest[1:gt], jsnum.IsSpace)
 		closing, selfClosing := false, false
 		if strings.HasPrefix(tag, "/") {
 			closing = true
-			tag = strings.TrimFunc(tag[1:], isSpace)
+			tag = strings.TrimFunc(tag[1:], jsnum.IsSpace)
 		}
 		if strings.HasSuffix(tag, "/") {
 			selfClosing = true
-			tag = strings.TrimFunc(tag[:len(tag)-1], isSpace)
+			tag = strings.TrimFunc(tag[:len(tag)-1], jsnum.IsSpace)
 		}
-		if space := strings.IndexFunc(tag, isSpace); space >= 0 {
+		if space := strings.IndexFunc(tag, jsnum.IsSpace); space >= 0 {
 			tag = tag[:space]
 		}
 		if closing {
@@ -396,7 +407,7 @@ func (p *parser) atClose(name string) bool {
 func (p *parser) skipBlankText() {
 	for p.index < len(p.tokens) {
 		t := p.tokens[p.index]
-		if t.kind != textToken || strings.TrimFunc(t.name, isSpace) != "" {
+		if t.kind != textToken || strings.TrimFunc(t.name, jsnum.IsSpace) != "" {
 			return
 		}
 		p.index++
@@ -513,13 +524,13 @@ func (p *parser) parseTyped(kind string) (any, error) {
 	case "base64":
 		return decodeBase64(p.readTextUntilClose(kind)), nil
 	case "boolean":
-		text := strings.TrimFunc(p.readTextUntilClose(kind), isSpace)
+		text := strings.TrimFunc(p.readTextUntilClose(kind), jsnum.IsSpace)
 		if text != "0" && text != "1" {
 			return nil, errors.New("invalid XML-RPC boolean")
 		}
 		return text == "1", nil
 	case "int", "i4", "i8", "ex.i8":
-		text := strings.TrimFunc(p.readTextUntilClose(kind), isSpace)
+		text := strings.TrimFunc(p.readTextUntilClose(kind), jsnum.IsSpace)
 		if !integerText.MatchString(text) {
 			return nil, errors.New("invalid XML-RPC integer")
 		}
@@ -534,7 +545,7 @@ func (p *parser) parseTyped(kind string) (any, error) {
 		}
 		return value, nil
 	case "double":
-		text := strings.TrimFunc(p.readTextUntilClose(kind), isSpace)
+		text := strings.TrimFunc(p.readTextUntilClose(kind), jsnum.IsSpace)
 		value, err := strconv.ParseFloat(text, 64)
 		if !doubleText.MatchString(text) || err != nil || math.IsInf(value, 0) {
 			return nil, errors.New("invalid XML-RPC double")
@@ -564,7 +575,10 @@ func DecodeResponse(xml []byte) (any, error) {
 	var value any
 	err := errDecline
 	if utf8.Valid(xml) {
-		value, err = decodeFast(string(xml))
+		// Nothing the fast path hands out is a window onto the document (see
+		// owned), so it reads the caller's bytes where they lie rather than a
+		// copy of a half-megabyte listing, several times a second.
+		value, err = decodeFast(unsafe.String(unsafe.SliceData(xml), len(xml)))
 	}
 	if errors.Is(err, errDecline) {
 		value, err = readResponse(DecodeUTF8(xml))
@@ -610,7 +624,9 @@ func FaultFrom(value any) *Fault {
 		if raw, ok := record["faultString"]; ok {
 			message = ToString(raw)
 		}
-		if math.IsNaN(code) || math.IsInf(code, 0) {
+		// A fault code is an i4; anything that is not one cannot be converted
+		// meaningfully, and is no code at all.
+		if math.IsNaN(code) || code > math.MaxInt32 || code < math.MinInt32 {
 			code = -1
 		}
 		return &Fault{Code: int(code), Message: message}
@@ -680,56 +696,6 @@ func decodeBase64(text string) []byte {
 // so every reader of rtorrent's answers agrees on them — a junk string is not
 // a number, a boolean is 1 or 0, a double prints its shortest form.
 
-// FormatNumber writes f as JavaScript's String(f) does: the shortest digits
-// that read back as f, in plain notation from 1e-6 up to 1e21 and in
-// exponent notation ("1e+21", "1.5e-7") beyond.
-func FormatNumber(f float64) string {
-	switch {
-	case math.IsNaN(f):
-		return "NaN"
-	case math.IsInf(f, 1):
-		return "Infinity"
-	case math.IsInf(f, -1):
-		return "-Infinity"
-	case f == 0:
-		return "0"
-	}
-	sign := ""
-	if f < 0 {
-		sign = "-"
-		f = -f
-	}
-	mantissa, exponent, _ := strings.Cut(strconv.FormatFloat(f, 'e', -1, 64), "e")
-	digits := strings.Replace(mantissa, ".", "", 1)
-	k := len(digits)
-	e, _ := strconv.Atoi(exponent)
-	n := e + 1 // f = 0.digits × 10^n
-	switch {
-	case k <= n && n <= 21:
-		return sign + digits + strings.Repeat("0", n-k)
-	case 0 < n && n <= 21:
-		return sign + digits[:n] + "." + digits[n:]
-	case -6 < n && n <= 0:
-		return sign + "0." + strings.Repeat("0", -n) + digits
-	}
-	expSign := "+"
-	if n-1 < 0 {
-		expSign = "-"
-	}
-	exp := strconv.Itoa(abs(n - 1))
-	if k == 1 {
-		return sign + digits + "e" + expSign + exp
-	}
-	return sign + digits[:1] + "." + digits[1:] + "e" + expSign + exp
-}
-
-func abs(n int) int {
-	if n < 0 {
-		return -n
-	}
-	return n
-}
-
 // ToString reads a decoded value as text, as String(v) does: bytes as UTF-8,
 // numbers in their shortest form, booleans as "true"/"false", an array as its
 // items joined by commas and a struct as "[object Object]". nil — the absent
@@ -756,11 +722,11 @@ func ToString(value any) string {
 	case uint32:
 		return strconv.FormatUint(uint64(v), 10)
 	case float32:
-		return FormatNumber(float64(v))
+		return jsnum.Format(float64(v))
 	case float64:
-		return FormatNumber(v)
+		return jsnum.Format(v)
 	case json.Number:
-		return FormatNumber(ToNumber(v))
+		return jsnum.Format(ToNumber(v))
 	case []any:
 		parts := make([]string, len(v))
 		for i, item := range v {
@@ -775,9 +741,8 @@ func ToString(value any) string {
 }
 
 // ToNumber reads a decoded value as a number, as Number(v) does: NaN for
-// anything that is not one (nil included), 1 or 0 for a boolean, and a string
-// by the rules for a numeric literal — surrounding whitespace allowed, "" is
-// 0, 0x/0o/0b prefixes and "Infinity" understood, anything else NaN.
+// anything that is not one (nil included), 1 or 0 for a boolean, and text by
+// jsnum.Parse's rules for a numeric literal.
 func ToNumber(value any) float64 {
 	switch v := value.(type) {
 	case bool:
@@ -798,68 +763,16 @@ func ToNumber(value any) float64 {
 	case float64:
 		return v
 	case string:
-		return stringToNumber(v)
+		return jsnum.Parse(v)
 	case json.Number:
-		return stringToNumber(string(v))
+		return jsnum.Parse(string(v))
 	case []byte:
-		return stringToNumber(DecodeUTF8(v))
+		return jsnum.Parse(DecodeUTF8(v))
 	case []any, []string:
-		return stringToNumber(ToString(v))
+		return jsnum.Parse(ToString(v))
 	default:
 		return math.NaN()
 	}
-}
-
-var decimalLiteral = regexp.MustCompile(`^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?$`)
-
-func isNumberSpace(r rune) bool {
-	switch r {
-	case '\t', '\n', '\v', '\f', '\r', '\uFEFF', '\u2028', '\u2029':
-		return true
-	}
-	return unicode.Is(unicode.Zs, r)
-}
-
-func stringToNumber(text string) float64 {
-	text = strings.TrimFunc(text, isNumberSpace)
-	switch text {
-	case "":
-		return 0
-	case "Infinity", "+Infinity":
-		return math.Inf(1)
-	case "-Infinity":
-		return math.Inf(-1)
-	}
-	if len(text) > 2 && text[0] == '0' {
-		base := 0
-		switch text[1] {
-		case 'x', 'X':
-			base = 16
-		case 'o', 'O':
-			base = 8
-		case 'b', 'B':
-			base = 2
-		}
-		if base != 0 {
-			value := 0.0
-			for _, c := range text[2:] {
-				digit := strings.IndexRune("0123456789abcdef", unicode.ToLower(c))
-				if digit < 0 || digit >= base {
-					return math.NaN()
-				}
-				value = value*float64(base) + float64(digit)
-			}
-			return value
-		}
-	}
-	if !decimalLiteral.MatchString(text) {
-		return math.NaN()
-	}
-	value, err := strconv.ParseFloat(text, 64)
-	if err != nil && !errors.Is(err, strconv.ErrRange) {
-		return math.NaN()
-	}
-	return value
 }
 
 // DecodeUTF8 reads bytes as UTF-8 the way a browser (and Node's

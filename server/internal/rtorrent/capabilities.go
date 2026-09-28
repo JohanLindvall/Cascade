@@ -116,6 +116,17 @@ type Capabilities struct {
 	dialect  Dialect
 	info     BackendInfo
 	ready    bool
+	// Bumped by Invalidate, so a probe that was already running when the
+	// connection dropped cannot vouch for whatever rtorrent answers now.
+	generation uint64
+}
+
+// probed is what one probe learned, committed all at once so a probe that
+// fails part way leaves the last good answers standing.
+type probed struct {
+	methods map[string]bool
+	dialect Dialect
+	info    BackendInfo
 }
 
 // inflight is a probe in flight, which concurrent callers share.
@@ -169,7 +180,9 @@ func (c *Capabilities) Supports(feature string) bool {
 	return c.info.Supports[feature]
 }
 
-// Ready reports whether a probe has completed since the last Invalidate.
+// Ready reports whether a probe started since the last Invalidate has
+// completed successfully; one that was already in flight at the Invalidate
+// does not count, since what it learned may predate the reconnect.
 func (c *Capabilities) Ready() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -208,11 +221,13 @@ func (c *Capabilities) MethodNames() []string {
 }
 
 // Invalidate makes the next Ensure probe again: a reconnected rtorrent may
-// be another build.
+// be another build. A probe already in flight still answers its callers, but
+// no longer marks the backend ready.
 func (c *Capabilities) Invalidate() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ready = false
+	c.generation++
 }
 
 // Ensure probes unless a recent probe stands. Concurrent callers share the
@@ -228,9 +243,15 @@ func (c *Capabilities) Ensure(ctx context.Context) error {
 	if p == nil {
 		p = &inflight{done: make(chan struct{})}
 		c.probing = p
+		generation := c.generation
 		go func() {
-			err := c.probe(context.WithoutCancel(ctx))
+			learned, err := c.probe(context.WithoutCancel(ctx))
 			c.mu.Lock()
+			if err == nil {
+				c.methods, c.dialect, c.info = learned.methods, learned.dialect, learned.info
+				c.probedAt = c.now()
+				c.ready = generation == c.generation
+			}
 			p.err = err
 			c.probing = nil
 			c.mu.Unlock()
@@ -246,26 +267,24 @@ func (c *Capabilities) Ensure(ctx context.Context) error {
 	}
 }
 
-func (c *Capabilities) probe(ctx context.Context) error {
+func (c *Capabilities) probe(ctx context.Context) (probed, error) {
+	invalid := httperr.Backend("rtorrent returned an invalid system.listMethods response")
 	listed, err := c.client.Call(ctx, "system.listMethods")
 	if err != nil {
-		return err
+		return probed{}, err
 	}
 	names, ok := listed.([]any)
 	if !ok || len(names) == 0 {
-		return httperr.Backend("rtorrent returned an invalid system.listMethods response")
+		return probed{}, invalid
 	}
 	methods := make(map[string]bool, len(names))
 	for _, name := range names {
 		text, ok := name.(string)
 		if !ok {
-			return httperr.Backend("rtorrent returned an invalid system.listMethods response")
+			return probed{}, invalid
 		}
 		methods[text] = true
 	}
-	c.mu.Lock()
-	c.methods = methods
-	c.mu.Unlock()
 
 	probes := []Call{
 		{Method: "system.client_version"},
@@ -278,7 +297,7 @@ func (c *Capabilities) probe(ctx context.Context) error {
 	}
 	versions, err := c.client.MulticallSettled(ctx, probes)
 	if err != nil {
-		return err
+		return probed{}, err
 	}
 	value := func(index int) string {
 		if index >= len(versions) || versions[index].Err != nil {
@@ -345,21 +364,19 @@ func (c *Capabilities) probe(ctx context.Context) error {
 		}
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.dialect = dialect
-	c.info = BackendInfo{
-		ClientVersion:  value(0),
-		LibraryVersion: value(1),
-		APIVersion:     value(2),
-		MethodCount:    len(methods),
-		Flavor:         detectFlavor(methods),
-		RPCFacility:    rpcFacility,
-		Supports:       supports,
-	}
-	c.probedAt = c.now()
-	c.ready = true
-	return nil
+	return probed{
+		methods: methods,
+		dialect: dialect,
+		info: BackendInfo{
+			ClientVersion:  value(0),
+			LibraryVersion: value(1),
+			APIVersion:     value(2),
+			MethodCount:    len(methods),
+			Flavor:         detectFlavor(methods),
+			RPCFacility:    rpcFacility,
+			Supports:       supports,
+		},
+	}, nil
 }
 
 // pickAvailable filters candidate field commands down to those the backend

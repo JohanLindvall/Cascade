@@ -15,7 +15,8 @@ package options
 
 import (
 	"strings"
-	"unicode"
+
+	"github.com/JohanLindvall/Cascade/server/internal/jsnum"
 )
 
 // Option is one environment variable.
@@ -114,7 +115,7 @@ var Options = []Option{
 	{
 		Name:    "RT_WATCH_INTERVAL",
 		Section: "Paths and identity",
-		Summary: "Watch-directory poll interval, seconds",
+		Summary: "Watch-directory poll interval: seconds, MM:SS or HH:MM:SS",
 		Default: ptr("10"),
 	},
 	{
@@ -132,7 +133,7 @@ var Options = []Option{
 	{
 		Name:    "RT_UMASK",
 		Section: "Paths and identity",
-		Summary: "umask rtorrent creates files with",
+		Summary: "umask rtorrent creates files with, in octal",
 		Default: ptr("0022"),
 	},
 	{
@@ -614,7 +615,7 @@ var Options = []Option{
 		Name:    "CASCADE_STATE_POLL_MS",
 		Section: "Web server",
 		Summary: "How often the torrent list is read while a page is open, ms (100-60000; the UI can override it)",
-		Default: ptr("100"),
+		Default: ptr("500"),
 	},
 	{
 		Name:    "CASCADE_GAMIFY",
@@ -746,12 +747,6 @@ func defaultLabel(option Option) string {
 // HelpWidth is the width --help is rendered at.
 const HelpWidth = 96
 
-// isSpace is JavaScript's \s, which the rendering has always split words on:
-// Unicode white space and the byte order mark, but not U+0085.
-func isSpace(r rune) bool {
-	return r == '\uFEFF' || (unicode.IsSpace(r) && r != '\u0085')
-}
-
 // textWidth measures text as the renderer always has, in UTF-16 code units:
 // an em dash is one column rather than its three bytes, and the output stays
 // identical to the published help and README tables.
@@ -770,7 +765,9 @@ func textWidth(text string) int {
 func wrap(text string, width int) []string {
 	var lines []string
 	line, lineWidth := "", 0
-	for _, word := range strings.FieldsFunc(text, isSpace) {
+	// Words split on JavaScript's \s, as the rendering always has: not
+	// U+0085, but the byte order mark.
+	for _, word := range strings.FieldsFunc(text, jsnum.IsSpace) {
 		wordWidth := textWidth(word)
 		switch {
 		case line != "" && lineWidth+1+wordWidth > width:
@@ -874,5 +871,5 @@ func RenderMarkdown() string {
 		}
 		out = append(out, "")
 	}
-	return strings.TrimRightFunc(strings.Join(out, "\n"), isSpace)
+	return strings.TrimRightFunc(strings.Join(out, "\n"), jsnum.IsSpace)
 }

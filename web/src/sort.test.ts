@@ -119,3 +119,37 @@ test('ties keep a fixed order by name, whichever way the column runs', () => {
     );
   }
 });
+
+test('names the collator calls equal are ordered by hash, whatever the listing order', () => {
+  // A later delta appends to the list and a snapshot lists by hash, so the
+  // input order changes across a reload; the rows must not.
+  for (const [first, second] of [['Movie', 'movie'], ['Episode 07', 'Episode 7'], ['Café', 'cafe']]) {
+    const a = torrent({ name: first });
+    const b = torrent({ name: second });
+    for (const list of [[a, b], [b, a]]) {
+      for (const key of ['name', 'status'] as const) {
+        for (const dir of ['asc', 'desc'] as const) {
+          assert.deepEqual(
+            sortTorrents(list, { key, dir }).map((t) => t.hash),
+            [a.hash, b.hash],
+            `${first}/${second}, listed ${list[0].name} first, ${key} ${dir}`,
+          );
+        }
+      }
+    }
+  }
+});
+
+test('names are re-ranked when one is renamed, added or removed', () => {
+  // The ranking is cached between sorts; a stale one would misplace the new name.
+  const a = torrent({ name: 'bravo' });
+  const b = torrent({ name: 'delta' });
+  const byName = (list: Torrent[]) => sortTorrents(list, { key: 'name', dir: 'asc' }).map((t) => t.name);
+  assert.deepEqual(byName([a, b]), ['bravo', 'delta']);
+  assert.deepEqual(byName([{ ...a, name: 'echo' }, b]), ['delta', 'echo']);
+  assert.deepEqual(byName([a, b, torrent({ name: 'alpha' })]), ['alpha', 'bravo', 'delta']);
+  assert.deepEqual(byName([b]), ['delta']);
+  // Two torrents of one name still tell apart by hash.
+  const twin = torrent({ name: 'delta' });
+  assert.deepEqual(sortTorrents([twin, b], { key: 'name', dir: 'asc' }).map((t) => t.hash), [b.hash, twin.hash]);
+});

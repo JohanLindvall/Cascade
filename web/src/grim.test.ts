@@ -18,7 +18,7 @@ const catalog = JSON.parse(fs.readFileSync(new URL('./game-catalog.json', import
 };
 
 function badge(id: string): Achievement {
-  return { id, title: 'plain', description: 'plain', tier: 'bronze', icon: 'trophy', current: 0, target: 1, unlockedAt: null };
+  return { id, title: 'plain', description: 'plain', tier: 'bronze', icon: 'trophy', unit: 'count', current: 0, target: 1, unlockedAt: null };
 }
 
 test('every server achievement has a carved title and description', () => {

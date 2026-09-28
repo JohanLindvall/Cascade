@@ -1,6 +1,9 @@
 package service
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
 
 // serialTasks runs the mutations of one resource in order; a failure
 // releases the next waiter like a success does. Different keys proceed
@@ -49,20 +52,49 @@ type flightCall[T any] struct {
 }
 
 func (f *flight[T]) do(read func() (T, error)) (T, error) {
-	f.mu.Lock()
-	if c := f.current; c != nil {
-		f.mu.Unlock()
+	c, leader := f.join()
+	if !leader {
 		<-c.done
 		return c.value, c.err
 	}
-	c := &flightCall[T]{done: make(chan struct{})}
-	f.current = c
-	f.mu.Unlock()
+	return f.lead(c, read)
+}
 
-	c.value, c.err = read()
+// doIfIdle runs read unless one is in flight already. It is for a caller
+// that needs the work done rather than the answer — the read in flight does
+// the same work — and that must be able to give up: waiting on a read that
+// someone else started is a wait it could not abandon.
+func (f *flight[T]) doIfIdle(read func() (T, error)) error {
+	c, leader := f.join()
+	if !leader {
+		return nil
+	}
+	_, err := f.lead(c, read)
+	return err
+}
+
+// join returns the read in flight, or a new one the caller has to lead.
+func (f *flight[T]) join() (*flightCall[T], bool) {
 	f.mu.Lock()
-	f.current = nil
-	f.mu.Unlock()
-	close(c.done)
+	defer f.mu.Unlock()
+	if f.current != nil {
+		return f.current, false
+	}
+	// The error stands unless the read returns: a read that panics must not
+	// leave the next caller waiting forever, nor the waiters a zero answer.
+	f.current = &flightCall[T]{done: make(chan struct{}), err: errReadFailed}
+	return f.current, true
+}
+
+func (f *flight[T]) lead(c *flightCall[T], read func() (T, error)) (T, error) {
+	defer func() {
+		f.mu.Lock()
+		f.current = nil
+		f.mu.Unlock()
+		close(c.done)
+	}()
+	c.value, c.err = read()
 	return c.value, c.err
 }
+
+var errReadFailed = errors.New("the shared read failed")

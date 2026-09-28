@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/http"
 	"reflect"
 	"regexp"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/JohanLindvall/Cascade/server/internal/httperr"
 	"github.com/JohanLindvall/Cascade/server/internal/scgi"
 	"github.com/JohanLindvall/Cascade/server/internal/xmlrpc"
 )
@@ -65,6 +67,23 @@ func TestCallRoundTripsThroughTheTransport(t *testing.T) {
 	}
 	if client.Endpoint() != "unix:/nowhere/rpc.socket" {
 		t.Fatalf("endpoint %q", client.Endpoint())
+	}
+}
+
+func TestAParameterXMLRPCCannotCarryIsABadRequestThatNeverLeaves(t *testing.T) {
+	sent := false
+	client := NewClient(target, func(context.Context, []byte) ([]byte, error) {
+		sent = true
+		return respond(t, 0), nil
+	})
+	// What the API console hands over for {"params": ["", 1e19]}.
+	_, err := client.Call(context.Background(), "cat", "", 1e19)
+	var status *httperr.Error
+	if !errors.As(err, &status) || status.Status != http.StatusBadRequest {
+		t.Fatalf("got %v", err)
+	}
+	if sent {
+		t.Fatal("the call reached rtorrent")
 	}
 }
 

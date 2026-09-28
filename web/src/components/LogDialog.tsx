@@ -1,17 +1,23 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { logDay, logTime, parseLogLine } from '../format';
 import { usePolling } from '../hooks';
 import { redactSecrets } from '../redact';
 import type { LogScopes } from '../types';
-import { Modal, useToast } from './ui';
+import { Modal } from './modal';
+import { useToast } from './toast';
+
+/** Whether two reads of the log hold the same lines — the usual answer while nothing is happening. */
+function sameLines(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((line, index) => line === b[index]);
+}
 
 export function LogDialog({ onClose }: { onClose: () => void }) {
   const [lines, setLines] = useState<string[]>([]);
   const [scopes, setScopes] = useState<LogScopes | null>(null);
   const [saving, setSaving] = useState(false);
   const toast = useToast();
-  const viewRef = useRef<HTMLPreElement>(null);
+  const viewRef = useRef<HTMLDivElement>(null);
   // Follow the tail like `tail -f`, but stop the moment the user scrolls up.
   const stickToEnd = useRef(true);
 
@@ -57,8 +63,12 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
     async (isCurrent: () => boolean) => {
       try {
         const result = await api.log();
+        if (!isCurrent()) return;
         // rtorrent echoes tracker URLs, passkeys and all, into its log.
-        if (isCurrent()) setLines(result.lines.map(redactSecrets));
+        const next = result.lines.map(redactSecrets);
+        // An unchanged log keeps its array, so the rows are not rebuilt and
+        // the view is not scrolled for nothing every few seconds.
+        setLines((previous) => (sameLines(previous, next) ? previous : next));
       } catch (error) {
         if (isCurrent()) toast.error(error);
       }
@@ -67,7 +77,8 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
   );
   usePolling(load, 4000);
 
-  useEffect(() => {
+  // Before paint, or the new lines would show for a frame at the old position.
+  useLayoutEffect(() => {
     const view = viewRef.current;
     if (view && stickToEnd.current) view.scrollTop = view.scrollHeight;
   }, [lines]);
@@ -155,9 +166,14 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
             })}
         </div>
       )}
-      <pre
+      {/* A div, not a pre: the rows are blocks, which a pre may not hold. The
+          styles keep the whitespace. Focusable so the keyboard can scroll it. */}
+      <div
         className="console-output log-view"
         ref={viewRef}
+        role="region"
+        aria-label="Log lines"
+        tabIndex={0}
         onScroll={(event) => {
           const view = event.currentTarget;
           stickToEnd.current = view.scrollHeight - view.scrollTop - view.clientHeight < 48;
@@ -170,7 +186,7 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
         ) : (
           'Log is empty — set RT_LOG_LEVEL to raise verbosity.'
         )}
-      </pre>
+      </div>
     </Modal>
   );
 }

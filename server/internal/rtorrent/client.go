@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/http"
 
 	"github.com/JohanLindvall/Cascade/server/internal/httperr"
 	"github.com/JohanLindvall/Cascade/server/internal/scgi"
@@ -105,7 +106,10 @@ func (c *client) Raw(ctx context.Context, body []byte) ([]byte, error) {
 func (c *client) Call(ctx context.Context, method string, params ...any) (any, error) {
 	body, err := xmlrpc.EncodeCall(method, params)
 	if err != nil {
-		return nil, err
+		// The service validates what it sends, so a value XML-RPC cannot
+		// carry came from the raw RPC console: the request's to fix, not a
+		// server failure.
+		return nil, httperr.New(http.StatusBadRequest, err.Error())
 	}
 	response, err := c.Raw(ctx, body)
 	if err != nil {
@@ -160,20 +164,21 @@ func (c *client) MulticallSettled(ctx context.Context, calls []Call) ([]Result, 
 	return settleItems(calls, items), nil
 }
 
-// settleItems turns system.multicall's answer into results: each item is a
-// one-element array holding the value, or a fault struct.
+// NamedFault is the fault one entry of a multicall answered with, named after
+// its command: "-503 Wrong object type" on its own does not say which of a
+// dozen batched calls went wrong.
+func NamedFault(method string, fault *xmlrpc.Fault) *xmlrpc.Fault {
+	return &xmlrpc.Fault{Code: fault.Code, Message: method + ": " + fault.Message}
+}
+
+// settleItems turns system.multicall's answer, one item per call, into
+// results: each item is a one-element array holding the value, or a fault
+// struct.
 func settleItems(calls []Call, items []any) []Result {
 	results := make([]Result, len(items))
 	for i, item := range items {
 		if xmlrpc.IsFaultStruct(item) {
-			// Name the command in the fault: "-503 Wrong object type" on its
-			// own does not say which of a dozen batched calls went wrong.
-			fault := xmlrpc.FaultFrom(item)
-			method := "unknown method"
-			if i < len(calls) {
-				method = calls[i].Method
-			}
-			results[i] = Result{Err: &xmlrpc.Fault{Code: fault.Code, Message: method + ": " + fault.Message}}
+			results[i] = Result{Err: NamedFault(calls[i].Method, xmlrpc.FaultFrom(item))}
 			continue
 		}
 		if list, ok := item.([]any); ok && len(list) > 0 {
@@ -233,7 +238,11 @@ func ZipRows(list []any, fields []string) []Row {
 // Number reads a decoded value as a number the forgiving way the UI's gauges
 // want it: a numeric string or bytes are parsed, a boolean is 1 or 0, and
 // anything that is not a finite number — junk, NaN, an infinity — reads as 0.
+// So does -0, which would otherwise reach the JSON as "-0".
 func Number(value any) float64 {
+	if v, ok := value.(int64); ok { // what rtorrent sends for almost every field
+		return float64(v)
+	}
 	n := xmlrpc.ToNumber(value)
 	if math.IsNaN(n) || math.IsInf(n, 0) || n == 0 {
 		return 0

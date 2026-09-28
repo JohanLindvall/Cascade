@@ -332,3 +332,54 @@ func TestTheNameIsDecodedAsTheBrowserDecodesIt(t *testing.T) {
 		t.Fatalf("got %+v %v", parsed, err)
 	}
 }
+
+// A payload the size of a whole upload batch must cost its bytes and not a
+// tree of them: validation walks the bytes, and only the fields an upload
+// needs are read, by offset.
+func TestParsingDoesNotBuildTheDocument(t *testing.T) {
+	// A top-level list of a hundred thousand integers, ahead of the info.
+	junk := append([]byte("5:aaaaal"), bytes.Repeat([]byte("i0e"), 100_000)...)
+	junk = append(junk, 'e')
+	body := singleFile()
+	data := append([]byte("d"), junk...)
+	data = append(data, body[1:]...)
+	if _, err := Parse(data); err != nil {
+		t.Fatal(err)
+	}
+	if allocs := testing.AllocsPerRun(5, func() { _, _ = Parse(data) }); allocs > 10 {
+		t.Fatalf("%v allocations for a hundred thousand ignored values", allocs)
+	}
+
+	// Ten thousand files: validated one by one, none of them kept.
+	files := make([]any, 10_000)
+	for i := range files {
+		files[i] = map[string]any{"length": 1, "path": []any{"dir", fmt.Sprintf("f%d", i)}}
+	}
+	info := map[string]any{"piece length": 16384, "name": "many", "files": files, "pieces": pieces}
+	many := ben(map[string]any{"info": info})
+	if parsed, err := Parse(many); err != nil || parsed.Size != 10_000 || parsed.Name != "many" {
+		t.Fatalf("%+v %v", parsed, err)
+	}
+	if allocs := testing.AllocsPerRun(5, func() { _, _ = Parse(many) }); allocs > 10 {
+		t.Fatalf("%v allocations for ten thousand files", allocs)
+	}
+}
+
+func TestAStructuralErrorWinsOverAnyOtherProblem(t *testing.T) {
+	// The piece length is wrong too, but the document is broken first.
+	info := singleFileInfo()
+	info["piece length"] = 0
+	broken := ben(map[string]any{"info": info})
+	mustFail(t, broken[:len(broken)-1], "truncated")
+	mustFail(t, append(ben(map[string]any{"info": info}), 'x'), "trailing data")
+	// A bad integer in a value nothing reads, after that info, is still what
+	// is reported.
+	unread := ben(map[string]any{"info": info})
+	unread = append(unread[:len(unread)-1], "8:url-listli01eee"...)
+	mustFail(t, unread, "bad integer")
+	// Keys out of order deep inside a value nothing reads are still refused.
+	nested := []byte("d1:ald1:bi0e1:ai0eee4:info")
+	nested = append(nested, ben(singleFileInfo())...)
+	nested = append(nested, 'e')
+	mustFail(t, nested, "duplicate or unsorted dictionary key")
+}

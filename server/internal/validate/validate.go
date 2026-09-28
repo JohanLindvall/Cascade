@@ -10,9 +10,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/JohanLindvall/Cascade/server/internal/httperr"
+	"github.com/JohanLindvall/Cascade/server/internal/jsnum"
 )
 
 // MaxSafeInteger is the largest integer a JSON number carries exactly, and so
@@ -47,10 +47,10 @@ func String(value any, field string, allowEmpty bool) (string, error) {
 	return Trim(text), nil
 }
 
-// Trim removes surrounding whitespace the way the browser's String.trim does,
-// byte order mark included.
+// Trim removes surrounding whitespace the way the browser's String.trim does:
+// the byte order mark goes, U+0085 (which unicode.IsSpace counts) stays.
 func Trim(text string) string {
-	return strings.TrimFunc(text, func(r rune) bool { return unicode.IsSpace(r) || r == '\uFEFF' })
+	return strings.TrimFunc(text, jsnum.IsSpace)
 }
 
 var integerText = regexp.MustCompile(`^-?\d+$`)

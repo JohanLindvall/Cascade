@@ -47,6 +47,9 @@ const URL_PARTS = /^([a-z][a-z0-9+.-]*:\/\/[^/?#]*)([^?#]*)(\?[^#]*)?(#.*)?$/i;
 /** A URL inside running text: up to whitespace, a quote or an angle bracket. */
 const URL_IN_TEXT = /\b[a-z][a-z0-9+.-]*:\/\/[^\s'"<>]+/gi;
 
+/** Punctuation that ends a sentence or a bracket around a URL rather than the URL itself. */
+const TRAILING = /[)\].,;:!?]+$/;
+
 /** One URL with its credentials masked; anything that is not a URL comes back as is. */
 export function redactUrl(url: string): string {
   const parts = URL_PARTS.exec(url);
@@ -64,7 +67,16 @@ export function redactUrl(url: string): string {
   return `${host}${cleanPath}${cleanQuery}${fragment}`;
 }
 
-/** Every URL in a piece of text redacted, the rest of it left alone. */
+/**
+ * Every URL in a piece of text redacted, the rest of it left alone — the
+ * punctuation around it included: rtorrent writes "[Could not connect to
+ * tracker: http://…/announce?passkey=…]", and the mask must not take the
+ * closing bracket with it.
+ */
 export function redactSecrets(text: string): string {
-  return text.includes('://') ? text.replace(URL_IN_TEXT, redactUrl) : text;
+  if (!text.includes('://')) return text;
+  return text.replace(URL_IN_TEXT, (url) => {
+    const tail = TRAILING.exec(url)?.[0] ?? '';
+    return redactUrl(url.slice(0, url.length - tail.length)) + tail;
+  });
 }

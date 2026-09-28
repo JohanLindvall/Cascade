@@ -169,13 +169,15 @@ ENV LD_LIBRARY_PATH=/usr/local/lib
 FROM rtorrent AS runtime
 
 RUN apk add --no-cache \
-      tini su-exec screen ca-certificates curl tzdata
+      tini su-exec screen ca-certificates tzdata
 
 COPY --from=server /out/cascade /usr/local/bin/cascade
 COPY --from=web /src/web/dist /app/web
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY docker/move-completed.sh /usr/local/bin/cascade-move
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/cascade-move
+# An explicit mode rather than the checkout's: a umask 002 clone would
+# otherwise ship group-writable scripts.
+COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chmod=0755 docker/move-completed.sh /usr/local/bin/cascade-move
+COPY --chmod=0755 docker/attach.sh /usr/local/bin/cascade-attach
 
 ENV CASCADE_WEB_ROOT=/app/web \
     RT_DOWNLOAD_DIR=/downloads \
@@ -190,7 +192,9 @@ ENV CASCADE_WEB_ROOT=/app/web \
 VOLUME ["/config", "/downloads", "/watch"]
 EXPOSE 8080 50000 50000/udp
 
+# The server asks itself: `cascade health` requests /healthz on the address it
+# listens on, whatever WEB_BASE_PATH and Basic auth are.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl -fsS "http://127.0.0.1:${WEB_PORT}/healthz" >/dev/null || exit 1
+  CMD ["cascade", "health"]
 
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]

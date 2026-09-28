@@ -2,7 +2,7 @@
 export type {
   TorrentStatus, Torrent, TorrentFile, Peer, Tracker,
   BackendSummary, Policy, RateSample, GlobalStatus, StateResponse,
-  LogScopeState as LogScopes, ThrottleGroup,
+  LogScopeState as LogScopes, LogScopeChange, ThrottleGroup, ThrottleRate,
   Tier, ProgressUnit, Achievement, GameStats, GameState, UploadResult,
 } from './contracts';
 import type { GlobalSettings } from './contracts';

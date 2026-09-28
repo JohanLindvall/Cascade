@@ -95,8 +95,10 @@ export function applyPatch(current: Json | undefined, patch: Json): Json {
 /**
  * Turns normalized states back into StateResponses, reusing what did not
  * change: a branch the last patch left alone is the same object here as it
- * was, so the torrent list keeps its identity while only the rates moved,
- * and the filtering and sorting keyed on it are not redone.
+ * was. A delta that touches no torrent (the global rates, the history) leaves
+ * the torrent list the same array, so the filtering and sorting keyed on it
+ * are not redone; one that changes any torrent rebuilds the list, reusing
+ * every torrent object it did not touch.
  */
 export function denormalizer(): (state: JsonObject) => StateResponse {
   const restored = new WeakMap<JsonObject, JsonObject>();

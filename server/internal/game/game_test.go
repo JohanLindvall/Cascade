@@ -149,3 +149,11 @@ func TestBreakEvenCapsAtOne(t *testing.T) {
 		}
 	}
 }
+
+func TestAnAbsurdStateFileCannotOverflowTheLevelCurve(t *testing.T) {
+	stats := contracts.GameStats{LifetimeUp: 1e300, LifetimeDown: 1e300, Completed: 1e300}
+	state := BuildState(stats, map[string]int64{}, true)
+	if state.XP != maxXP || state.Level < 1 || state.NextLevelXP <= state.LevelXP || state.Progress < 0 || state.Progress > 1 {
+		t.Fatalf("xp %d level %d (%d..%d) progress %v", state.XP, state.Level, state.LevelXP, state.NextLevelXP, state.Progress)
+	}
+}

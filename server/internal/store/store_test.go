@@ -226,11 +226,96 @@ func TestACorruptFileStartsCleanInsteadOfCrashing(t *testing.T) {
 		if s.Stats().LifetimeUp != 0 || len(s.Throttles()) != 0 || !reflect.DeepEqual(s.Preferences(), prefs.Default()) {
 			t.Errorf("%q did not start clean", content)
 		}
+		// The next write must not destroy the only copy of what it held.
+		if kept, err := os.ReadFile(file + ".corrupt"); err != nil || string(kept) != content {
+			t.Errorf("%q was not kept aside: %q %v", content, kept, err)
+		}
+		if exists(t, file) {
+			t.Errorf("%q is still in place", content)
+		}
 	}
-	// A directory in its place too.
+	// A directory in its place starts clean too, and is left where it is.
 	dir := t.TempDir()
 	if s := Open(dir); s.Stats().LifetimeUp != 0 {
 		t.Error("a directory did not start clean")
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() || exists(t, dir+".corrupt") {
+		t.Error("a directory in the state file's place was moved")
+	}
+}
+
+func TestASecondCorruptFileDoesNotReplaceTheFirstOneKeptAside(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "state.json")
+	first := `{"stats":{"lifetimeUp":123456789}`
+	if err := os.WriteFile(file, []byte(first), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := Open(file)
+	// The clean start writes a fresh file, and the same fault spoils it too.
+	s.AddedTimes([]string{hashA}, 100)
+	mustFlush(t, s)
+	for _, content := range []string{"{garbage", "{worse"} {
+		if err := os.WriteFile(file, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		Open(file)
+	}
+	for aside, want := range map[string]string{".corrupt": first, ".corrupt.1": "{garbage", ".corrupt.2": "{worse"} {
+		if kept, err := os.ReadFile(file + aside); err != nil || string(kept) != want {
+			t.Errorf("%s holds %q (%v), want %q", aside, kept, err, want)
+		}
+	}
+}
+
+func TestAddedTimesRecordsNewHashesAndKeepsKnownOnes(t *testing.T) {
+	s, file := tempStore(t)
+	hashB := strings.Repeat("B", 40)
+	if got := s.AddedTimes([]string{hashA, hashB}, 100); !reflect.DeepEqual(got, []int64{100, 100}) {
+		t.Fatalf("first sighting %v", got)
+	}
+	if got := s.AddedTimes([]string{hashB, hashA, ""}, 200); !reflect.DeepEqual(got, []int64{100, 100, 0}) {
+		t.Fatalf("second sighting %v", got)
+	}
+	mustFlush(t, s)
+	_ = os.Remove(file)
+	// Nothing new: the same listing again must not dirty the store.
+	s.AddedTimes([]string{hashA, hashB}, 300)
+	mustFlush(t, s)
+	if exists(t, file) {
+		t.Fatal("an unchanged listing rewrote the state file")
+	}
+	if _, recorded := s.data.AddedAt[""]; recorded {
+		t.Fatal("an empty hash was recorded")
+	}
+}
+
+func TestAWriteIsSyncedIntoPlaceAndLeavesNoTempFile(t *testing.T) {
+	s, file := tempStore(t)
+	s.SetLogScopes([]string{"debug"})
+	mustFlush(t, s)
+	if exists(t, file+".tmp") {
+		t.Fatal("the temp file was left behind")
+	}
+	info, err := os.Stat(file)
+	if err != nil || info.Mode().Perm()&0o600 != 0o600 {
+		t.Fatalf("mode %v %v", info.Mode(), err)
+	}
+	// A failed write keeps the state dirty and leaves nothing half-written.
+	blocked := filepath.Join(t.TempDir(), "file-not-dir")
+	if err := os.WriteFile(blocked, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	broken := Open(filepath.Join(blocked, "state.json"))
+	t.Cleanup(func() { stopTimer(broken) })
+	broken.SetLogScopes([]string{"debug"})
+	if err := broken.Flush(); err == nil {
+		t.Fatal("a write under a file succeeded")
+	}
+	broken.mu.Lock()
+	dirty := broken.dirty
+	broken.mu.Unlock()
+	if !dirty {
+		t.Fatal("a failed write forgot the unsaved change")
 	}
 }
 

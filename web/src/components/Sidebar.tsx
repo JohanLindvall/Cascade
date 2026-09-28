@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { STATUS_FILTERS, countByStatus, type Filter, type StatusFilter } from '../filter';
 import { bytes, rate } from '../format';
 import type { GlobalStatus, Torrent } from '../types';
@@ -45,6 +45,32 @@ function tally(keys: Iterable<string>, order: (a: [string, number], b: [string, 
   return [...counts.entries()].sort(order);
 }
 
+/** One filter or tool: an icon, a label, and a count when it filters. */
+function SideItem({
+  icon,
+  label,
+  count,
+  active,
+  title,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  count?: number;
+  /** A filter's state; a tool leaves it unset and is not a toggle. */
+  active?: boolean;
+  title?: string;
+  onClick: () => void;
+}) {
+  return (
+    <button className={active ? 'side-item active' : 'side-item'} aria-pressed={active} onClick={onClick} title={title}>
+      {icon}
+      <span className="label">{label}</span>
+      {count !== undefined && <span className="count">{count}</span>}
+    </button>
+  );
+}
+
 export function Sidebar({
   className = '',
   torrents,
@@ -88,16 +114,14 @@ export function Sidebar({
         {STATUS_FILTERS.map((value) => {
           const { label, color } = STATUS_LOOK[value];
           return (
-            <button
+            <SideItem
               key={value}
-              className={`side-item ${isActive('status', value) ? 'active' : ''}`}
-              aria-pressed={isActive('status', value)}
+              icon={color ? <span className="side-dot" style={{ background: color }} /> : <IconList size={14} />}
+              label={label}
+              count={counts[value]}
+              active={isActive('status', value)}
               onClick={() => onFilter({ kind: 'status', value })}
-            >
-              {color ? <span className="side-dot" style={{ background: color }} /> : <IconList size={14} />}
-              <span className="label">{label}</span>
-              <span className="count">{counts[value]}</span>
-            </button>
+            />
           );
         })}
       </div>
@@ -106,16 +130,14 @@ export function Sidebar({
         <div className="side-group">
           <h4>Labels</h4>
           {labels.map(([label, count]) => (
-            <button
+            <SideItem
               key={label}
-              className={`side-item ${isActive('label', label) ? 'active' : ''}`}
-              aria-pressed={isActive('label', label)}
+              icon={<IconTag size={14} />}
+              label={label}
+              count={count}
+              active={isActive('label', label)}
               onClick={() => onFilter({ kind: 'label', value: label })}
-            >
-              <IconTag size={14} />
-              <span className="label">{label}</span>
-              <span className="count">{count}</span>
-            </button>
+            />
           ))}
         </div>
       )}
@@ -124,17 +146,15 @@ export function Sidebar({
         <div className="side-group">
           <h4>Trackers</h4>
           {trackers.slice(0, MAX_TRACKER_ROWS).map(([host, count]) => (
-            <button
+            <SideItem
               key={host}
-              className={`side-item ${isActive('tracker', host) ? 'active' : ''}`}
-              aria-pressed={isActive('tracker', host)}
-              onClick={() => onFilter({ kind: 'tracker', value: host })}
+              icon={<IconGlobe size={14} />}
+              label={host}
+              count={count}
+              active={isActive('tracker', host)}
               title={host}
-            >
-              <IconGlobe size={14} />
-              <span className="label">{host}</span>
-              <span className="count">{count}</span>
-            </button>
+              onClick={() => onFilter({ kind: 'tracker', value: host })}
+            />
           ))}
           {trackers.length > MAX_TRACKER_ROWS && (
             <div className="side-more">…and {trackers.length - MAX_TRACKER_ROWS} more</div>
@@ -146,25 +166,13 @@ export function Sidebar({
         <div className="side-group">
           <h4>Tools</h4>
           {showProgress && (
-            <button className="side-item" onClick={() => onTool('progress')}>
-              <IconTrophy size={14} />
-              <span className="label">Progress &amp; badges</span>
-            </button>
+            <SideItem icon={<IconTrophy size={14} />} label="Progress & badges" onClick={() => onTool('progress')} />
           )}
-          <button className="side-item" onClick={() => onTool('throttles')}>
-            <IconGauge size={14} />
-            <span className="label">Throttle groups</span>
-          </button>
+          <SideItem icon={<IconGauge size={14} />} label="Throttle groups" onClick={() => onTool('throttles')} />
           {showConsole && (
-            <button className="side-item" onClick={() => onTool('console')}>
-              <IconTerminal size={14} />
-              <span className="label">API console</span>
-            </button>
+            <SideItem icon={<IconTerminal size={14} />} label="API console" onClick={() => onTool('console')} />
           )}
-          <button className="side-item" onClick={() => onTool('settings')}>
-            <IconSettings size={14} />
-            <span className="label">rtorrent settings</span>
-          </button>
+          <SideItem icon={<IconSettings size={14} />} label="rtorrent settings" onClick={() => onTool('settings')} />
         </div>
       )}
 

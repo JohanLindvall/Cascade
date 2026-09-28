@@ -49,7 +49,6 @@ type Config struct {
 }
 
 var (
-	truthy   = regexp.MustCompile(`(?i)^(1|true|yes|on)$`)
 	basePath = regexp.MustCompile(`^/(?:[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*)$`)
 )
 
@@ -126,13 +125,22 @@ func Load(getenv func(string) string) (cfg Config, err error) {
 		}
 		return int64(value)
 	}
-	// An option with no documented default reads as false rather than true,
-	// so a new flag cannot arrive switched on by accident.
+	// The usual spellings of either answer, and a start refused on anything
+	// else: CASCADE_ALLOW_RAW_RPC=ture must not quietly mean off. An option
+	// with no documented default reads as false, so a new flag cannot arrive
+	// switched on by accident.
 	flag := func(name string) bool {
-		if value, ok := raw(name); ok {
-			return truthy.MatchString(value)
+		value, ok := raw(name)
+		if !ok {
+			if value = documented(name); value == "" {
+				return false
+			}
 		}
-		return truthy.MatchString(documented(name))
+		on, err := validate.Bool(value, name)
+		if err != nil {
+			fail(fmt.Errorf("%s must be one of 1/true/yes/on or 0/false/no/off, not %q", name, value))
+		}
+		return on
 	}
 
 	cfg.DownloadDir = str("RT_DOWNLOAD_DIR")

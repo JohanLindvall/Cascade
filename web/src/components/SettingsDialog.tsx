@@ -5,7 +5,10 @@ import { useMounted } from '../hooks';
 import { redactSecrets } from '../redact';
 import type { BackendSummary, Settings } from '../types';
 import { IconRefresh } from './icons';
-import { Field, Modal, ParsedInput, Switch, useToast } from './ui';
+import { Field, ParsedInput, Switch } from './form';
+import { Modal } from './modal';
+import { useToast } from './toast';
+import { KvGrid } from './ui';
 
 interface SettingsDialogProps {
   onClose: () => void;
@@ -435,38 +438,17 @@ export function SettingsDialog({
         {backend && (
           <div className="section">
             <h3>Backend</h3>
-            <div className="kv-grid">
-              <div className="kv">
-                <span>Client</span>
-                <b>{backend.clientVersion}</b>
-              </div>
-              <div className="kv">
-                <span>libtorrent</span>
-                <b>{backend.libraryVersion}</b>
-              </div>
-              <div className="kv">
-                <span>Flavor</span>
-                <b>{backend.flavor}</b>
-              </div>
-              <div className="kv">
-                <span>API version</span>
-                <b>{backend.apiVersion}</b>
-              </div>
-              {backend.rpcFacility && (
-                <div className="kv">
-                  <span>RPC facility</span>
-                  <b>{backend.rpcFacility}</b>
-                </div>
-              )}
-              <div className="kv">
-                <span>SCGI endpoint</span>
-                <b>{backend.endpoint}</b>
-              </div>
-              <div className="kv">
-                <span>Commands exposed</span>
-                <b>{backend.methodCount}</b>
-              </div>
-            </div>
+            <KvGrid
+              rows={[
+                ['Client', backend.clientVersion],
+                ['libtorrent', backend.libraryVersion],
+                ['Flavor', backend.flavor],
+                ['API version', backend.apiVersion],
+                ...(backend.rpcFacility ? [['RPC facility', backend.rpcFacility] as [string, string]] : []),
+                ['SCGI endpoint', backend.endpoint],
+                ['Commands exposed', String(backend.methodCount)],
+              ]}
+            />
           </div>
         )}
       </fieldset>

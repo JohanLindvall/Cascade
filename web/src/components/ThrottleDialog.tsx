@@ -5,7 +5,9 @@ import { useMounted, usePolling } from '../hooks';
 import type { BackendSummary, ThrottleGroup } from '../types';
 import { useDialogs } from './dialogs';
 import { IconPlus, IconTrash } from './icons';
-import { Field, Modal, ParsedInput, useToast } from './ui';
+import { Field, ParsedInput } from './form';
+import { Modal } from './modal';
+import { useToast } from './toast';
 
 /** The server's rule for a group name (saveThrottle in service.ts), checked here first. */
 const NAME_RE = /^[A-Za-z0-9_.-]{1,32}$/;
@@ -209,7 +211,6 @@ export function ThrottleDialog({
                     placeholder="unlimited"
                     aria-label={`${group.name} ${which === 'down' ? 'download' : 'upload'} limit`}
                     parse={parseRate}
-                    onValue={() => {}}
                     onBlur={(event) => void update(group, which, event.target.value)}
                   />
                 </td>

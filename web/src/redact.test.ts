@@ -73,3 +73,15 @@ test('text without a URL, and URLs without secrets, come back unchanged', () => 
     assert.equal(redactSecrets(text), text, text);
   }
 });
+
+test('punctuation around a URL survives the mask', () => {
+  assert.equal(
+    redactSecrets('Tracker: [Could not connect to tracker: http://t.example/announce.php?passkey=865daba582d49260a3]'),
+    'Tracker: [Could not connect to tracker: http://t.example/announce.php?passkey=•••]',
+  );
+  assert.equal(
+    redactSecrets('see (https://t.example/0123456789abcdef0123/announce).'),
+    'see (https://t.example/•••/announce).',
+  );
+  assert.equal(redactSecrets('ipv6 http://[::1]:6969/announce'), 'ipv6 http://[::1]:6969/announce');
+});

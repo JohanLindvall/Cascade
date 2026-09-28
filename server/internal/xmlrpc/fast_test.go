@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"unsafe"
 )
 
 func document(inner string) string {
@@ -94,6 +95,16 @@ func TestTheFastPathReadsWhatThePermissiveParserReads(t *testing.T) {
 			t.Errorf("took an irregular document:\n%s", xml)
 		}
 	}
+	// Where the declaration ends decides what reads as tags after it, so a
+	// '>' or a '<' inside one must not end it early for either parser.
+	for _, xml := range []string{
+		`<?xml><0?><methodResponse><params><param><value></value></param></params></methodResponse>`,
+		`<?xml version="1.0" x="><params><param><value>evil</value></param></params>"?>` +
+			`<methodResponse><params><param><value>hi</value></param></params></methodResponse>`,
+		`<?xml-stylesheet href="a><b"?><methodResponse><params><param><value>x</value></param></params></methodResponse>`,
+	} {
+		agree(t, xml)
+	}
 }
 
 // random builds a value of the kinds rtorrent sends, nested a few levels.
@@ -145,6 +156,25 @@ func TestTheFastPathTakesEverythingTheEncoderWrites(t *testing.T) {
 	fault := EncodeFault(-506, "Method 'x' not defined")
 	if agree(t, string(fault)) {
 		t.Fatalf("declined a fault:\n%s", fault)
+	}
+}
+
+func TestDecodedTextDoesNotHoldTheDocument(t *testing.T) {
+	doc := document(`<value><struct><member><name>hash</name><value><string>AAAA</string></value></member>` +
+		`<member><name>name</name><value>untyped</value></member></struct></value>`)
+	value, err := decodeFast(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := uintptr(unsafe.Pointer(unsafe.StringData(doc)))
+	inside := func(text string) bool {
+		at := uintptr(unsafe.Pointer(unsafe.StringData(text)))
+		return at >= base && at < base+uintptr(len(doc))
+	}
+	for key, item := range value.(map[string]any) {
+		if inside(key) || inside(item.(string)) {
+			t.Errorf("%q: %q is a window onto the document, which it would keep alive", key, item)
+		}
 	}
 }
 

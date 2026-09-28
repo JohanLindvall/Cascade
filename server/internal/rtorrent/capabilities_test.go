@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -196,19 +197,33 @@ func TestEnsureProbesOnceAndSharesTheProbeInFlight(t *testing.T) {
 	}
 }
 
-func TestACallerThatGivesUpDoesNotSinkTheSharedProbe(t *testing.T) {
-	release := make(chan struct{})
-	client := backend([]string{"d.multicall2"}, nil)
+// probeHeldOpen scripts a system.listMethods that reports the probe under way
+// on started and answers only once release is closed, so a test orders itself
+// against the probe by what it has done rather than by how long it has had.
+func probeHeldOpen(methods ...any) (client *rtorrenttest.FakeClient, started <-chan struct{}, release chan struct{}) {
+	running := make(chan struct{}, 1)
+	release = make(chan struct{})
+	client = backend([]string{"d.multicall2"}, nil)
 	client.Answer("system.listMethods", func([]any) (any, error) {
+		select {
+		case running <- struct{}{}:
+		default:
+		}
 		<-release
-		return []any{"d.multicall2"}, nil
+		return methods, nil
 	})
+	return client, running, release
+}
+
+func TestACallerThatGivesUpDoesNotSinkTheSharedProbe(t *testing.T) {
+	client, started, release := probeHeldOpen("d.multicall2")
 	caps := rtorrent.NewCapabilities(client, fields)
 	impatient, cancel := context.WithCancel(context.Background())
 	first := make(chan error, 1)
 	go func() { first <- caps.Ensure(impatient) }()
 	second := make(chan error, 1)
-	time.Sleep(10 * time.Millisecond)
+	// The impatient caller is the one that started the probe.
+	<-started
 	go func() { second <- caps.Ensure(context.Background()) }()
 	time.Sleep(10 * time.Millisecond)
 	cancel()
@@ -219,6 +234,63 @@ func TestACallerThatGivesUpDoesNotSinkTheSharedProbe(t *testing.T) {
 	if err := <-second; err != nil || !caps.Ready() {
 		t.Fatalf("the patient caller got %v", err)
 	}
+}
+
+func TestAnInvalidateDuringAProbeIsNotUndoneByIt(t *testing.T) {
+	client, started, release := probeHeldOpen("d.multicall2", "log.add_output")
+	caps := rtorrent.NewCapabilities(client, fields)
+	done := make(chan error, 1)
+	go func() { done <- caps.Ensure(context.Background()) }()
+	// Once it asks for the command table the probe has its generation; an
+	// Invalidate any earlier would simply precede it.
+	<-started
+	// The connection dropped while the probe was out: what it brings back
+	// predates the drop.
+	caps.Invalidate()
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if caps.Ready() {
+		t.Fatal("a probe from before the invalidate marked the backend ready")
+	}
+	if !caps.Supports("logScopes") {
+		t.Fatal("its answers were not kept for the callers that waited on it")
+	}
+	ensure(t, caps)
+	if n := len(client.CallsTo("system.listMethods")); n != 2 || !caps.Ready() {
+		t.Fatalf("%d probes, ready %v", n, caps.Ready())
+	}
+}
+
+func TestAProbeThatFailsPartWayKeepsTheLastGoodAnswers(t *testing.T) {
+	client := &flakyMulticall{FakeClient: backend([]string{"d.multicall2", "log.add_output"}, nil)}
+	caps := rtorrent.NewCapabilities(client, fields)
+	ensure(t, caps)
+	caps.Invalidate()
+	// The command table answers, then the version multicall does not.
+	client.Answer("system.listMethods", []any{"d.multicall"})
+	client.broken.Store(true)
+	if err := caps.Ensure(context.Background()); err == nil {
+		t.Fatal("the probe did not fail")
+	}
+	if caps.Has("d.multicall") || !caps.Has("d.multicall2") ||
+		caps.Dialect().DownloadMulticall != "d.multicall2" || !caps.Supports("logScopes") {
+		t.Fatal("a failed probe left half its answers behind")
+	}
+}
+
+// flakyMulticall is a backend whose multicalls can be made to fail.
+type flakyMulticall struct {
+	*rtorrenttest.FakeClient
+	broken atomic.Bool
+}
+
+func (f *flakyMulticall) MulticallSettled(ctx context.Context, calls []rtorrent.Call) ([]rtorrent.Result, error) {
+	if f.broken.Load() {
+		return nil, errors.New("connection reset")
+	}
+	return f.FakeClient.MulticallSettled(ctx, calls)
 }
 
 func TestMethodNamesIsSortedForTheConsole(t *testing.T) {

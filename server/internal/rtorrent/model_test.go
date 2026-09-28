@@ -209,11 +209,3 @@ func TestFieldsTheBackendLacksMapToZeroAndEmpty(t *testing.T) {
 		t.Fatalf("size %d", got)
 	}
 }
-
-func TestJSRoundRoundsHalfUp(t *testing.T) {
-	for in, want := range map[float64]float64{2.5: 3, 2.49: 2, -2.5: -2, -2.6: -3, 0.49999999999999994: 0} {
-		if got := jsRound(in); got != want {
-			t.Errorf("jsRound(%v) = %v, want %v", in, got, want)
-		}
-	}
-}

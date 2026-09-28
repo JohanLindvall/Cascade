@@ -6,12 +6,12 @@ package rtorrent
 import (
 	"math"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/JohanLindvall/Cascade/server/internal/contracts"
+	"github.com/JohanLindvall/Cascade/server/internal/jsnum"
 )
 
 // TorrentFields are asked for in the listing multicall. Only fields something
@@ -150,16 +150,15 @@ func (r Row) text(key string) string {
 	}
 }
 
-var trackerMessage = regexp.MustCompile(`(?i)^Tracker:`)
-
 // isRealError tells a torrent that is broken from one whose tracker is
 // merely complaining: rtorrent puts transient announce failures in the
-// message too.
+// message too, prefixed "Tracker:" in any case.
 func isRealError(message string, hashingFailed int64) bool {
 	if hashingFailed != 0 {
 		return true
 	}
-	return message != "" && !trackerMessage.MatchString(message)
+	const tracker = "Tracker:"
+	return message != "" && !(len(message) >= len(tracker) && strings.EqualFold(message[:len(tracker)], tracker))
 }
 
 // decodeLabel undoes the URL encoding labels are stored under in d.custom1
@@ -236,15 +235,6 @@ func escapedByte(value string, at int) (byte, bool) {
 	return byte(b), err == nil
 }
 
-// jsRound rounds half up, as the browser's Math.round does.
-func jsRound(x float64) float64 {
-	floor := math.Floor(x)
-	if x-floor >= 0.5 {
-		return floor + 1
-	}
-	return floor
-}
-
 // MapTorrent turns a listing row into a Torrent. addedAt is when Cascade
 // first saw it, which rtorrent does not keep.
 func MapTorrent(row Row, addedAt int64) contracts.Torrent {
@@ -277,7 +267,7 @@ func MapTorrent(row Row, addedAt int64) contracts.Torrent {
 	var eta *int64
 	switch {
 	case !complete && downRate > 0 && left > 0:
-		seconds := int64(jsRound(float64(left) / float64(downRate)))
+		seconds := int64(jsnum.Round(float64(left) / float64(downRate)))
 		eta = &seconds
 	case complete:
 		zero := int64(0)

@@ -14,7 +14,8 @@ import {
   IconUsers,
   type IconProps,
 } from './icons';
-import { Modal } from './ui';
+import { Modal } from './modal';
+import { ProgressBar } from './ui';
 
 const ICONS: Record<string, ComponentType<IconProps>> = {
   trophy: IconTrophy,
@@ -78,9 +79,7 @@ export function AchievementsDialog({
             {game.title}
             <span className="level-xp num">{game.xp.toLocaleString()} XP</span>
           </div>
-          <div className="bar level-bar">
-            <i style={{ width: `${Math.min(100, game.progress * 100)}%` }} />
-          </div>
+          <ProgressBar className="level-bar" value={game.progress} label={`Progress to level ${game.level + 1}`} />
           <div className="level-next num">
             {(game.nextLevelXp - game.xp).toLocaleString()} XP to level {game.level + 1}
           </div>
@@ -112,7 +111,7 @@ export function AchievementsDialog({
         <div className="badge-grid">
           {sorted.map((item) => {
             const done = item.unlockedAt !== null;
-            const pct = Math.min(1, item.target > 0 ? item.current / item.target : 0);
+            const pct = item.target > 0 ? item.current / item.target : 0;
             return (
               <div key={item.id} className={`badge ${item.tier} ${done ? 'earned' : 'locked'}`}>
                 <div className="badge-medal">
@@ -125,16 +124,7 @@ export function AchievementsDialog({
                     <div className="badge-meta num">Earned {timestamp(item.unlockedAt as number)}</div>
                   ) : (
                     <>
-                      <div
-                        className="bar badge-bar"
-                        role="progressbar"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={Math.round(pct * 100)}
-                        aria-label={`Progress towards ${item.title}`}
-                      >
-                        <i style={{ width: `${pct * 100}%` }} />
-                      </div>
+                      <ProgressBar className="badge-bar" value={pct} label={`Progress towards ${item.title}`} />
                       <div className="badge-meta num">{progressText(item.unit, item.current, item.target)}</div>
                     </>
                   )}

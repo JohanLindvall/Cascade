@@ -7,20 +7,13 @@ package httpapi
 import (
 	"context"
 	"fmt"
-	"mime"
 	"net/http"
-	"os"
-	"path"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/JohanLindvall/Cascade/server/internal/config"
-	"github.com/JohanLindvall/Cascade/server/internal/httperr"
 	"github.com/JohanLindvall/Cascade/server/internal/store"
 	"github.com/JohanLindvall/Cascade/server/internal/stream"
-	"github.com/JohanLindvall/Cascade/server/internal/validate"
-	"github.com/JohanLindvall/Cascade/server/internal/xmlrpc"
 )
 
 // Server is the whole HTTP side; it is an http.Handler.
@@ -62,13 +55,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-func (s *Server) serve(out http.ResponseWriter, r *http.Request) {
+func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	readOnly := r.Method == http.MethodGet || r.Method == http.MethodHead
 	// Health stays outside the base path and outside Basic auth, so container
 	// healthchecks and orchestrator probes work with WEB_USER/WEB_PASS set.
 	// It reveals nothing but liveness.
-	if readOnly && r.URL.Path == "/healthz" {
-		s.health(out, r)
+	if readOnly && strings.EqualFold(r.URL.Path, "/healthz") {
+		s.health(w, r)
 		return
 	}
 	if base := s.cfg.BasePath; base != "/" {
@@ -79,17 +72,17 @@ func (s *Server) serve(out http.ResponseWriter, r *http.Request) {
 			if r.URL.RawQuery != "" {
 				target += "?" + r.URL.RawQuery
 			}
-			http.Redirect(out, r, target, http.StatusPermanentRedirect)
+			http.Redirect(w, r, target, http.StatusPermanentRedirect)
 			return
 		}
 		rest, ok := strings.CutPrefix(r.URL.Path, base)
 		if !ok || !strings.HasPrefix(rest, "/") {
-			writeText(out, http.StatusNotFound, fmt.Sprintf("Cannot %s %s", r.Method, r.URL.Path))
+			writeText(w, http.StatusNotFound, fmt.Sprintf("Cannot %s %s", r.Method, r.URL.Path))
 			return
 		}
 		r = withPath(r, rest, base)
 	}
-	s.route(out, r)
+	s.route(w, r)
 }
 
 // withPath is the request as seen from under the base path.
@@ -106,35 +99,39 @@ func withPath(r *http.Request, rest, base string) *http.Request {
 }
 
 func (s *Server) route(w http.ResponseWriter, r *http.Request) {
-	p := r.URL.Path
+	// The server's own paths match without regard to case, as the routes
+	// under them do; the web UI's files are the filesystem's to match.
+	p := strings.ToLower(r.URL.Path)
 	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && p == "/healthz" {
 		s.health(w, r)
 		return
 	}
 	// Before auth, so a hostile page learns nothing — not even whether a
 	// password is set. See crosssite.go for what is refused and why.
-	if isCrossSiteRequest(requestFacts{
-		method:    r.Method,
-		origin:    r.Header.Get("Origin"),
-		fetchSite: r.Header.Get("Sec-Fetch-Site"),
-		host:      requestHost(r),
-		protocol:  requestProtocol(r),
-	}) {
+	if isCrossSiteRequest(factsOf(r)) {
 		writeJSON(w, r, http.StatusForbidden, map[string]string{"error": "cross-site request refused"})
 		return
 	}
 	if !basicAuth(w, r, s.cfg.User, s.cfg.Password) {
 		return
 	}
-	switch r.Method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-	default:
-		// Whatever this changed shows on every open page at once, rather
-		// than at the stream's next tick.
-		defer s.hub.Wake()
+	if !safeMethod(r.Method) {
+		// Whatever a change did shows on every open page at once, rather than
+		// at the stream's next tick — a failed one too: a torrent erased
+		// before its data could not be deleted, or stopped before its new
+		// directory faulted, has changed all the same. Only a request turned
+		// away as it was sent certainly changed nothing, and costs rtorrent
+		// no read.
+		recorder := &statusRecorder{ResponseWriter: w}
+		defer func() {
+			if !refusedAsSent(recorder.status) {
+				s.hub.Wake()
+			}
+		}()
+		w = recorder
 	}
 	switch {
-	case p == "/RPC2" && r.Method == http.MethodPost:
+	case p == "/rpc2" && r.Method == http.MethodPost:
 		s.rpcProxy(w, r)
 	case p == "/api" || strings.HasPrefix(p, "/api/"):
 		s.mux.ServeHTTP(w, r)
@@ -143,11 +140,59 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// refusedAsSent is an answer that turns a request away for what it is —
+// malformed, naming nothing there is, too large, in a form not taken — which
+// the API and the service both decide before asking rtorrent to change
+// anything. A 403 is not one: a data delete is refused with it after the
+// torrent was erased. Neither is any 5xx, which can follow a change half
+// made.
+func refusedAsSent(status int) bool {
+	switch status {
+	case http.StatusBadRequest, http.StatusNotFound, http.StatusRequestEntityTooLarge, http.StatusUnsupportedMediaType:
+		return true
+	}
+	return false
+}
+
+// statusRecorder remembers the status a handler answered with.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// Unwrap lets http.ResponseController reach the connection underneath.
+func (w *statusRecorder) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, struct {
 		OK       bool `json:"ok"`
 		RTorrent bool `json:"rtorrent"`
 	}{true, s.svc.Ready()})
+}
+
+// factsOf is what the cross-site rule looks at in a request.
+func factsOf(r *http.Request) requestFacts {
+	return requestFacts{
+		method:    r.Method,
+		origin:    r.Header.Get("Origin"),
+		fetchSite: r.Header.Get("Sec-Fetch-Site"),
+		host:      requestHost(r),
+		protocol:  requestProtocol(r),
+	}
 }
 
 // requestHost is the host the browser addressed: X-Forwarded-Host behind a
@@ -171,138 +216,4 @@ func requestProtocol(r *http.Request) string {
 		return "https"
 	}
 	return "http"
-}
-
-// rpcProxy is the raw XML-RPC passthrough, so external clients (the *arr
-// apps, scripts) can drive rtorrent over HTTP. A JSON body of
-// {"method": ..., "params": [...]} is accepted too.
-func (s *Server) rpcProxy(w http.ResponseWriter, r *http.Request) {
-	var payload []byte
-	var body any
-	var err error
-	switch media, _ := mediaType(r); media {
-	case "text/xml", "application/xml", "application/octet-stream":
-		payload, err = readBody(r, rpcRawLimit)
-	case "application/json":
-		body, _, err = jsonBody(r, rpcJSONLimit)
-	}
-	if err == nil && !s.cfg.AllowRawRPC {
-		err = httperr.New(http.StatusForbidden, "raw RPC access is disabled")
-	}
-	if err == nil && len(payload) == 0 {
-		record, _ := body.(map[string]any)
-		if _, named := record["method"].(string); !named {
-			err = httperr.New(http.StatusBadRequest, "expected an XML-RPC methodCall body")
-		} else {
-			var method string
-			var params []any
-			method, err = validate.String(record["method"], "method", false)
-			if err == nil {
-				value, present := record["params"]
-				params, err = rpcParams(value, present)
-			}
-			if err == nil {
-				if payload, err = xmlrpc.EncodeCall(method, params); err != nil {
-					err = httperr.New(http.StatusBadRequest, err.Error())
-				}
-			}
-		}
-	}
-	var response []byte
-	if err == nil {
-		response, err = s.svc.Client().Raw(r.Context(), payload)
-	}
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
-	w.Header().Set("Content-Length", fmt.Sprint(len(response)))
-	_, _ = w.Write(response)
-}
-
-func init() {
-	// The image has no /etc/mime.types; name what the UI is built from
-	// rather than leave a script to content sniffing, which nosniff forbids.
-	for ext, kind := range map[string]string{
-		".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-		".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
-		".json": "application/json", ".map": "application/json", ".txt": "text/plain; charset=utf-8",
-		".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp", ".ico": "image/x-icon",
-		".woff2": "font/woff2", ".woff": "font/woff", ".webmanifest": "application/manifest+json",
-		".wasm": "application/wasm",
-	} {
-		_ = mime.AddExtensionType(ext, kind)
-	}
-}
-
-// static serves the built SPA, with a history fallback for client-side
-// routing.
-//
-// Vite writes content-hashed files under assets/, so those are immutable: a
-// rebuild changes their names, never their bytes. Everything else — above
-// all the shell that names those hashes — must revalidate on every load, or
-// a browser that cached yesterday's index.html asks for hashed files that no
-// longer exist after a redeploy and shows a blank page until a hard reload.
-// no-cache still gives 304s (the files carry real validators), so it costs a
-// conditional request, not a re-download.
-func (s *Server) static(w http.ResponseWriter, r *http.Request) {
-	readOnly := r.Method == http.MethodGet || r.Method == http.MethodHead
-	p := r.URL.Path
-	if readOnly {
-		if file, info := s.webFile(p); file != "" {
-			cache := "no-cache"
-			if strings.HasPrefix(p, "/assets/") {
-				cache = "public, max-age=31536000, immutable"
-			}
-			serveFile(w, r, file, info, cache)
-			return
-		}
-	}
-	if p == "/assets" || strings.HasPrefix(p, "/assets/") {
-		writeText(w, http.StatusNotFound, "asset not found")
-		return
-	}
-	if !readOnly {
-		writeText(w, http.StatusNotFound, fmt.Sprintf("Cannot %s %s", r.Method, p))
-		return
-	}
-	index := filepath.Join(s.cfg.WebRoot, "index.html")
-	info, err := os.Stat(index)
-	if err != nil || !info.Mode().IsRegular() {
-		writeText(w, http.StatusInternalServerError, "web assets not found at "+s.cfg.WebRoot)
-		return
-	}
-	serveFile(w, r, index, info, "no-cache")
-}
-
-// webFile maps a URL path to a regular file under the web root, or "" —
-// never outside it, and never a dotfile.
-func (s *Server) webFile(urlPath string) (string, os.FileInfo) {
-	clean := path.Clean("/" + urlPath)
-	for _, part := range strings.Split(clean, "/") {
-		if strings.HasPrefix(part, ".") {
-			return "", nil
-		}
-	}
-	file := filepath.Join(s.cfg.WebRoot, filepath.FromSlash(clean))
-	info, err := os.Stat(file)
-	if err != nil || !info.Mode().IsRegular() {
-		return "", nil
-	}
-	return file, info
-}
-
-func serveFile(w http.ResponseWriter, r *http.Request, file string, info os.FileInfo, cache string) {
-	f, err := os.Open(file)
-	if err != nil {
-		writeError(w, r, err)
-		return
-	}
-	defer f.Close()
-	h := w.Header()
-	h.Set("Cache-Control", cache)
-	// The validator Express's static files had: size and modification time.
-	h.Set("ETag", fmt.Sprintf(`W/"%x-%x"`, info.Size(), info.ModTime().UnixMilli()))
-	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }

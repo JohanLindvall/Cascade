@@ -1,6 +1,6 @@
 import { TORRENT_PRIORITIES } from '../format';
 import type { Policy, ThrottleGroup } from '../types';
-import { ContextMenu, MenuItem } from './ui';
+import { ContextMenu, MenuGroup, MenuItem } from './menu';
 import {
   IconGauge,
   IconLink,
@@ -32,8 +32,10 @@ interface TorrentMenuProps {
   throttles: ThrottleGroup[];
   /** The backend's feature map; a missing entry counts as supported. */
   supports: Record<string, boolean> | undefined;
-  /** What the server allows; unknown until the first poll, and permissive until then. */
+  /** What the server allows; unknown until the first state, and permissive until then. */
   policy: Policy | undefined;
+  /** The priority and throttle group every target shares, marked as current; unset when they differ. */
+  current: { priority?: number; throttle?: string };
   actions: MenuActions;
   onClose: () => void;
 }
@@ -46,7 +48,7 @@ const UNSUPPORTED = 'Not supported by this rtorrent build';
  * is disabled with the reason, and one the server has switched off is not
  * shown at all — both used to be offered and then refused.
  */
-export function TorrentMenu({ x, y, targets, throttles, supports, policy, actions, onClose }: TorrentMenuProps) {
+export function TorrentMenu({ x, y, targets, throttles, supports, policy, current, actions, onClose }: TorrentMenuProps) {
   const has = (feature: string) => supports?.[feature] !== false;
   // Every item closes the menu first, then acts — a stale menu over a
   // confirmation dialog would be the alternative.
@@ -80,27 +82,36 @@ export function TorrentMenu({ x, y, targets, throttles, supports, policy, action
         onClick={run('announce')}
       />
       <hr />
-      <div className="heading">Priority</div>
-      {TORRENT_PRIORITIES.map(({ value, label }) => (
-        <MenuItem key={value} label={label} onClick={pick(() => actions.patch({ priority: value }, targets))} />
-      ))}
+      <MenuGroup heading="Priority">
+        {TORRENT_PRIORITIES.map(({ value, label }) => (
+          <MenuItem
+            key={value}
+            label={label}
+            checked={current.priority === value}
+            onClick={pick(() => actions.patch({ priority: value }, targets))}
+          />
+        ))}
+      </MenuGroup>
       {has('perTorrentThrottle') && (
         <>
           <hr />
-          <div className="heading">Throttle group</div>
-          <MenuItem
-            icon={<IconGauge size={13} />}
-            label="Global (none)"
-            onClick={pick(() => actions.patch({ throttle: '' }, targets))}
-          />
-          {throttles.map((group) => (
+          <MenuGroup heading="Throttle group">
             <MenuItem
-              key={group.name}
               icon={<IconGauge size={13} />}
-              label={group.name}
-              onClick={pick(() => actions.patch({ throttle: group.name }, targets))}
+              label="Global (none)"
+              checked={current.throttle === ''}
+              onClick={pick(() => actions.patch({ throttle: '' }, targets))}
             />
-          ))}
+            {throttles.map((group) => (
+              <MenuItem
+                key={group.name}
+                icon={<IconGauge size={13} />}
+                label={group.name}
+                checked={current.throttle === group.name}
+                onClick={pick(() => actions.patch({ throttle: group.name }, targets))}
+              />
+            ))}
+          </MenuGroup>
         </>
       )}
       <hr />

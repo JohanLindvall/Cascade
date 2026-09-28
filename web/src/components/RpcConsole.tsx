@@ -2,7 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { redactSecrets } from '../redact';
 import { IconTerminal } from './icons';
-import { Field, Modal, useToast } from './ui';
+import { Field } from './form';
+import { Modal } from './modal';
+import { useToast } from './toast';
 
 /**
  * Direct access to every command rtorrent exposes — anything the typed UI does
@@ -124,18 +126,26 @@ export function RpcConsole({ onClose }: { onClose: () => void }) {
               className="input"
               value={method}
               onChange={(event) => setMethod(event.target.value)}
-              onKeyDown={(event) => event.key === 'Enter' && !busy && void run()}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) void run();
+              }}
             />
           </Field>
           <Field
             label="Parameters (JSON array)"
-            hint='Example: ["", "main", "d.name=", "d.down.rate="]'
+            hint='Example: ["", "main", "d.name=", "d.down.rate="] — Ctrl+Enter runs it'
           >
             <textarea
               className="textarea"
               rows={3}
               value={params}
               onChange={(event) => setParams(event.target.value)}
+              // Enter is a newline here, so running takes the modifier.
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey)) return;
+                event.preventDefault();
+                void run();
+              }}
             />
           </Field>
           <pre className={`console-output ${fault ? 'fault' : ''}`}>{output || '—'}</pre>
