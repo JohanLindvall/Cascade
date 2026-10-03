@@ -104,11 +104,13 @@ func TestBadAddsAreRefusedWithoutAskingRtorrent(t *testing.T) {
 	s := newService(t, down, nil)
 	data, _ := singleFile(t)
 	for name, err := range map[string]error{
-		"junk":             s.AddTorrentFile(ctx, []byte("junk"), contracts.LoadOptions{Start: true}),
-		"a line break":     s.AddTorrentFile(ctx, data, contracts.LoadOptions{Directory: "/downloads\nexecute.throw=rm"}),
-		"a URL line break": s.AddTorrentURL(ctx, "magnet:?xt=urn:btih:"+hash, contracts.LoadOptions{Directory: "a\rb"}),
-		"no link":          s.AddTorrentURL(ctx, "not a link", contracts.LoadOptions{}),
-		"no magnet hash":   s.AddTorrentURL(ctx, "magnet:?dn=x", contracts.LoadOptions{}),
+		"junk":                    s.AddTorrentFile(ctx, []byte("junk"), contracts.LoadOptions{Start: true}),
+		"a line break":            s.AddTorrentFile(ctx, data, contracts.LoadOptions{Directory: "/downloads\nexecute.throw=rm"}),
+		"a URL line break":        s.AddTorrentURL(ctx, "magnet:?xt=urn:btih:"+hash, contracts.LoadOptions{Directory: "a\rb"}),
+		"a directory command":     s.AddTorrentFile(ctx, data, contracts.LoadOptions{Directory: "$execute=/bin/true"}),
+		"a URL directory command": s.AddTorrentURL(ctx, "https://example.test/file.torrent", contracts.LoadOptions{Directory: "$execute=/bin/true"}),
+		"no link":                 s.AddTorrentURL(ctx, "not a link", contracts.LoadOptions{}),
+		"no magnet hash":          s.AddTorrentURL(ctx, "magnet:?dn=x", contracts.LoadOptions{}),
 	} {
 		if got := status(t, err); got != 400 {
 			t.Errorf("%s: %d", name, got)

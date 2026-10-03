@@ -104,6 +104,28 @@ func TestWithoutSystemPidLosingContactCountsAsARestart(t *testing.T) {
 	}
 }
 
+func TestARestartRefreshesCapabilitiesWithoutAConnectionFailure(t *testing.T) {
+	client := newSession(t, true)
+	s := stagedService(t, client)
+	s.tick(ctx)
+	before := len(client.CallsTo("system.listMethods"))
+	if s.caps.Supports("portRange") {
+		t.Fatal("the first backend unexpectedly supports portRange")
+	}
+	client.Answer("system.listMethods", rtorrenttest.MethodList("network.listen.port.range.set"))
+	if err := os.WriteFile(s.cfg.BootSettingsFile, []byte(`{"portRange":"50001-50001"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	client.pid.Store(200)
+	s.tick(ctx)
+	if len(client.CallsTo("system.listMethods")) != before+1 || !s.caps.Supports("portRange") {
+		t.Fatal("the new process kept the old capability table")
+	}
+	if len(client.CallsTo("network.listen.port.range.set")) != 1 {
+		t.Fatal("the new process's startup setting was silently skipped")
+	}
+}
+
 func TestAStepThatFailsIsTriedAgainOnTheNextTick(t *testing.T) {
 	client := newSession(t, true)
 	s := stagedService(t, client)

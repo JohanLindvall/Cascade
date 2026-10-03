@@ -352,11 +352,14 @@ func writeAtomic(file string, content []byte) (err error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp := file + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	// A fixed .tmp name can be a stale symlink and truncate an unrelated
+	// file. CreateTemp exclusively creates a fresh, private file beside the
+	// destination, so the rename still stays on the same filesystem.
+	f, err := os.CreateTemp(dir, "."+filepath.Base(file)+"-*.tmp")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	defer func() {
 		if err != nil {
 			_ = os.Remove(tmp)

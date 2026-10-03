@@ -50,6 +50,10 @@ type Service struct {
 	stateRead       flight[contracts.StateResponse]
 	torrentRead     flight[[]contracts.Torrent]
 	disk            diskCache
+	// Listings and erases must reach the store in the same order they reach
+	// rtorrent, or a delayed listing can credit an erased torrent twice.
+	// A channel lets the housekeeping abandon a queued read during Stop.
+	listingGate chan struct{}
 
 	now func() time.Time
 }
@@ -72,6 +76,7 @@ func New(cfg config.Config, st *store.Store, client rtorrent.Client) *Service {
 		}),
 		history:        []contracts.RateSample{},
 		attachedScopes: map[string]bool{},
+		listingGate:    make(chan struct{}, 1),
 		now:            time.Now,
 	}
 }

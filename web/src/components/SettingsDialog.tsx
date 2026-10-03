@@ -3,6 +3,7 @@ import { api } from '../api';
 import { bytes, formatRateInput, interval, parseRate, parseWholeNumber, rate } from '../format';
 import { useMounted } from '../hooks';
 import { redactSecrets } from '../redact';
+import { settingsPatch } from '../settings';
 import type { BackendSummary, Settings } from '../types';
 import { IconRefresh } from './icons';
 import { Field, ParsedInput, Switch } from './form';
@@ -99,12 +100,7 @@ export function SettingsDialog({
     if (poll !== undefined && poll !== statePollMs) onStatePollChange(poll);
     setBusy(true);
     try {
-      const patch: Settings = {};
-      for (const key of Object.keys(draft) as Array<keyof Settings>) {
-        if (settings && draft[key] !== settings[key]) {
-          (patch as Record<string, unknown>)[key] = draft[key];
-        }
-      }
+      const patch = settingsPatch(settings ?? {}, draft);
       if (Object.keys(patch).length === 0) {
         onClose();
         return;
@@ -259,7 +255,7 @@ export function SettingsDialog({
             {textField('portRange', 'Listening port range', {
               // Applying it over XML-RPC does not rebind a running rtorrent
               // (AGENTS.md quirk 6): saying so beats a field that looks applied.
-              hint: 'e.g. 50000-50000 — binds on the next container start',
+              hint: 'Live changes do not rebind or persist. Set RT_PORT_RANGE and restart the container.',
             })}
             {textField('bindAddress', 'Bind address', { hint: 'all connections' })}
             {textField('localAddress', 'Address reported to trackers')}

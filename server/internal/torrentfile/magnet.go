@@ -3,6 +3,8 @@ package torrentfile
 import (
 	"encoding/hex"
 	"strings"
+
+	"github.com/JohanLindvall/Cascade/server/internal/utf8text"
 )
 
 // MagnetInfoHash reads the info hash out of a magnet's xt=urn:btih:, hex or
@@ -81,7 +83,7 @@ func formDecode(text string) string {
 			out = append(out, c)
 		}
 	}
-	return decodeUTF8(out)
+	return utf8text.Decode(out)
 }
 
 // btih is the hash of an urn:btih: topic, matched case-insensitively and in

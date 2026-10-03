@@ -167,7 +167,7 @@ smoke: ## Build, boot, exercise the API, then tear down (requires Python 3)
 	  docker rm -v "$$name" >/dev/null 2>&1 || true; \
 	}; \
 	trap cleanup 0; trap 'exit 130' INT; trap 'exit 143' TERM; \
-	docker run -d --name "$$name" -p 127.0.0.1:18999:8080 -e RT_DHT=off $(REF) >/dev/null; \
+	docker run -d --name "$$name" --stop-timeout 60 -p 127.0.0.1:18999:8080 -e RT_DHT=off $(REF) >/dev/null; \
 	python3 docker/api-smoke.py http://127.0.0.1:18999 "$$name" || { docker logs "$$name"; exit 1; }
 
 ##@ Clean

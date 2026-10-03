@@ -81,8 +81,8 @@ func (s *Service) LogScopes() contracts.LogScopeState {
 //
 // Raising is live: log.add_output attaches a scope to the running log.
 // Lowering is not — rtorrent has no command to detach one — so a removed
-// scope keeps writing until rtorrent restarts, and is simply not put back
-// afterwards. The dialog says as much rather than pretending.
+// scope keeps writing until a restart. The container must restart to also
+// regenerate rtorrent.rc, which can carry the scope from an earlier boot.
 func (s *Service) SetLogScopes(ctx context.Context, requested []string) (contracts.LogScopeChange, error) {
 	ctx = detached(ctx)
 	// One change at a time: each reads what the last one stored.

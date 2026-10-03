@@ -16,6 +16,7 @@ import { FilesTab } from './detail/FilesTab';
 import { GeneralTab } from './detail/GeneralTab';
 import { PeersTab } from './detail/PeersTab';
 import { TrackersTab } from './detail/TrackersTab';
+import { trapTab, useFocusRegion } from './focus';
 import { IconClose, IconFile, IconGlobe, IconInfo, IconUsers } from './icons';
 import { useToast } from './toast';
 
@@ -40,6 +41,7 @@ interface TabData {
 }
 
 interface DetailPanelProps {
+  compact: boolean;
   torrent: Torrent;
   onClose: () => void;
   onHeightChange: (height: number) => void;
@@ -56,6 +58,7 @@ interface DetailPanelProps {
  * switching back to a tab shows its last rows while they refresh.
  */
 export function DetailPanel({
+  compact,
   torrent,
   onClose,
   onHeightChange,
@@ -63,6 +66,8 @@ export function DetailPanel({
   onRecheckRestart,
   supports,
 }: DetailPanelProps) {
+  const panel = useRef<HTMLElement>(null);
+  useFocusRegion(panel, compact);
   const [tab, setTab] = useState<Tab>('general');
   const [data, setData] = useState<TabData>({ hash: torrent.hash });
   const toast = useToast();
@@ -80,7 +85,8 @@ export function DetailPanel({
   const loadTab = useCallback(
     async (isCurrent: () => boolean) => {
       // The general tab shows the listing, which the stream already keeps current.
-      if (tab === 'general') return;
+      if (tab === 'general' || !alive.current || !isCurrent() ||
+          context.current.hash !== hash || context.current.tab !== tab) return;
       const id = ++requestId.current;
       const beforeEdit = revision.current;
       const relevant = () => alive.current && isCurrent() && id === requestId.current &&
@@ -106,10 +112,13 @@ export function DetailPanel({
   /** Apply a local edit to this torrent's rows, for an instant response. */
   const edit = useCallback(
     (patch: (rows: TabData) => Partial<TabData>) => {
+      // An edit finishing for the previous torrent must not invalidate this
+      // torrent's in-flight read (nor update its rows).
+      if (!alive.current || context.current.hash !== hash) return;
       revision.current += 1;
       setData((previous) => (previous.hash === hash ? { ...previous, ...patch(previous) } : previous));
     },
-    [hash],
+    [hash, alive, context],
   );
 
   // What the tabs are handed must keep its identity between renders. The app
@@ -196,7 +205,23 @@ export function DetailPanel({
   };
 
   return (
-    <section className="detail" style={{ height }} aria-label={`Details of ${torrent.name || hash}`}>
+    <section
+      ref={panel}
+      className="detail"
+      style={{ height }}
+      role={compact ? 'dialog' : undefined}
+      aria-modal={compact || undefined}
+      aria-label={`Details of ${torrent.name || hash}`}
+      tabIndex={compact ? -1 : undefined}
+      onKeyDown={(event) => {
+        if (!compact) return;
+        trapTab(event, panel.current);
+        if (event.key === 'Escape' && !event.defaultPrevented) {
+          event.preventDefault();
+          onClose();
+        }
+      }}
+    >
       <div
         className="detail-resize"
         role="separator"

@@ -49,7 +49,7 @@ path_fit_tag(const std::string& s) {
 
 // The component unchanged when it fits; otherwise the stem cut at a UTF-8
 // character boundary, "~" plus the tag of the original (so two names that
-// differ only past the cut cannot land on the same file), and the extension.
+// differ only past the cut usually remain distinct), and the extension.
 inline std::string
 path_fit_component(const std::string& name) {
   if (name.size() <= path_fit_max_bytes)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"os"
 	"strconv"
 
 	"github.com/JohanLindvall/Cascade/server/internal/httperr"
@@ -130,7 +129,7 @@ func (s *Service) removeTorrent(ctx context.Context, hash string, deleteData boo
 	if err := s.caps.Ensure(ctx); err != nil {
 		return err
 	}
-	dataPath := ""
+	var data *dataDeletion
 	if deleteData {
 		if !s.cfg.AllowDataDelete {
 			return httperr.New(http.StatusForbidden, "deleting torrent data is disabled (CASCADE_ALLOW_DATA_DELETE=0)")
@@ -144,21 +143,28 @@ func (s *Service) removeTorrent(ctx context.Context, hash string, deleteData boo
 		// user did not ask for. An empty base path (never started) has nothing
 		// to check or delete.
 		if base := rtorrent.Text(basePath); base != "" {
-			if dataPath, err = assertDeletable(base, s.cfg.DeleteRoots); err != nil {
+			if data, err = prepareDataDeletion(base, s.cfg.DeleteRoots); err != nil {
 				return err
+			}
+			if data != nil {
+				defer data.root.Close()
 			}
 		}
 	}
-	if _, err := s.client.Call(ctx, "d.erase", hash); err != nil {
+	// Finish folding any earlier listing before forgetting its counters,
+	// and keep a later listing from reaching the store before this erase.
+	s.listingGate <- struct{}{}
+	_, err := s.client.Call(ctx, "d.erase", hash)
+	if err == nil {
+		s.store.Forget(hash)
+	}
+	<-s.listingGate
+	if err != nil {
 		return err
 	}
 	s.pendingRestarts.cancel(hash)
-	s.store.Forget(hash)
-	if dataPath != "" {
-		if _, err := assertDeletable(dataPath, s.cfg.DeleteRoots); err != nil {
-			return err
-		}
-		if err := os.RemoveAll(dataPath); err != nil {
+	if data != nil {
+		if err := data.root.RemoveAll(data.name); err != nil {
 			return httperr.Newf(http.StatusInternalServerError, "the torrent was removed, but its data could not be deleted: %v", err)
 		}
 	}

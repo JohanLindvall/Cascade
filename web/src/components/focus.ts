@@ -1,4 +1,20 @@
-import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
+
+/** Focus a responsive sheet while it covers the page, then return to its opener. */
+export function useFocusRegion(ref: RefObject<HTMLElement | null>, active: boolean): void {
+  useEffect(() => {
+    if (!active) return;
+    const container = ref.current;
+    const previous = document.activeElement as HTMLElement | null;
+    if (!container?.contains(previous)) container?.focus();
+    return () => {
+      // A dialog opened from the sheet may already have claimed focus.
+      if (document.activeElement === document.body || container?.contains(document.activeElement)) {
+        if (previous?.isConnected) previous.focus();
+      }
+    };
+  }, [ref, active]);
+}
 
 /**
  * Hand focus back to whatever had it when this component mounted — the

@@ -166,6 +166,10 @@ func (s *Service) noteSession(pid string) {
 	}
 	s.mu.Unlock()
 	if restarted {
+		// A fast restart can fall entirely between ticks, without a failed
+		// request to invalidate the old command table. Probe the new process
+		// before choosing setters for the settings it forgot.
+		s.caps.Invalidate()
 		s.bootSettingsApplied.Store(false)
 		s.throttlesApplied.Store(false)
 		s.logScopesApplied.Store(false)

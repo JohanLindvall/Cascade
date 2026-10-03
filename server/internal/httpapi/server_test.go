@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -347,6 +348,29 @@ func form(t *testing.T, files []formFile, fields map[string]string) (io.Reader, 
 	}
 	_ = w.Close()
 	return &buf, w.FormDataContentType()
+}
+
+func TestAChunkedUploadStopsReadingAtTheRemainingBatchAllowance(t *testing.T) {
+	const limit = 128 << 10
+	body, kind := form(t, []formFile{
+		{"torrents", "first.torrent", strings.Repeat("a", limit-32)},
+		{"torrents", "second.torrent", strings.Repeat("b", limit)},
+	}, nil)
+	buffer := body.(*bytes.Buffer)
+	before := buffer.Len()
+	r := httptest.NewRequest(http.MethodPost, "/api/torrents/upload", io.NopCloser(body))
+	r.ContentLength = -1
+	r.Header.Set("Content-Type", kind)
+	_, _, err := readUpload(httptest.NewRecorder(), r, limit)
+	var failure *httperr.Error
+	if !errors.As(err, &failure) || failure.Status != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized batch: %v", err)
+	}
+	// Allow framing and the multipart reader's small lookahead, but never
+	// buffer another whole file after the earlier file spent the allowance.
+	if read := before - buffer.Len(); read > limit+8192 {
+		t.Fatalf("read %d bytes for a %d-byte batch allowance", read, limit)
+	}
 }
 
 func upload(t *testing.T, base string, files []formFile, fields map[string]string, header map[string]string) reply {

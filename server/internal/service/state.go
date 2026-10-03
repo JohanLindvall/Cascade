@@ -72,6 +72,12 @@ func (s *Service) readTorrents(ctx context.Context, view string) ([]contracts.To
 	if err := s.caps.Ensure(ctx); err != nil {
 		return nil, err
 	}
+	select {
+	case s.listingGate <- struct{}{}:
+		defer func() { <-s.listingGate }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	dialect := s.caps.Dialect()
 	rows, err := s.client.FieldMulticall(ctx, dialect.DownloadMulticall, dialect.DownloadMulticallPrefix(view), dialect.TorrentFields)
 	if err != nil {

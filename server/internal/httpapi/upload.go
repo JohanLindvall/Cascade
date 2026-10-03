@@ -76,7 +76,9 @@ func readParts(r *http.Request, maxBytes int64) ([]uploadedFile, map[string]any,
 			if len(files) == uploadMaxFiles {
 				return nil, nil, httperr.New(http.StatusRequestEntityTooLarge, "Too many files")
 			}
-			data, err := io.ReadAll(io.LimitReader(part, maxBytes+1))
+			// Stop at the remaining batch allowance, not another whole file's
+			// allowance. Earlier files still occupy memory until validation ends.
+			data, err := io.ReadAll(io.LimitReader(part, maxBytes-total+1))
 			if err != nil {
 				return nil, nil, malformed(err)
 			}

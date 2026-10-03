@@ -765,11 +765,11 @@ func TestNormalizeThrottle(t *testing.T) {
 			t.Errorf("%q was refused: %v", name, err)
 		}
 	}
-	for _, name := range []string{"", "NULL", "a b", strings.Repeat("x", 33), "slow\n", "sl/ow", "\u00e9"} {
+	for _, name := range []string{"", "NULL", ".", "..", "a b", strings.Repeat("x", 33), "slow\n", "sl/ow", "\u00e9"} {
 		_, err := NormalizeThrottle(contracts.ThrottleGroup{Name: name})
 		var problem *httperr.Error
 		if !errors.As(err, &problem) || problem.Status != 400 ||
-			problem.Message != "throttle name must be 1-32 chars of [A-Za-z0-9_.-] and cannot be NULL" {
+			problem.Message != "throttle name must be 1-32 chars of [A-Za-z0-9_.-] and cannot be NULL, . or .." {
 			t.Errorf("%q: %v", name, err)
 		}
 	}

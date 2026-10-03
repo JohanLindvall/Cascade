@@ -38,6 +38,8 @@ test('the host is never touched, even when it looks like a token', () => {
 
 test('user:password in the authority is a credential too', () => {
   assert.equal(redactUrl('https://me:hunter2@t.example/announce'), 'https://•••@t.example/announce');
+  assert.equal(redactUrl('https://me:p@ssword@t.example/announce'), 'https://•••@t.example/announce');
+  assert.equal(redactSecrets('failed: https://me:p@ssword@t.example/announce'), 'failed: https://•••@t.example/announce');
 });
 
 test('encoded keys and path tokens with separators are still credentials', () => {

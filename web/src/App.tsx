@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { api } from './api';
 import { rowOf } from './app/dom';
-import { focusOnMenu } from './app/menuFocus';
+import { focusOnMenu, focusOnSelection } from './app/rowFocus';
 import { Toolbar } from './app/Toolbar';
 import { useDropToAdd } from './app/useDropToAdd';
 import { useShortcuts } from './app/useShortcuts';
 import { useTorrentActions } from './app/useTorrentActions';
+import { useTrackerHosts } from './app/useTrackerHosts';
 import { AchievementsDialog } from './components/Achievements';
 import { AddDialog } from './components/AddDialog';
 import { Celebrate } from './components/Celebrate';
@@ -24,7 +24,7 @@ import { IconAlert, IconRefresh, IconUpload } from './components/icons';
 import { useToast } from './components/toast';
 import { filterTorrents, type Filter } from './filter';
 import { grimAchievement, grimGame } from './grim';
-import { useLatest } from './hooks';
+import { useLatest, usePolling } from './hooks';
 import { fetchPreferences, readCache, savePreferences, type Preferences } from './prefs';
 import { redactSecrets } from './redact';
 import {
@@ -69,7 +69,7 @@ export function App() {
   const game = stream.state?.game ?? null;
   const connectionError =
     stream.error ?? (status && !status.connected ? (status.error ?? 'rtorrent is not responding') : null);
-  const [trackerHosts, setTrackerHosts] = useState<Record<string, string>>({});
+  const trackerHosts = useTrackerHosts(torrents);
 
   const [filter, setFilter] = useState<Filter>({ kind: 'status', value: 'all' });
   const [search, setSearch] = useState('');
@@ -103,6 +103,7 @@ export function App() {
   const seenBadgesRef = useRef<string[] | null>(null);
   // Set once the stored preferences say which badges were already toasted.
   const [badgesKnown, setBadgesKnown] = useState(false);
+  const preferencesLoaded = useRef(false);
   // Read by badge toasts without re-running them on theme changes.
   const grimRef = useLatest(grim);
 
@@ -120,22 +121,18 @@ export function App() {
     savePreferences(patch);
   }, []);
 
-  useEffect(() => {
-    let alive = true;
-    fetchPreferences()
-      .then((stored) => {
-        if (!alive) return;
-        setPrefs(stored);
-        seenBadgesRef.current = stored.seenBadges;
-        setBadgesKnown(true);
-      })
-      .catch(() => {
-        if (!alive) return;
-        seenBadgesRef.current = readCache().seenBadges;
-        setBadgesKnown(true);
-      });
-    return () => { alive = false; };
+  const loadPreferences = useCallback(async (isCurrent: () => boolean) => {
+    if (preferencesLoaded.current) return;
+    const stored = await fetchPreferences();
+    if (!isCurrent()) return;
+    preferencesLoaded.current = true;
+    setPrefs(stored);
+    seenBadgesRef.current = stored.seenBadges;
+    setBadgesKnown(true);
   }, []);
+  // A startup connection failure must not make the cache authoritative for
+  // this entire visit, or re-announce badges before the saved list arrives.
+  usePolling(loadPreferences, 5000);
 
   useEffect(() => {
     setResolvedTheme(applyTheme(themeMode));
@@ -201,29 +198,6 @@ export function App() {
     if (badgesKnown) announceBadges(game);
   }, [game, badgesKnown, announceBadges]);
 
-  // Tracker hosts change rarely; refresh them only when the torrent set
-  // changes, which the joined key says without comparing lists.
-  const hashKey = useMemo(() => torrents.map((torrent) => torrent.hash).join(','), [torrents]);
-  useEffect(() => {
-    const hashes = hashKey ? hashKey.split(',') : [];
-    if (hashes.length === 0) {
-      setTrackerHosts({});
-      return;
-    }
-    let current = true;
-    api
-      .trackerHosts(hashes)
-      .then((hosts) => {
-        if (current) setTrackerHosts(hosts);
-      })
-      .catch(() => {
-        /* tracker grouping is cosmetic; ignore failures */
-      });
-    return () => {
-      current = false;
-    };
-  }, [hashKey]);
-
   /* ------------------------------ filtering ---------------------------- */
 
   const visible = useMemo(
@@ -261,10 +235,10 @@ export function App() {
   const onSelect = useCallback(
     (hash: string, mods: SelectMods) => {
       const rows = orderRef.current;
-      setFocused(hash);
+      setFocused((current) => focusOnSelection(compactRef.current, current, hash, mods));
       setSelection((current) => selectRow(current, rows, hash, mods));
     },
-    [orderRef],
+    [orderRef, compactRef],
   );
 
   /** The header checkbox and Ctrl+A act on the rows it shows, leaving hidden ones alone. */
@@ -369,7 +343,7 @@ export function App() {
 
   useShortcuts({
     // Any modal — the app's own dialogs or a confirm/prompt — takes the keyboard.
-    modalOpen: dialog !== null || dialogs.open,
+    modalOpen: dialog !== null || dialogs.open || (compact && focusedTorrent !== null),
     drawerOpen,
     menuOpen: menu !== null,
     closeDrawer: () => setDrawerOpen(false),
@@ -394,6 +368,9 @@ export function App() {
     );
 
   const openTool = (tool: ToolId) => {
+    // The drawer closes as the dialog opens. Give that dialog a visible
+    // return target instead of the drawer button about to be hidden.
+    document.querySelector<HTMLElement>('[aria-controls="filter-drawer"]')?.focus();
     setDrawerOpen(false);
     setDialog(tool);
   };
@@ -418,7 +395,7 @@ export function App() {
 
       {drawerOpen && <div className="scrim" onClick={() => setDrawerOpen(false)} />}
       <Sidebar
-        className={drawerOpen ? 'open' : ''}
+        open={drawerOpen}
         torrents={torrents}
         status={status}
         filter={filter}
@@ -485,6 +462,7 @@ export function App() {
 
         {focusedTorrent && (
           <DetailPanel
+            compact={compact}
             torrent={focusedTorrent}
             height={prefs.detailHeight}
             onHeightChange={(height) => updatePrefs({ detailHeight: height })}

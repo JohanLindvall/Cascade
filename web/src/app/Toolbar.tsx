@@ -97,6 +97,7 @@ export function Toolbar({
         title="Filters"
         aria-label="Filters"
         aria-expanded={drawerOpen}
+        aria-controls="filter-drawer"
       >
         <IconFilter size={14} />
       </button>

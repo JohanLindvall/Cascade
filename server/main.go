@@ -85,12 +85,19 @@ func run(args []string, getenv func(string) string, stdout, stderr io.Writer) in
 // state stream is a request in progress, not an idle connection.
 const idleTimeout = 2 * time.Minute
 
-func serve(getenv func(string) string) error {
+func serve(getenv func(string) string) (result error) {
 	cfg, err := config.Load(getenv)
 	if err != nil {
 		return err
 	}
 	st := store.Open(cfg.StateFile)
+	// Every exit must preserve pending preferences and counters, including
+	// an unexpected failure of Serve rather than a shutdown signal.
+	defer func() {
+		if err := st.Flush(); err != nil {
+			result = errors.Join(result, fmt.Errorf("saving %s: %w", cfg.StateFile, err))
+		}
+	}()
 	svc := service.New(cfg, st, nil)
 
 	// Cancelled on the way down, which ends every open state stream: a
@@ -125,8 +132,7 @@ func serve(getenv func(string) string) error {
 	case sig := <-signals:
 		log.Printf("[cascade] %s received, shutting down", signalName(sig))
 	case err := <-failed:
-		svc.Stop()
-		return err
+		result = err
 	}
 	svc.Stop()
 	cancel()
@@ -137,10 +143,7 @@ func serve(getenv func(string) string) error {
 	if err := server.Shutdown(ctx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		log.Printf("[cascade] shutting down: %v", err)
 	}
-	if err := st.Flush(); err != nil {
-		return fmt.Errorf("saving %s: %w", cfg.StateFile, err)
-	}
-	return nil
+	return result
 }
 
 func signalName(sig os.Signal) string {

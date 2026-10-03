@@ -1,16 +1,17 @@
-import { useMemo, type ReactNode } from 'react';
+import { useMemo, useRef, type ReactNode } from 'react';
 import { STATUS_FILTERS, countByStatus, type Filter, type StatusFilter } from '../filter';
 import { bytes, rate } from '../format';
 import type { GlobalStatus, Torrent } from '../types';
 import { IconGauge, IconGlobe, IconList, IconSettings, IconTag, IconTerminal, IconTrophy } from './icons';
+import { trapTab, useFocusRegion } from './focus';
 
 /** Dialogs reachable from the drawer on compact layouts, where the header has
  *  no room for their buttons. */
 export type ToolId = 'progress' | 'settings' | 'throttles' | 'console';
 
 interface SidebarProps {
-  /** Extra classes — used to slide the drawer in on narrow viewports. */
-  className?: string;
+  /** Whether the filters drawer is open on a narrow viewport. */
+  open: boolean;
   torrents: Torrent[];
   status: GlobalStatus | null;
   filter: Filter;
@@ -72,7 +73,7 @@ function SideItem({
 }
 
 export function Sidebar({
-  className = '',
+  open,
   torrents,
   status,
   filter,
@@ -83,6 +84,9 @@ export function Sidebar({
   showProgress,
   showConsole = true,
 }: SidebarProps) {
+  const drawer = Boolean(compact && open);
+  const ref = useRef<HTMLElement>(null);
+  useFocusRegion(ref, drawer);
   // One pass per poll for everything the panel counts, rather than a filter
   // per status row and a reduce per total.
   const counts = useMemo(() => countByStatus(torrents), [torrents]);
@@ -108,7 +112,16 @@ export function Sidebar({
     filter.kind === kind && filter.value === value;
 
   return (
-    <nav className={`sidebar ${className}`} aria-label="Filters">
+    <nav
+      id="filter-drawer"
+      ref={ref}
+      className={`sidebar ${open ? 'open' : ''}`}
+      role={drawer ? 'dialog' : undefined}
+      aria-modal={drawer || undefined}
+      aria-label="Filters"
+      tabIndex={drawer ? -1 : undefined}
+      onKeyDown={(event) => { if (drawer) trapTab(event, ref.current); }}
+    >
       <div className="side-group">
         <h4>Status</h4>
         {STATUS_FILTERS.map((value) => {

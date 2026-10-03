@@ -9,7 +9,7 @@ import { Field, ParsedInput } from './form';
 import { Modal } from './modal';
 import { useToast } from './toast';
 
-/** The server's rule for a group name (saveThrottle in service.ts), checked here first. */
+/** The server's rule for a group name (internal/store/throttle.go), checked here first. */
 const NAME_RE = /^[A-Za-z0-9_.-]{1,32}$/;
 const RATE_ERROR = 'Not a rate — try 500k, 2M or 800 B/s';
 
@@ -40,8 +40,8 @@ export function ThrottleDialog({
   const toast = useToast();
   const dialogs = useDialogs();
   const supported = backend?.supports?.throttleGroups !== false;
-  const nameError = name && (!NAME_RE.test(name.trim()) || name.trim() === 'NULL')
-    ? 'Up to 32 letters, digits, "_", "." or "-"; NULL is reserved' : undefined;
+  const nameError = name && (!NAME_RE.test(name.trim()) || ['NULL', '.', '..'].includes(name.trim()))
+    ? 'Up to 32 letters, digits, "_", "." or "-"; NULL, . and .. are reserved' : undefined;
 
   const load = useCallback(
     async (isCurrent: () => boolean = () => true) => {

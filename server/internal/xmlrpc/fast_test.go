@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"unsafe"
+
+	"github.com/JohanLindvall/Cascade/server/internal/utf8text"
 )
 
 func document(inner string) string {
@@ -16,7 +18,7 @@ func document(inner string) string {
 
 // slowly is what the permissive parser alone makes of a document.
 func slowly(xml string) (any, error) {
-	return readResponse(DecodeUTF8([]byte(xml)))
+	return readResponse(utf8text.Decode([]byte(xml)))
 }
 
 // agree holds the fast path to the permissive parser: for any document it

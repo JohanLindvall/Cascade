@@ -49,3 +49,30 @@ test('failed writes retry without losing newer changes', async () => {
   await sync.flush();
   assert.deepEqual(writes[1], { theme: 'dark', detailHeight: 320 });
 });
+
+test('an empty flush cannot swallow an edit queued in the same turn', async () => {
+  const writes: Partial<Preferences>[] = [];
+  const sync = new PreferenceSync(async (patch) => { writes.push(patch); });
+  const idle = sync.flush();
+  sync.update({ theme: 'retro' });
+  await sync.flush();
+  await idle;
+  assert.deepEqual(writes, [{ theme: 'retro' }]);
+});
+
+test('an edit queued as the last write settles is included in the next flush', async () => {
+  const first = deferred<void>();
+  const writes: Partial<Preferences>[] = [];
+  const sync = new PreferenceSync((patch) => {
+    writes.push(patch);
+    return writes.length === 1 ? first.promise : Promise.resolve();
+  });
+  sync.update({ theme: 'light' });
+  const flushed = sync.flush();
+  first.resolve();
+  await Promise.resolve(); // the drain has ended, but its caller has not resumed
+  sync.update({ theme: 'dark' });
+  await sync.flush();
+  await flushed;
+  assert.deepEqual(writes, [{ theme: 'light' }, { theme: 'dark' }]);
+});

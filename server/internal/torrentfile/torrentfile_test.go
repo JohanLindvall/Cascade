@@ -313,20 +313,6 @@ func TestTheInfoChecksInOrder(t *testing.T) {
 }
 
 func TestTheNameIsDecodedAsTheBrowserDecodesIt(t *testing.T) {
-	for raw, want := range map[string]string{
-		"plain":            "plain",
-		"caf\xc3\xa9":      "caf\u00e9",
-		"a\xe2\x82b":       "a\ufffdb",           // one replacement for a broken-off sequence
-		"a\xffb":           "a\ufffdb",           // an impossible byte
-		"\xf0\x9f\x98":     "\ufffd",             // truncated at the end
-		"\xed\xa0\x80":     "\ufffd\ufffd\ufffd", // a surrogate is three errors
-		"\xc0\xaf":         "\ufffd\ufffd",       // an overlong form is two
-		"\xf4\x90\x80\x80": "\ufffd\ufffd\ufffd\ufffd",
-	} {
-		if got := decodeUTF8([]byte(raw)); got != want {
-			t.Errorf("%q: got %q, want %q", raw, got, want)
-		}
-	}
 	data := ben(map[string]any{"info": map[string]any{"name": "x\xe2\x82y", "length": 1, "piece length": 1, "pieces": pieces}})
 	if parsed, err := Parse(data); err != nil || parsed.Name != "x\ufffdy" {
 		t.Fatalf("got %+v %v", parsed, err)

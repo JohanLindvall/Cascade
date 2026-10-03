@@ -1,3 +1,5 @@
+import type { SelectMods } from '../selection.ts';
+
 /**
  * The focused row once the torrent menu opens on `hash`. Focusing a row shows
  * its details: on a wide screen in the pane under the list, which is what a
@@ -8,4 +10,9 @@
  */
 export function focusOnMenu(compact: boolean, focused: string | null, hash: string): string | null {
   return compact ? focused : hash;
+}
+
+/** Multi-selection on a phone must leave the list visible for the next tap. */
+export function focusOnSelection(compact: boolean, focused: string | null, hash: string, mods: SelectMods): string | null {
+  return compact && (mods.ctrl || mods.shift) ? focused : hash;
 }

@@ -370,6 +370,10 @@ detail tabs follow the arrow keys, and the detail pane's resize handle takes `�
 asks first, in a dialog that lists what is about to go; setting a label or a directory lists the
 torrents it applies to and offers the labels already in use.
 
+On a phone, a card opens its details; its checkbox selects it for bulk actions without opening
+the details sheet. The filters drawer and details sheet keep keyboard focus inside while open;
+`Esc` closes them and returns focus to the opener.
+
 Actions reach only what is on screen. A selection survives a search or a filter change —
 narrowing the list to find one more torrent does not drop the ones already picked — but the rows
 it hides are left alone until they are shown again: the selection pill counts them
@@ -387,8 +391,9 @@ crosses midnight. A line that is not in rtorrent's format is shown exactly as wr
 The log dialog carries a **Verbosity** row: the scopes `RT_LOG_LEVEL` baked in at container start
 show as fixed tags, and the rest — `debug`, `tracker_debug`, `dht_debug` and friends — toggle live,
 no restart. Raising one takes effect immediately and is remembered (re-attached after every
-rtorrent restart, like throttle groups); switching one off stays live until rtorrent next starts,
-because rtorrent has no command to detach a log scope — the toast says so when it happens. The
+rtorrent restart, like throttle groups). After switching one off, restart the **container** to
+stop it: rtorrent has no command to detach a log scope, and a scope saved before boot also lives
+in the generated rc until the container regenerates it. The toast explains this. The
 subsystem groups moved between releases (0.9.x has `tracker_debug` and friends, 0.16 replaced
 them with `tracker_events`), so the row offers the union and a scope this build does not have is
 refused by name. A raised scope is remembered in the state file, so it survives a container
@@ -652,8 +657,8 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
 - "Change directory" stops the torrent and updates its saved path. Move already-downloaded files
   yourself, then use **Recheck & restart** before transferring at the new location.
 - Deleting torrent data is confined to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and any
-  `CASCADE_DELETE_ROOTS`. Paths are checked before removing metadata and again before deleting
-  data; symlink ancestors cannot escape the roots, and a root itself cannot be deleted.
+  `CASCADE_DELETE_ROOTS`. Paths are checked before removing metadata, and deletion stays anchored
+  to an open root directory even if symlinks change. A root itself cannot be deleted.
 - Completion moves use the actual on-disk filename, refuse existing destinations, and reopen
   the torrent at its new location. A failed move leaves the source data in place.
 - Throttle groups cannot be removed from a running rtorrent — deleting one sets it to unlimited

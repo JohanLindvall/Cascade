@@ -1634,7 +1634,8 @@ table.grid tr.detail-row > td {
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 100;
+  /* Above the compact drawer (120), details sheet (130) and menus (150). */
+  z-index: 160;
   display: grid;
   place-items: center;
   padding: 24px;
@@ -2257,6 +2258,9 @@ body {
   .sidebar.open {
     transform: none;
     visibility: visible;
+    /* Become focusable immediately; transitioning visibility from hidden
+       leaves an opening drawer unable to take keyboard focus that frame. */
+    transition-property: transform;
   }
 
   .scrim {

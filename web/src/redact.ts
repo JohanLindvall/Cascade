@@ -56,7 +56,8 @@ export function redactUrl(url: string): string {
   if (!parts) return url;
   const [, authority, path, query = '', fragment = ''] = parts;
   // A user:password@ in the authority is a credential too.
-  const host = authority.replace(/\/\/[^/@]*@/, `//${MASK}@`);
+  // Userinfo ends at the last @: a password may itself contain an @.
+  const host = authority.replace(/\/\/.*@/, `//${MASK}@`);
   const cleanPath = path
     .split('/')
     .map((segment) => (SECRET_SEGMENT.test(decoded(segment)) ? MASK : segment))

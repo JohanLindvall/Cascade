@@ -239,13 +239,20 @@ func (s *Service) waitForNewTorrent(ctx context.Context, before map[string]bool,
 	}
 }
 
-// checkLoadOptions refuses a directory with a control character in it. The
-// directory rides into rtorrent inside a command string (d.directory.set=…),
+// checkLoadOptions refuses a directory with a control character or command
+// substitution in it. The directory rides into rtorrent inside a command string
+// (d.directory.set=…),
 // where quotes and backslashes are escaped but a line break could end the
 // command and start another; no real path has one.
 func checkLoadOptions(options contracts.LoadOptions) error {
 	if strings.ContainsFunc(options.Directory, unicode.IsControl) {
 		return httperr.New(http.StatusBadRequest, `"directory" contains control characters`)
+	}
+	// rtorrent evaluates strings beginning with '$' even inside quotes.
+	// Escaping quotes and backslashes alone therefore still lets a load
+	// execute commands, including execute, with raw RPC switched off.
+	if strings.HasPrefix(options.Directory, "$") {
+		return httperr.New(http.StatusBadRequest, `"directory" must be a literal path, not an rtorrent command (use ./ for a relative path beginning with $)`)
 	}
 	return nil
 }

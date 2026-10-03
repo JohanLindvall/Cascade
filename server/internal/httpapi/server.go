@@ -143,9 +143,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 // refusedAsSent is an answer that turns a request away for what it is —
 // malformed, naming nothing there is, adding what is there already, too
 // large, in a form not taken — which the API and the service both decide
-// before asking rtorrent to change anything. A 403 is not one: a data delete is refused with it after the
-// torrent was erased. Neither is any 5xx, which can follow a change half
-// made.
+// before asking rtorrent to change anything. Other errors conservatively
+// wake the stream: in particular, a 5xx can follow a change half made.
 func refusedAsSent(status int) bool {
 	switch status {
 	case http.StatusBadRequest, http.StatusNotFound, http.StatusConflict,

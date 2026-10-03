@@ -8,7 +8,8 @@ import (
 	"github.com/JohanLindvall/Cascade/server/internal/validate"
 )
 
-// ThrottleName is what a throttle group may be called; NULL is refused too.
+// ThrottleName is what a throttle group may be called; NULL and URL dot
+// segments are refused too.
 var ThrottleName = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,32}$`)
 
 // NormalizeThrottle validates a group and rounds its rates to what rtorrent
@@ -22,8 +23,8 @@ func NormalizeThrottle(group contracts.ThrottleGroup) (contracts.ThrottleGroup, 
 // normalizeThrottle takes the rates as values so that a persisted group,
 // whose numbers are whatever the file held, is checked the same way.
 func normalizeThrottle(name string, up, down any) (contracts.ThrottleGroup, error) {
-	if !ThrottleName.MatchString(name) || name == "NULL" {
-		return contracts.ThrottleGroup{}, httperr.New(400, "throttle name must be 1-32 chars of [A-Za-z0-9_.-] and cannot be NULL")
+	if !ThrottleName.MatchString(name) || name == "NULL" || name == "." || name == ".." {
+		return contracts.ThrottleGroup{}, httperr.New(400, "throttle name must be 1-32 chars of [A-Za-z0-9_.-] and cannot be NULL, . or ..")
 	}
 	upRate, err := wholeKiB(up, "up")
 	if err != nil {

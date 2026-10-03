@@ -27,11 +27,18 @@ export class PreferenceSync {
     return this.loading;
   }
 
-  flush(): Promise<void> {
-    if (!this.running) {
-      this.running = this.drain().finally(() => { this.running = undefined; });
+  async flush(): Promise<void> {
+    // A write may finish just before another caller queues an edit. Keep
+    // checking after awaiting it: sharing only its finalizer can otherwise
+    // report success while that newer edit is still pending.
+    while (this.running || Object.keys(this.pending).length > 0) {
+      const running = this.running ??= this.drain();
+      try {
+        await running;
+      } finally {
+        if (this.running === running) this.running = undefined;
+      }
     }
-    return this.running;
   }
 
   private async drain(): Promise<void> {

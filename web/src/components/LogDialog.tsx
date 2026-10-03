@@ -31,8 +31,8 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
   /**
    * Toggle one scope. Raising takes effect immediately (log.add_output);
    * lowering cannot — rtorrent has no way to detach a scope — so it stays
-   * live until rtorrent restarts and is simply not re-attached after. The
-   * toast says which of the two just happened.
+   * live until a restart. Restarting the container also regenerates its rc,
+   * which may include the scope from an earlier boot.
    */
   const toggleScope = async (scope: string, on: boolean) => {
     if (!scopes || saving) return;
@@ -50,7 +50,7 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
         toast.push('error', `This rtorrent build has no "${scope}" log scope`);
       } else if (on) toast.push('success', `Logging ${scope} — live now`);
       else if (result.stillActive.includes(scope)) {
-        toast.push('info', `${scope} stays on until rtorrent restarts — there is no way to detach a scope`);
+        toast.push('info', `Restart the container to stop logging ${scope} — rtorrent cannot detach a scope`);
       }
     } catch (error) {
       toast.error(error);
@@ -155,7 +155,7 @@ export function LogDialog({ onClose }: { onClose: () => void }) {
                   disabled={saving}
                   title={
                     on
-                      ? 'Stop re-attaching this scope (stays live until rtorrent restarts)'
+                      ? 'Stop logging this scope after a container restart'
                       : 'Attach this scope to the log now'
                   }
                   onClick={() => void toggleScope(scope, !on)}

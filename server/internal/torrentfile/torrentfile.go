@@ -13,7 +13,8 @@ import (
 	"errors"
 	"math"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/JohanLindvall/Cascade/server/internal/utf8text"
 )
 
 // Info is what an upload needs from a torrent: the hash rtorrent will list it
@@ -334,7 +335,7 @@ func component(buf []byte, at int) (string, error) {
 		return "", err
 	}
 	raw, _ := stringField(buf, at)
-	return decodeUTF8(raw), nil
+	return utf8text.Decode(raw), nil
 }
 
 // checkComponent is component for a file path, whose text nothing keeps.
@@ -345,66 +346,4 @@ func checkComponent(buf []byte, at int) error {
 		return errors.New("invalid path component")
 	}
 	return nil
-}
-
-// decodeUTF8 decodes as the browser and Node do (the WHATWG decoder): each
-// maximal ill-formed subsequence becomes one U+FFFD. Go's own conversions
-// replace per byte or per run instead, and the name reaches the user.
-func decodeUTF8(b []byte) string {
-	if utf8.Valid(b) {
-		return string(b)
-	}
-	var out strings.Builder
-	var point rune
-	needed, seen := 0, 0
-	lower, upper := byte(0x80), byte(0xBF)
-	for i := 0; i < len(b); {
-		c := b[i]
-		if needed == 0 {
-			i++
-			switch {
-			case c <= 0x7F:
-				out.WriteByte(c)
-			case c >= 0xC2 && c <= 0xDF:
-				needed, point = 1, rune(c&0x1F)
-			case c >= 0xE0 && c <= 0xEF:
-				if c == 0xE0 {
-					lower = 0xA0
-				} else if c == 0xED {
-					upper = 0x9F
-				}
-				needed, point = 2, rune(c&0x0F)
-			case c >= 0xF0 && c <= 0xF4:
-				if c == 0xF0 {
-					lower = 0x90
-				} else if c == 0xF4 {
-					upper = 0x8F
-				}
-				needed, point = 3, rune(c&0x07)
-			default:
-				out.WriteRune(utf8.RuneError)
-			}
-			continue
-		}
-		if c < lower || c > upper {
-			// The sequence broke off: one replacement for what was read, and
-			// this byte starts over.
-			needed, seen, point = 0, 0, 0
-			lower, upper = 0x80, 0xBF
-			out.WriteRune(utf8.RuneError)
-			continue
-		}
-		lower, upper = 0x80, 0xBF
-		point = point<<6 | rune(c&0x3F)
-		seen++
-		i++
-		if seen == needed {
-			out.WriteRune(point)
-			needed, seen, point = 0, 0, 0
-		}
-	}
-	if needed != 0 {
-		out.WriteRune(utf8.RuneError)
-	}
-	return out.String()
 }

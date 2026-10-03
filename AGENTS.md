@@ -50,6 +50,8 @@ server/                   the Go module: main.go serves, and answers the entrypo
   internal/jsnum/         the browser's Number(), String() and Math.round (Parse, OrZero,
                           Format, Round) and the whitespace Number() skips (IsSpace), for
                           values defined in the browser's terms
+  internal/utf8text/      browser-compatible decoding of malformed UTF-8, shared by XML-RPC
+                          and torrent metadata
 web/src/                  React UI. App.tsx composes it from app/ (Toolbar.tsx,
                           useTorrentActions.ts, useDropToAdd.ts, useShortcuts.ts, dom.ts)
                           and components/: modal.tsx, form.tsx, menu.tsx, toast.tsx and
@@ -108,7 +110,7 @@ logic belongs where it can reach it. The stream's patching and reconnects (`stre
 (`files.ts`), the selection rules, the value a selection shares for a field (`sharedValue.ts`),
 formatting and parsing, redaction, the preference shape and its syncing, the menu's placement and
 right-click rule (`components/menuRules.ts`), the toast hold (`components/toastHold.ts`) and where
-focus goes when the menu opens (`app/menuFocus.ts`) live apart from the components for exactly
+focus goes on selection or menu opening (`app/rowFocus.ts`) live apart from the components for exactly
 that reason. What cannot be split off is pinned by reading the source instead:
 `components/detail/tabs.test.ts` checks the detail tabs stay memoized. A pure module
 that imports another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`): the
@@ -416,6 +418,11 @@ first (the ever-growing seed clock coarsens to the minute for the same reason), 
 pins it: fold the same list twice, and the second fold must not recreate a deleted state file. Keep
 that property when adding counters.
 
+Listings and erases also share `Service.listingGate` across the RPC and bookkeeping update. A
+listing started before an erase must finish folding before `Forget`, or it would credit the
+removed torrent as newly added and count its traffic again. The gate is cancellable for the
+housekeeping's own read, so stopping the loop never waits on a queued read behind a removal.
+
 Preferences are validated in `internal/prefs` (`Sanitize`) before being stored — an unknown
 theme or sort key falls back to the default instead of reaching the UI. The browser keeps a
 localStorage copy of the preferences, but only as a cache so the theme can apply on first paint;
@@ -423,6 +430,7 @@ the file always wins once it loads, and the cache is repaired on read (`normaliz
 because a browser's storage can hold anything. Browser-side writes are debounced and flushed on
 `pagehide` with `keepalive`. `web/src/preferenceSync.ts` orders saves, retries failures without
 dropping newer edits, and protects edits made while the initial server copy is loading. The
+initial read retries transient failures; badge announcements wait for that saved copy. The
 browser's copy of the schema (`web/src/preferences.ts`) mirrors `internal/prefs` — the same
 allowlists, bounds and repair — and the two must change together. The refresh interval
 (`statePollMs`, null for the server's `CASCADE_STATE_POLL_MS`) is one of them: the status
@@ -531,9 +539,12 @@ Tools group, the toolbar gains a sort dropdown (cards have no headers to click),
 rates stay in the header in a slimmed form. Long-press opens the context menu on touch; the
 synthesized click that follows the press is deliberately swallowed in `TorrentCard`, or it would
 close the menu the instant it opened. On the compact layout opening the menu (long-press or
-right-click) selects the row but leaves focus alone (`focusOnMenu`, `app/menuFocus.ts`): a
+right-click) selects the row but leaves focus alone (`focusOnMenu`, `app/rowFocus.ts`): a
 focused row there is the full-screen details sheet, which would otherwise open behind the menu
-and stay after it closed. The menu's height is capped inline from `innerHeight` by the same
+and stay after it closed. Checkbox and modifier selections likewise leave compact details closed
+(`focusOnSelection`). The drawer and compact details use `useFocusRegion` and `trapTab` to take
+and return keyboard focus; dialogs must paint above both sheets. The menu's height is capped
+inline from `innerHeight` by the same
 measure that clamps its top (`placeMenu`, `components/menuRules.ts`); the stylesheet's `100vh`
 is only the cap it is first measured under, and on a phone it is the viewport with the URL bar
 hidden, which left the last item — *Remove + delete data* — below the screen.
@@ -599,7 +610,8 @@ Two other things are easy to get wrong here:
 - Log verbosity is asymmetric on purpose: `log.add_output` attaches a scope to the running log
   (empty-string target, then scope and output name — the output is the "cascade" file the
   entrypoint opened), but **no release has a command to detach one**, so lowering only means
-  "stop re-attaching after the next rtorrent restart" and the UI says so. UI-raised scopes
+  "stop re-attaching". The UI asks for a container restart, since an automatic rtorrent restart
+  reuses the generated rc and can re-attach a scope saved before boot. UI-raised scopes
   persist in the store and are re-applied after a restart exactly like throttle groups; the boot
   scopes come back by themselves, being baked into rtorrent.rc from `RT_LOG_LEVEL` (which the
   entrypoint exports, filtered to what this build accepts, so the server can show them as fixed).
