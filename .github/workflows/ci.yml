@@ -49,7 +49,7 @@ jobs:
             [ -n "$value" ] || { echo "::error::no ARG $arg in the Dockerfile"; exit 1; }
             echo "$arg=$value" >> "$GITHUB_OUTPUT"
           done
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: ${{ steps.versions.outputs.GO_VERSION }}
           cache-dependency-path: server/go.sum
