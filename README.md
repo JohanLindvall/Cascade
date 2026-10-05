@@ -10,7 +10,7 @@ rtorrent's XML-RPC over SCGI and streams every open page only what changed.
 
 - **One container, batteries included** — rtorrent, its config, and the UI. Nothing else to run,
   published for amd64 and arm64, and buildable from source in one command.
-- **rtorrent 0.16.24, compiled from source** — the version in the image is exactly the upstream
+- **rtorrent 0.16.25, compiled from source** — the version in the image is exactly the upstream
   tag you asked for, not whatever a distro packaged. Any other tag builds with one build arg.
 - **Live, and light on rtorrent** — open pages watch one server-sent event stream: a snapshot,
   then only what changed, compressed. rtorrent is read once per interval however many pages are
@@ -122,7 +122,7 @@ make build && make run     # build, run against ./data, open a browser
 ## Choosing the rtorrent version
 
 The published images carry the default rtorrent; for any other version, build it yourself.
-rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.24**:
+rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.25**:
 
 ```bash
 docker build -t cascade .                                       # the default
