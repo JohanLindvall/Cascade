@@ -28,6 +28,12 @@ on:
 
 env:
   REGISTRY: ghcr.io
+  # What the GHCR package page shows. It reads a multi-platform image's
+  # description and license from the index, which `imagetools create` writes
+  # below, so they are annotations there as well as labels on each platform's
+  # image.
+  DESCRIPTION: Web UI for rtorrent in one Docker image with rtorrent compiled from source inside
+  LICENSES: MIT
 
 concurrency:
   group: release-${{ github.ref }}
@@ -135,8 +141,12 @@ jobs:
           build-args: RTORRENT_VERSION=${{ matrix.rtorrent }}
           # image.source is also what links the GHCR package back to this repo.
           labels: |
+            org.opencontainers.image.title=Cascade
+            org.opencontainers.image.description=${{ env.DESCRIPTION }} (rtorrent ${{ matrix.rtorrent }})
+            org.opencontainers.image.licenses=${{ env.LICENSES }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.description=A modern web UI for rtorrent, with rtorrent ${{ matrix.rtorrent }} built in
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}#readme
             org.opencontainers.image.version=${{ needs.version.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
           # An attestation manifest would join the index and break the merge.
@@ -207,12 +217,23 @@ jobs:
           version: ${{ needs.version.outputs.version }}
           rtorrent: ${{ matrix.rtorrent }}
           default_rtorrent: ${{ needs.version.outputs.rtorrent }}
+          source: ${{ github.server_url }}/${{ github.repository }}
+          revision: ${{ github.sha }}
         run: |
           set -eu
           set -- --tag "${image}:${version}-${rtorrent}"
           if [ "$rtorrent" = "$default_rtorrent" ]; then
             set -- "$@" --tag "${image}:${version}" --tag "${image}:latest"
           fi
+          for annotation in \
+            "title=Cascade" \
+            "description=${DESCRIPTION} (rtorrent ${rtorrent})" \
+            "licenses=${LICENSES}" \
+            "source=${source}" \
+            "version=${version}" \
+            "revision=${revision}"; do
+            set -- "$@" --annotation "index:org.opencontainers.image.${annotation}"
+          done
           # One digest file per platform, named by the digest the build pushed.
           for digest in *; do
             set -- "$@" "${image}@sha256:${digest}"

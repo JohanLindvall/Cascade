@@ -1,8 +1,29 @@
 # Cascade
 
-A modern web UI for [rtorrent](https://github.com/rakshasa/rtorrent), packaged as a single
-Docker image with rtorrent baked in. React on the front; behind it a small Go server that speaks
-rtorrent's XML-RPC over SCGI and streams every open page only what changed.
+[![CI](https://github.com/JohanLindvall/Cascade/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JohanLindvall/Cascade/actions/workflows/ci.yml?query=branch%3Amain)
+[![Image](https://img.shields.io/github/v/tag/JohanLindvall/Cascade?sort=semver&label=image)](https://github.com/JohanLindvall/Cascade/pkgs/container/cascade)
+[![License](https://img.shields.io/github/license/JohanLindvall/Cascade)](LICENSE)
+[![Live demo](https://img.shields.io/badge/demo-live-7c9bff)](https://johanlindvall.github.io/Cascade/)
+
+**Cascade** is a web UI for [rtorrent](https://github.com/rakshasa/rtorrent), shipped as one
+Docker image for linux/amd64 and linux/arm64 with rtorrent compiled from its upstream release tag
+inside. A small Go server speaks rtorrent's XML-RPC over SCGI and streams every open page a
+snapshot and then only what changed, as server-sent events; the same server and React UI drive
+any rtorrent from 0.9.8 to 0.16.x, because they ask the running one which commands it has.
+Everything is configured with environment variables on `docker run`.
+
+**[Try the live demo](https://johanlindvall.github.io/Cascade/)** — the real UI against a
+simulated rtorrent, in your browser — or run it:
+
+```bash
+docker run -d --name cascade --stop-timeout 60 \
+  -p 127.0.0.1:8080:8080 -p 50000:50000 -p 50000:50000/udp \
+  -v cascade-config:/config -v cascade-downloads:/downloads \
+  ghcr.io/johanlindvall/cascade
+```
+
+and open <http://localhost:8080>. The [quick start](#quick-start) has the full command: your own
+folders, a password, the time zone.
 
 ![Main view](docs/screenshot-main.png)
 
@@ -19,6 +40,9 @@ rtorrent's XML-RPC over SCGI and streams every open page only what changed.
 - **Works across backend versions** — the server probes `system.listMethods` on connect and picks
   command names from what the running rtorrent actually implements, hiding unsupported controls
   in the UI instead of failing.
+- **Private-tracker aware** — a release newer than 0.16.20 announces itself as 0.16.20, User-Agent
+  and peer id together, because private trackers refuse client versions they have not whitelisted
+  yet; two build arguments [choose another identity](#the-version-presented-to-trackers).
 - **Everything rtorrent exposes** — upload `.torrent` files, magnet links and URLs, global and
   per-torrent throttling, file priorities, tracker management, peers, labels, plus a raw API
   console and an XML-RPC passthrough for anything the UI does not wrap. The settings dialog
@@ -608,8 +632,8 @@ there is nothing safe to send.
 
 To expose rtorrent's own SCGI socket instead, set `RT_SCGI_PORT=5000` and
 `RT_SCGI_BIND=0.0.0.0`, then publish the port. **SCGI is unauthenticated** — anyone who reaches
-it has full control of rtorrent and can run commands on the host through `execute`. Keep it on a
-private network, or prefer `/RPC2`, which sits behind Basic auth.
+it has full control of rtorrent and can run commands in the container, with its volumes, through
+`execute`. Keep it on a private network, or prefer `/RPC2`, which sits behind Basic auth.
 
 ### The state stream
 
@@ -763,3 +787,27 @@ docker/        entrypoint that renders rtorrent.rc and supervises both processes
 
 See [AGENTS.md](AGENTS.md) for the architecture details and the rtorrent quirks worth knowing
 before changing the backend.
+
+## Security
+
+Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes. It also sets out what
+Cascade protects and what it leaves to you: authentication, raw RPC access, an exposed SCGI port.
+
+## License
+
+Cascade is released under the [MIT License](LICENSE); every source file carries its SPDX
+identifier. The image also contains rtorrent and libtorrent, licensed under the GNU GPL version 2
+and compiled from their upstream release tags with the patches in [`docker/patches`](docker/patches),
+and Alpine Linux packages under their own licenses.
+
+Citing Cascade in a paper or a course? GitHub's **Cite this repository** button, fed by
+[CITATION.cff](CITATION.cff), gives the reference in APA and BibTeX.
+
+## Star history
+
+<a href="https://star-history.com/#johanlindvall/cascade&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=johanlindvall/cascade&type=Date&theme=dark" />
+    <img alt="Cascade's GitHub stars over time" src="https://api.star-history.com/svg?repos=johanlindvall/cascade&type=Date" />
+  </picture>
+</a>
