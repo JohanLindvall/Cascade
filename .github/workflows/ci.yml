@@ -71,14 +71,15 @@ jobs:
         run: go run . options-docs
       - name: Container script tests
         run: sh docker/scripts.test.sh
-      # Every source file names its license, so a legal review can read it off
-      # whichever file it is handed; a new file without the line fails here.
+      # Every source file names its license on a line of its own, so a legal
+      # review can read it off whichever file it is handed; a new file without
+      # the line fails here (this file's own pattern, below, does not count).
       - name: License identifiers
         run: |
           set -eu
           missing="$(git ls-files -z -- '*.go' '*.ts' '*.tsx' '*.js' '*.mjs' '*.css' '*.html' '*.sh' '*.py' \
             '*.yml' '*.yaml' '*.h' '*.cc' Dockerfile Makefile ':!*/testdata/*' |
-            xargs -0 grep -L 'SPDX-License-Identifier:' || true)"
+            xargs -0 grep -L -E '^(#|//|/\*|<!--) SPDX-License-Identifier: MIT' || true)"
           [ -z "$missing" ] || { echo "::error::no SPDX-License-Identifier line in:"; echo "$missing"; exit 1; }
       - uses: actions/setup-node@v7
         with:

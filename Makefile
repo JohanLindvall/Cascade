@@ -2,7 +2,7 @@
 
 # Cascade — build, run and test targets.
 #
-# Everything but `make dev` runs through Docker: no local Go or Node toolchain
+# Everything but `make dev` and `make demo` runs through Docker: no local Go or Node toolchain
 # is required. The toolchain versions are the Dockerfile's, read from there.
 
 IMAGE            ?= cascade

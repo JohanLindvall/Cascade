@@ -2,9 +2,11 @@
 
 # Publish multi-arch images to GHCR.
 #
-# Every push to main is a release: the workflow tags the commit (v0.1.<run>)
-# and publishes that tag. Pushing a vX.Y.Z tag yourself publishes it under that
-# name instead. Images are built for linux/amd64 and linux/arm64 on native
+# Every push to main is a release: the workflow publishes the images as
+# v0.1.<run> and then tags the commit with it, last, so that neither the
+# registry nor git ever names a release that failed to build or boot (the
+# README's image badge reads the git tags). Pushing a vX.Y.Z tag yourself
+# publishes it under that name instead. Images are built for linux/amd64 and linux/arm64 on native
 # runners — arm64 under QEMU would spend an hour emulating a C++ compile — and
 # joined into one manifest per rtorrent version.
 #
@@ -35,7 +37,9 @@ env:
   # below, so they are annotations there as well as labels on each platform's
   # image.
   DESCRIPTION: Web UI for rtorrent in one Docker image with rtorrent compiled from source inside
-  LICENSES: MIT
+  # The licenses of what the image contains: Cascade's own, and rtorrent's and
+  # libtorrent's. Every text is in the image, under /usr/local/share/licenses.
+  LICENSES: MIT AND GPL-2.0-or-later
 
 concurrency:
   group: release-${{ github.ref }}
@@ -46,7 +50,7 @@ jobs:
     name: Resolve version
     runs-on: ubuntu-latest
     permissions:
-      contents: write # pushes the tag for main builds
+      contents: read
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       image: ${{ steps.resolve.outputs.image }}
@@ -87,21 +91,6 @@ jobs:
             echo "rtorrents=[\"$rtorrent\"]"
           } >> "$GITHUB_OUTPUT"
           echo "publishing ${REGISTRY}/${owner}/cascade:${version}-*"
-
-      - name: Tag the commit
-        if: github.ref_type != 'tag'
-        env:
-          version: ${{ steps.resolve.outputs.version }}
-        run: |
-          set -eu
-          if git rev-parse "$version" >/dev/null 2>&1; then
-            echo "$version already exists — reusing it (re-run?)"
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -a "$version" -m "Cascade $version"
-          git push origin "$version"
 
   build:
     name: ${{ matrix.platform }} · rtorrent ${{ matrix.rtorrent }}
@@ -254,3 +243,29 @@ jobs:
             echo "docker pull $ref"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # Last, and only once every platform of every rtorrent is published: the
+  # tag is what says a release exists.
+  tag:
+    name: Tag the release
+    needs: [version, publish]
+    if: github.ref_type != 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # pushes the tag
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tag the commit
+        env:
+          version: ${{ needs.version.outputs.version }}
+        run: |
+          set -eu
+          if git rev-parse "$version" >/dev/null 2>&1; then
+            echo "$version already exists — reusing it (re-run?)"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$version" -m "Cascade $version"
+          git push origin "$version"

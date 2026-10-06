@@ -78,7 +78,17 @@ COPY web/src/game-catalog.json web/src/
 RUN sh docker/scripts.test.sh
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     cd server && go vet ./... && go test ./... && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/cascade .
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/cascade . && \
+    # The license of everything compiled in, taken while the module cache is
+    # mounted. A module without a license file stops the build.
+    mkdir -p /out/licenses/go && cp "$(go env GOROOT)/LICENSE" /out/licenses/go/ && \
+    CGO_ENABLED=0 go list -deps -f '{{with .Module}}{{if not .Main}}{{.Path}} {{.Dir}}{{end}}{{end}}' . | \
+      sort -u | while read -r path dir; do \
+        mkdir -p "/out/licenses/$path" && \
+        find "$dir" -maxdepth 1 \( -iname 'licen[cs]e*' -o -iname 'copying*' -o -iname 'notice*' \) \
+          -exec cp {} "/out/licenses/$path/" \; && \
+        [ -n "$(ls "/out/licenses/$path")" ] || { echo "no license file in $path" >&2; exit 1; }; \
+      done
 
 # --------------------------------------------------------------------------
 # 2. compile libtorrent and rtorrent from upstream tags
@@ -155,6 +165,8 @@ RUN set -eux; \
         CXXFLAGS="${CXXFLAGS:--g -O2} -include algorithm -include cstdint" "$@"; \
       make -j"$(nproc)"; \
       make install; \
+      # The GPL asks for its text to go with the binaries.
+      install -Dm644 COPYING "/usr/local/share/licenses/$(basename "${repo}")/COPYING"; \
     }; \
     build "${LIBTORRENT_REPO}" "${LIBTORRENT_VERSION}"; \
     ldconfig /usr/local/lib || true; \
@@ -175,6 +187,8 @@ RUN apk add --no-cache \
       tini su-exec screen ca-certificates tzdata
 
 COPY --from=server /out/cascade /usr/local/bin/cascade
+COPY --from=server /out/licenses /usr/local/share/licenses/cascade/
+COPY LICENSE /usr/local/share/licenses/cascade/LICENSE
 COPY --from=web /src/web/dist /app/web
 # An explicit mode rather than the checkout's: a umask 002 clone would
 # otherwise ship group-writable scripts.

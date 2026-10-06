@@ -9,7 +9,7 @@ import react from '@vitejs/plugin-react';
  * fork that publishes its own sets CASCADE_DEMO_URL.
  */
 const DEMO_SITE = (process.env.CASCADE_DEMO_URL ?? 'https://johanlindvall.github.io/Cascade/').replace(/\/?$/, '/');
-/** The image a shared link unfurls with, also the repository's social preview. */
+/** The image a shared link unfurls with, and the one to upload as the repository's social preview. */
 const PREVIEW = 'social-preview.png';
 
 /**
@@ -50,7 +50,7 @@ function demoEntry(): Plugin {
         return html.replace(entry, '/src/demo/entry.ts').replace(title, head);
       },
     },
-    // Only the demo publishes the preview; docs/ holds it for the repository settings too.
+    // Only the demo publishes the preview; docs/ keeps it for the repository's settings too.
     generateBundle() {
       this.emitFile({ type: 'asset', fileName: PREVIEW, source: readFileSync(new URL(`../docs/${PREVIEW}`, import.meta.url)) });
     },
@@ -76,6 +76,10 @@ export default defineConfig(({ mode }) => {
       outDir: demo ? 'dist-demo' : 'dist',
       emptyOutDir: true,
       chunkSizeWarningLimit: 900,
+      // The licenses of the packages bundled in (React's are MIT), which the
+      // minifier strips from the code: their texts must travel with it, here
+      // and in the demo. .txt, which the server already serves as text.
+      license: { fileName: 'licenses.txt' },
     },
     // `npm run dev` proxies the API to a running container: localhost:8080, or
     // CASCADE_DEV_TARGET for another port or host.

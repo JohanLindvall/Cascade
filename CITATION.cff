@@ -6,8 +6,8 @@ abstract: >-
   Cascade is a web UI for the rtorrent BitTorrent client, shipped as one Docker image
   with rtorrent compiled from source inside. A Go server talks XML-RPC to rtorrent over
   SCGI and streams the state to every open page as a snapshot followed by deltas over
-  server-sent events; the same server and React UI work with any rtorrent from 0.9.8 to
-  0.16.x by probing which commands the running one implements.
+  server-sent events; the same server and React UI work with every rtorrent from 0.9.8 to
+  the release the image ships, by probing which commands the running one implements.
 authors:
   - given-names: Johan
     family-names: Lindvall

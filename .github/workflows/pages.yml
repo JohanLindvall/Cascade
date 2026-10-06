@@ -5,8 +5,9 @@
 # in the visitor's browser (web/src/demo). Nothing is downloaded and nothing
 # talks to a server; the site is static files.
 #
-# It follows main: the UI and the Dockerfile (whose RTORRENT_VERSION the demo
-# presents) are what it is built from. The Node version is the Dockerfile's
+# It follows main: the UI, the Dockerfile (whose RTORRENT_VERSION the demo
+# presents) and docs/social-preview.png (its link preview) are what it is built
+# from. The Node version is the Dockerfile's
 # ARG, read from there as ci.yml reads it. The suite runs first, so a demo
 # that would break never replaces the one that works.
 name: Pages
@@ -17,6 +18,7 @@ on:
     paths:
       - 'web/**'
       - Dockerfile
+      - docs/social-preview.png
       - .github/workflows/pages.yml
   workflow_dispatch:
 
