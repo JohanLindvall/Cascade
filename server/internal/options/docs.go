@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package options
 
 // Keeping the catalog, the entrypoint and the README in step:

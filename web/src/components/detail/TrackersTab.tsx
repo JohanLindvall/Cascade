@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { Fragment, memo, useState } from 'react';
 import { api } from '../../api';
 import { duration, relative, until } from '../../format';

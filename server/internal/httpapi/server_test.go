@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package httpapi
 
 // The HTTP contract: input that is not what a route expects must come back

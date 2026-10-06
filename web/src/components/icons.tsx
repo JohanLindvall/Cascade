@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import type { SVGProps } from 'react';
 
 export type IconProps = SVGProps<SVGSVGElement> & { size?: number };

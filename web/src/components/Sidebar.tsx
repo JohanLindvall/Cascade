@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useMemo, useRef, type ReactNode } from 'react';
 import { STATUS_FILTERS, countByStatus, type Filter, type StatusFilter } from '../filter';
 import { bytes, rate } from '../format';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The simulation over simulated hours: what it shows must hold together the
  * way a real rtorrent's numbers do, and move only forward.

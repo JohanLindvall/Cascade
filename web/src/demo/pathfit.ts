@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The name the image's patched libtorrent gives a path component longer than
  * the 255 bytes Linux allows (docker/patches/path_fit.h): the stem cut at a

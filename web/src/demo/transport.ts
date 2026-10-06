@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * How the page reaches the simulated server: fetch and EventSource stand-ins
  * for the API's URLs, everything else passed to the real ones. Answers are

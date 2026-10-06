@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The demo's badge table and level curve are a port of the server's
  * (server/internal/game): held here to the catalogue the Go tests hold the

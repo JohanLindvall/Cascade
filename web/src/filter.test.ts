@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The sidebar filter and the search decide what the list shows, and the
  * counts beside each status must agree with what clicking it would show.

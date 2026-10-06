@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package rtorrent_test
 
 // The capability probe is what lets one UI drive rtorrent 0.9.8 and 0.16.x:

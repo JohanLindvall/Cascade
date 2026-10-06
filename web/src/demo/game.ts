@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The gamification layer as the server computes it (server/internal/game):
  * the badge table, the XP weighting and the level curve, ported so the demo's

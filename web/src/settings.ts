@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import type { Settings } from './types.ts';
 
 /** Only edited settings are sent. Empty write-only choices mean leave unchanged. */

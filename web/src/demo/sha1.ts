@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * SHA-1, for the info hash of an uploaded .torrent. Synchronous and plain:
  * crypto.subtle is asynchronous (the simulated server answers in one step)

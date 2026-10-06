@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useEffect, useLayoutEffect, useRef, type MutableRefObject } from 'react';
 
 /**

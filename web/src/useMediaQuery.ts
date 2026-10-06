@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useEffect, useState } from 'react';
 
 /** Subscribe to a media query, so layout decisions that CSS cannot express

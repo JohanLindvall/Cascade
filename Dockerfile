@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# SPDX-License-Identifier: MIT
 #
 # Cascade — a web UI for rtorrent, with rtorrent itself baked into the image.
 #

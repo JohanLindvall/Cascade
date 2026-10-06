@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * install.ts in a stand-in page: the session starts with the first request,
  * not when the module loads, so a tab opened in the background and shown

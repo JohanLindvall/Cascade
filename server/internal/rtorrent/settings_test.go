@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package rtorrent
 
 // The settings table drives reads, writes and the supports map, and its one

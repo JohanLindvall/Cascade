@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * How a request that goes wrong is reported. The request's signal stays armed
  * until the body is read, so a deadline or a cancel can land after the

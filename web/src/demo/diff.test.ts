@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The demo's differ against the client's applyPatch: every golden case the Go
  * server and stream.ts are held to, then random states, so that whatever the

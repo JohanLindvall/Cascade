@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package scgi
 
 // ParseTarget accepts every way an endpoint is written in the wild, and

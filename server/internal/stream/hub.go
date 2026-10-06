@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package stream sends the state to every open page as one snapshot and then
 // only what changed: the state is read once per interval however many pages
 // are watching, and not at all while none is.

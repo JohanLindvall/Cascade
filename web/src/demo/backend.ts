@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The Cascade server, simulated: every route the UI calls, answered as the Go
  * server answers it (server/internal/httpapi/routes.go and the service behind

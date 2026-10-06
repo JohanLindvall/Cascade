@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { memo, useEffect, useRef, type MouseEvent, type TouchEvent as ReactTouchEvent } from 'react';
 import { bytes, duration, percent, rate, relative } from '../format';
 import { redactSecrets } from '../redact';

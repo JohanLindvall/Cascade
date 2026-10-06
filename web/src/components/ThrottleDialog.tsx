@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useCallback, useRef, useState } from 'react';
 import { api } from '../api';
 import { formatRateInput, parseRate, rate } from '../format';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The life of the state stream's connection: when it opens, when it gives up
  * and tries again, and what the page is told meanwhile. The React hook

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The state stream as server/internal/stream/hub.go serves it: the state read
  * once per interval while anyone is watching and not at all while nobody is,

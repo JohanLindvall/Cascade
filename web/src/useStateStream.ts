@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE, request } from './api';
 import { denormalizer } from './stream';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The preference schema and its repair: what the server stores in its state
  * file, and what the browser's cached copy is checked against before use. The

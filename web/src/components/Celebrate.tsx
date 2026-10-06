@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useEffect, useState } from 'react';
 import { useLatest } from '../hooks';
 import type { FxFlavor } from '../theme';

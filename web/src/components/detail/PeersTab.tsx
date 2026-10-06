@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { Fragment, memo } from 'react';
 import { bytes, percent, rate } from '../../format';
 import type { Peer } from '../../types';

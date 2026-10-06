@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The simulated server route by route: the shapes the UI reads, the checks the
  * Go server makes and the words it refuses with, and rtorrent's own faults

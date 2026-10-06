@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Dependabot keeps up what it can see: the server's Go modules, the web's npm
 # packages and the Actions the workflows use.
 #

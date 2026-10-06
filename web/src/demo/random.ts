@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * A seeded generator for the simulation, so one seed is one session: the same
  * torrents, hashes, peers and fluctuations on every load, whenever it happens

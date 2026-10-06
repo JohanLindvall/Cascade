@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { memo } from 'react';
 import { FILE_PRIORITIES, bytes, fileName, percent } from '../../format';
 import type { TorrentFile } from '../../types';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * What the demo's tests share: a clock whose timers run only when a test
  * moves it, and .torrent files built to order. Pure, and imported by tests

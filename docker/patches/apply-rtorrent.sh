@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
 # Applied to the rtorrent checkout before it is configured and built (the
 # Dockerfile's build() runs apply-<repo>.sh from this directory if one exists).
 #

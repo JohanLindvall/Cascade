@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * What a menu marks as current and a prompt starts from when it acts on
  * several torrents at once: their common value, and nothing when they differ.

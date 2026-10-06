@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * Which torrents are selected, and which ones an action applies to.
  *

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The strip under the app that says what this page is. It sits in the page's
  * flow below the app rather than over it, so it covers nothing, and it comes

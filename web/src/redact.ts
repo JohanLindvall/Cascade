@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * Keep private-tracker credentials off the screen.
  *

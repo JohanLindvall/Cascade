@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package service
 
 // The service is where rtorrent's quirks are worked around, so what these pin

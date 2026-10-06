@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * What the demo takes from an upload: the info hash (its own SHA-1, held to
  * node's), the files and trackers, the server's refusals word for word, the

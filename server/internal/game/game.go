@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package game is the light gamification layer: lifetime stats distilled into
 // a level and a set of badges. Everything is derived from real rtorrent
 // numbers — nothing here is invented, and the whole feature can be switched

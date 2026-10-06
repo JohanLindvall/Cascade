@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /** Pieces the detail tabs share: flag tags, expandable rows and their key/value blocks. */
 import { useCallback, useState, type ReactNode } from 'react';
 

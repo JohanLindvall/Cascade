@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 
 /** Focus a responsive sheet while it covers the page, then return to its opener. */

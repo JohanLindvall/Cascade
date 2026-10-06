@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The page's side of the demo: the real api.ts over the fetch stand-in, and
  * the real StreamConnection over the EventSource stand-in — what the app runs,

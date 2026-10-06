@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import type { ProgressUnit } from './types';
 
 const UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];

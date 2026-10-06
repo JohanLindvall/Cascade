@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The API console's rtorrent: every command system.listMethods lists answers
  * as rtorrent 0.16 does, from the simulated session — getters with the

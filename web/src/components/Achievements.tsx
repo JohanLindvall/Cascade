@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import type { ComponentType } from 'react';
 import { bytes, progressText, timestamp } from '../format';
 import type { GameState } from '../types';

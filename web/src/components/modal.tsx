@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { useLatest } from '../hooks';
 import { trapTab, useReturnFocus } from './focus';

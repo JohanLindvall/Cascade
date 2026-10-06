@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package torrentfile has just enough bencode to validate a .torrent and
 // derive its info hash.
 //

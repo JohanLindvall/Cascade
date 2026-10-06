@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package store is the one JSON-backed store for everything Cascade remembers
 // that rtorrent does not: UI preferences, lifetime counters and unlocked
 // badges, when each torrent was first seen and its last totals, the throttle

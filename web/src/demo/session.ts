@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The simulated rtorrent: torrents that download, seed, check and announce
  * over time, with peers, trackers, a log and the counters the badges grow

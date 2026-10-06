@@ -704,7 +704,8 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
 
 ## Development
 
-The whole toolchain lives in the image; no local Go or Node is required (bar `make dev`, below).
+The whole toolchain lives in the image; no local Go or Node is required (bar `make dev` and
+`make demo`, below).
 The Makefile wraps the usual work — `make` on its own lists every target.
 
 ```bash
@@ -759,27 +760,33 @@ Pushing to `main` releases. The release workflow tags the commit `v0.1.<run numb
 image for amd64 and arm64 on native runners, boots each one and probes its API, and only then
 joins them into the tagged manifests described under [Image tags](#image-tags) — so a build that
 does not run never claims a tag. Pushing a `vX.Y.Z` tag yourself publishes under that name
-instead of an auto-generated one.
+instead of an auto-generated one. A push that touches the web UI also republishes the
+[live demo](https://johanlindvall.github.io/Cascade/) to GitHub Pages (`pages.yml`), after running
+the web's tests.
 
 `make run` waits for `/healthz` before launching the browser, so it opens on a working page rather
 than a connection error. The launcher is `xdg-open` (`BROWSER=` overrides it, `open` is used as a
 fallback on macOS); with no display detected it just prints the URL.
 
-Working on the frontend with live reload, against a running container — the one target that needs
-a local Node:
+Working on the frontend with live reload, against a running container — one of the two targets
+that need a local Node:
 
 ```bash
 make dev                                 # cd web && npm ci && npm run dev
                                          # proxies /api to localhost:8080
 CASCADE_DEV_TARGET=http://nas:8080 make dev   # ...or to a container elsewhere
+make demo                                # the live demo instead: no container at all
 ```
+
+The demo (`web/src/demo`) is the same app over a simulated rtorrent that runs in the browser; it
+answers every route as the server does, so it has to follow API changes (AGENTS.md, *Live demo*).
 
 Layout:
 
 ```
 Makefile       build/run/test wrappers around Docker
 server/        the Go server: XML-RPC codec, SCGI transport, capability probe, REST API, state stream
-web/src/       React UI (app/, components/, styles.css)
+web/src/       React UI (app/, components/, styles.css), and demo/: the live demo's simulated server
 docker/        entrypoint that renders rtorrent.rc and supervises both processes,
                cascade-attach and the completion-move helper, the libtorrent/rtorrent
                patches, and the smoke and shell tests

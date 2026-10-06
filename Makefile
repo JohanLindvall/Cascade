@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Cascade — build, run and test targets.
 #
 # Everything but `make dev` runs through Docker: no local Go or Node toolchain
@@ -51,7 +53,7 @@ REF = $(IMAGE):$(TAG)
 
 .DEFAULT_GOAL := help
 .PHONY: help build test race matrix bump-rtorrent run open stop logs shell \
-        attach rtorrent-log smoke clean distclean dev version
+        attach rtorrent-log smoke clean distclean dev demo version
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*##"; printf "\nCascade\n\nUsage: make \033[36m<target>\033[0m [VAR=value]\n\nTargets:\n"} \
@@ -150,6 +152,9 @@ attach: ## Attach to rtorrent's curses UI (detach with ctrl-a d)
 
 dev: ## Run the Vite dev server against a container on port 8080 (needs local Node)
 	cd web && npm ci && npm run dev
+
+demo: ## Run the live demo locally: the UI over a simulated rtorrent (needs local Node)
+	cd web && npm ci && npm run dev:demo
 
 version: ## Report which rtorrent the built image contains, and how it presents itself
 	@docker run --rm --entrypoint rtorrent $(REF) -h 2>&1 | head -n1

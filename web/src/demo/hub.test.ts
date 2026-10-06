@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The simulated stream against the client's own reducer: a snapshot, then
  * deltas with consecutive revisions, which folded through reduce() and the

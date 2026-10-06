@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The context menu's decisions, apart from the component so the node runner
  * can reach them: where it goes, and what a right-click elsewhere does to it.

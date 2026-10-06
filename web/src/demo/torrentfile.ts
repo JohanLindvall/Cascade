@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * Just enough bencode to take an uploaded .torrent the way the server does
  * (server/internal/torrentfile): the same checks in the same order, refused

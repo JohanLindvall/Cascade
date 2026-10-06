@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * Puts the simulated server in place of the real one: fetch and EventSource
  * answer the API's URLs from a session running in this page, and pass every

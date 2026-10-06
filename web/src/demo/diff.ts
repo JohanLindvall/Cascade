@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The server's half of the delta protocol, for the simulated stream: the
  * normalized state the hub keeps (server/internal/stream/patch.go's keyed

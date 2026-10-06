@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Clamp a torrent's path components to what Linux filesystems accept.
 //
 // Dropped into libtorrent's src/torrent/ by apply-libtorrent.sh and wired into

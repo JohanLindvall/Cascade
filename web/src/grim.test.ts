@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The black metal theme re-carves every badge title and rank name. A badge
  * or level title added on the server without a matching entry here shows

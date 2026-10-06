@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Publish the live demo to GitHub Pages: the real web UI, built with
 # `npm run build:demo`, over a simulated rtorrent and Cascade server that run
 # in the visitor's browser (web/src/demo). Nothing is downloaded and nothing

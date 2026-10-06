@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The HTTP data shapes the server speaks. The Go server declares the same
  * shapes in server/internal/contracts/contracts.go; keep the two in step.

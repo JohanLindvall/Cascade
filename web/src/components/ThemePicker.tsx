@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useEffect, useRef, useState, type ComponentType } from 'react';
 import { THEME_MODES, type ResolvedTheme, type ThemeMode } from '../theme';
 import { IconMoon, IconSkull, IconSun, IconTerminal, type IconProps } from './icons';

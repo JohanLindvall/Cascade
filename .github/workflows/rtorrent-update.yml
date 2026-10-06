@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+
 # Keep the default rtorrent on the newest upstream release.
 #
 # Dependabot cannot do this one: rtorrent is a git tag compiled from source in

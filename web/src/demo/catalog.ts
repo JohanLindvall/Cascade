@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The session the live demo opens on: legally redistributable torrents only
  * (Linux and BSD images, Blender's open movies, public-domain films, audio

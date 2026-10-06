@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Command cascade is the Cascade server: the web UI, its API and the state
 // stream for the rtorrent in the same container. Its subcommands are what the
 // container's entrypoint needs before the server starts:

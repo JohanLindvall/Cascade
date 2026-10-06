@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * UI preferences live in a JSON file on the server so they follow the install
  * rather than the browser.

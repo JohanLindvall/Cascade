@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useEffect } from 'react';
 import { useLatest } from '../hooks';
 import { isTextEntry } from './dom';

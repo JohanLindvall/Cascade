@@ -225,7 +225,10 @@ addresses.
 `npm run dev:demo` serves it and `npm run build:demo` writes `web/dist-demo/`, which
 `.github/workflows/pages.yml` publishes from main; CI builds it on every pull request. Nothing
 outside `src/demo/` imports it and the production config adds nothing, so `npm run build` never
-bundles it.
+bundles it. The demo build also gives the page its own title, a description, a canonical URL and
+the Open Graph and Twitter tags a shared link unfurls with — absolute URLs, so they name the
+published site (`CASCADE_DEMO_URL` for a fork's) — and emits `docs/social-preview.png` as the
+preview image, the same 1280×640 picture the repository's settings use as its social preview.
 
 **It has to keep up with the API**: a changed route, contract or stream rule needs the same change
 in `src/demo/`. The typecheck catches contract drift; `diff.test.ts` holds the differ to
@@ -613,6 +616,35 @@ Two other things are easy to get wrong here:
 - **Do not let anything scroll the page sideways.** `html, body` are capped at `100%` with
   `overflow-x: hidden`; wide content scrolls inside its own container instead. Check new layout
   work at 360px before calling it done.
+
+## The project's public face
+
+What a visitor sees decides whether the code gets read, so it is held to the code's standard:
+
+- **The README's first screen** is the five-second pitch: the badges (CI on main, the newest image
+  tag, the license, the live demo), one paragraph of specific claims — each one checkable — the
+  demo link, a `docker run` that works as written (named volumes, the UI bound to 127.0.0.1,
+  `--stop-timeout 60`; checked against the published image), then `docs/screenshot-main.png`,
+  taken from the demo. Keep every claim true when behaviour changes. The pitch names no rtorrent
+  release but the supported range, so the daily bump cannot make it stale; the two phrases
+  `bump-rtorrent.sh` rewrites stay in the highlights and under *Choosing the rtorrent version*.
+- **Licensing is MIT** (`LICENSE`), and every source file says so in its first line — `//`, `#`,
+  `/* */` or `<!-- -->` around `SPDX-License-Identifier: MIT`, after a shebang, the Dockerfile's
+  `# syntax=` directive or the HTML doctype, which must stay first, and followed by a blank line in
+  Go, where a comment touching `package` would become the package's documentation. CI's *License
+  identifiers* step fails on a tracked source file without it, so give a new file the line when
+  you create it. The image also ships rtorrent and libtorrent (GPL-2.0) and Alpine packages; the
+  README's License section says so, and the release labels say MIT for Cascade's own code.
+- **`SECURITY.md`** is the private disclosure path (GitHub's private vulnerability reporting must
+  stay enabled for its link to work) and the security model: what is a vulnerability and what is
+  Cascade working as designed. A new trust boundary, default or switch belongs there too.
+- **`CITATION.cff`** has no version or release date on purpose: every push to main is a release,
+  so either would be stale within the day. `cffconvert --validate` checks it.
+- **Outside the repository**: the GitHub description and topics, private vulnerability reporting,
+  Pages (source: GitHub Actions) and the website field (the demo) are settings, changed with
+  `gh repo edit` or the API, and the social preview image is uploaded by hand in the settings
+  (`docs/social-preview.png`). GHCR's package page reads the description and license from the
+  annotations `release.yml` writes on the image index. When the pitch changes, change those too.
 
 ## Conventions
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The server's checks at the API edge (server/internal/validate), worded the
  * same, so a refusal reads in the demo as it does against a real install. A

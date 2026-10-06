@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The global settings as the server's table has them
  * (server/internal/rtorrent/settings.go), resolved against the release the

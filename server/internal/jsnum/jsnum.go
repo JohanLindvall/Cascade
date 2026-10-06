@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package jsnum reads and writes numbers the way the browser's Number() and
 // String() do, for the places Cascade's behaviour was defined in those terms:
 // environment values, query parameters, preferences and rtorrent's answers.

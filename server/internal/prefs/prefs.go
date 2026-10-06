@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package prefs is the UI preference schema and its repair, applied to both
 // the persisted state and every PATCH /api/prefs body. The browser keeps the
 // same schema in web/src/preferences.ts for its first-paint cache; keep the

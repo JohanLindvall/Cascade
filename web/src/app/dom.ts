@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /** Fields that take typing, and dropped text, for themselves. A checkbox does not. */
 const TEXT_ENTRY =
   'textarea, select, [contenteditable]:not([contenteditable="false"]), ' +
