@@ -1,6 +1,8 @@
 node_modules/
 dist/
 web/dist/
+# The live demo's build (npm run build:demo), published by .github/workflows/pages.yml
+web/dist-demo/
 data/
 *.log
 dist-test/

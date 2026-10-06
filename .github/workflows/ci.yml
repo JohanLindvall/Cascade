@@ -82,6 +82,11 @@ jobs:
       - name: Web unit tests
         working-directory: web
         run: npm test
+      # The live demo (pages.yml) is built from the same sources: a change that
+      # breaks it fails here, not at deploy time.
+      - name: Web live demo build
+        working-directory: web
+        run: npm run build:demo
 
   smoke:
     name: Docker build + API smoke test

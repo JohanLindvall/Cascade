@@ -1,0 +1,123 @@
+/*
+ * The live demo's notice: a slim strip under the app, drawn from the app's own
+ * tokens so it follows every theme. The page becomes a column — the app, then
+ * the strip — so the strip takes its own room instead of covering anything.
+ */
+
+:root {
+  --demo-notice-h: 28px;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+#root {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.demo-notice {
+  /* Above body::before's glow, like .app. */
+  position: relative;
+  z-index: 1;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: calc(var(--demo-notice-h) + env(safe-area-inset-bottom));
+  padding: 0 16px env(safe-area-inset-bottom);
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 82%, transparent);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.demo-notice-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: demo-live 2.4s ease-out infinite;
+}
+
+@keyframes demo-live {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+.demo-notice-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.demo-notice-text strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.demo-notice-link {
+  flex: none;
+  margin-left: auto;
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.demo-notice-link:hover {
+  text-decoration: underline;
+}
+
+.demo-notice-link:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent);
+  outline-offset: 2px;
+}
+
+.demo-notice-short {
+  display: none;
+}
+
+/* The toasts rise above the strip instead of covering its link. */
+.toasts {
+  bottom: calc(16px + var(--demo-notice-h) + env(safe-area-inset-bottom));
+}
+
+@media (max-width: 720px) {
+  .toasts {
+    bottom: calc(8px + var(--demo-notice-h) + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 560px) {
+  .demo-notice {
+    gap: 8px;
+    padding-right: calc(12px + env(safe-area-inset-right));
+    padding-left: calc(12px + env(safe-area-inset-left));
+  }
+
+  .demo-notice-long {
+    display: none;
+  }
+
+  .demo-notice-short {
+    display: inline;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .demo-notice-dot {
+    animation: none;
+  }
+}

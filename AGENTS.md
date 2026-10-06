@@ -63,6 +63,8 @@ web/src/                  React UI. App.tsx composes it from app/ (Toolbar.tsx,
                           cache), one styles.css of design tokens, theme.ts (themes +
                           effect flavors), grim.ts (black metal copy), assets/ (the retro
                           and black metal wordmarks)
+web/src/demo/             the live demo: a simulated rtorrent and Cascade server that run in
+                          the browser, which the app is booted over in demo mode only
 docker/entrypoint.sh      checks the options, renders rtorrent.rc, supervises rtorrent + the
                           server; functions plus main, so the shell tests can source it
 docker/attach.sh          cascade-attach (make attach): rtorrent's curses UI, as the user
@@ -74,6 +76,7 @@ docker/bump-rtorrent.sh   moves the default rtorrent to a newer upstream release
 .github/workflows/ci.yml  Go and web tests, options check, Docker build + API smoke
 .github/workflows/release.yml  multi-arch GHCR publish, tags every main push
 .github/workflows/rtorrent-update.yml  daily: a pull request per new rtorrent
+.github/workflows/pages.yml  publishes the live demo to GitHub Pages on main pushes
 .github/dependabot.yml    Go modules, npm packages and Actions (rtorrent is the workflow's)
 ```
 
@@ -198,6 +201,34 @@ anything that needs interaction or measurement (an open drawer, a dialog, whethe
 between updates) drive the same browser remotely — Chrome's DevTools protocol
 (`--remote-debugging-port`), or Firefox's Marionette where there is no Chrome — and assert on
 `getBoundingClientRect()` rather than on how it looks.
+
+## Live demo
+
+`web/src/demo/` is a public demo of the real UI — https://johanlindvall.github.io/Cascade/ — that
+needs nothing installed: the unmodified app over a simulated rtorrent and Cascade server running in
+the visitor's browser. In `vite --mode demo` a plugin in `vite.config.ts` swaps index.html's
+`/src/main.tsx` for `src/demo/entry.ts`, which installs `install.ts` (fetch and EventSource
+stand-ins for the API's URLs, `transport.ts`) before it imports the app. `backend.ts` answers every
+route the UI calls as the Go server does — the shapes typed with `contracts.ts`, the same checks
+and messages, rtorrent's faults as 502s — over `session.ts`, the simulation (seeded from
+`catalog.ts`, stepped every 250 ms, so one seed is one session); `hub.ts` and `diff.ts` speak the
+stream's protocol and `rpc.ts` is the console's rtorrent. It presents the Dockerfile's
+`RTORRENT_VERSION`, read at build time, so the daily bump keeps it current. Its catalogue stays
+legally redistributable — distribution images, open movies, public-domain and Creative Commons
+works, open datasets — with trackers on RFC 2606 example domains and peers on documentation
+addresses.
+
+`npm run dev:demo` serves it and `npm run build:demo` writes `web/dist-demo/`, which
+`.github/workflows/pages.yml` publishes from main; CI builds it on every pull request. Nothing
+outside `src/demo/` imports it and the production config adds nothing, so `npm run build` never
+bundles it.
+
+**It has to keep up with the API**: a changed route, contract or stream rule needs the same change
+in `src/demo/`. The typecheck catches contract drift; `diff.test.ts` holds the differ to
+`patches.json`, `hub.test.ts` folds the simulated stream through the real `reduce()`,
+`transport.test.ts` drives the real `api.ts` and `StreamConnection` over the stand-ins,
+`backend.test.ts` pins each route's answers and refusals (worded as a running 0.16.24 words them),
+and `game.test.ts` holds the ported badge table to `game-catalog.json`.
 
 ## rtorrent quirks that cost time to discover
 

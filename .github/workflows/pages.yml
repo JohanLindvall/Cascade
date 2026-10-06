@@ -1,0 +1,69 @@
+# Publish the live demo to GitHub Pages: the real web UI, built with
+# `npm run build:demo`, over a simulated rtorrent and Cascade server that run
+# in the visitor's browser (web/src/demo). Nothing is downloaded and nothing
+# talks to a server; the site is static files.
+#
+# It follows main: the UI and the Dockerfile (whose RTORRENT_VERSION the demo
+# presents) are what it is built from. The Node version is the Dockerfile's
+# ARG, read from there as ci.yml reads it. The suite runs first, so a demo
+# that would break never replaces the one that works.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - Dockerfile
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer one waits rather than cancelling one half done.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the demo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Node version
+        id: versions
+        run: |
+          set -eu
+          value="$(sed -n 's/^ARG NODE_VERSION=//p' Dockerfile)"
+          [ -n "$value" ] || { echo "::error::no ARG NODE_VERSION in the Dockerfile"; exit 1; }
+          echo "NODE_VERSION=$value" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ steps.versions.outputs.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install, test, build
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+          npm run build:demo
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: web/dist-demo
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
