@@ -210,9 +210,13 @@ the visitor's browser. In `vite --mode demo` a plugin in `vite.config.ts` swaps 
 `/src/main.tsx` for `src/demo/entry.ts`, which installs `install.ts` (fetch and EventSource
 stand-ins for the API's URLs, `transport.ts`) before it imports the app. `backend.ts` answers every
 route the UI calls as the Go server does — the shapes typed with `contracts.ts`, the same checks
-and messages, rtorrent's faults as 502s — over `session.ts`, the simulation (seeded from
-`catalog.ts`, stepped every 250 ms, so one seed is one session); `hub.ts` and `diff.ts` speak the
-stream's protocol and `rpc.ts` is the console's rtorrent. It presents the Dockerfile's
+and messages, rtorrent's faults as 502s, the settings and `supports` of the release it presents —
+over `session.ts`, the simulation (seeded from `catalog.ts` and stepped every 250 ms from its
+start, which every clock-driven swing is measured from, so one seed is one session whenever it
+runs); `hub.ts` and `diff.ts` speak the stream's protocol and `rpc.ts` is the console's rtorrent.
+The session starts at the first request, not at load: a tab opened in the background asks for
+nothing until it is shown, and the finish a minute in must not have passed unseen by then — so
+nothing may ask the demo for anything before the page is first shown. It presents the Dockerfile's
 `RTORRENT_VERSION`, read at build time, so the daily bump keeps it current. Its catalogue stays
 legally redistributable — distribution images, open movies, public-domain and Creative Commons
 works, open datasets — with trackers on RFC 2606 example domains and peers on documentation
@@ -227,8 +231,9 @@ bundles it.
 in `src/demo/`. The typecheck catches contract drift; `diff.test.ts` holds the differ to
 `patches.json`, `hub.test.ts` folds the simulated stream through the real `reduce()`,
 `transport.test.ts` drives the real `api.ts` and `StreamConnection` over the stand-ins,
-`backend.test.ts` pins each route's answers and refusals (worded as a running 0.16.24 words them),
-and `game.test.ts` holds the ported badge table to `game-catalog.json`.
+`install.test.ts` holds the session's start to the first request, `backend.test.ts` pins each
+route's answers and refusals (worded as a running 0.16.24 words them), and `game.test.ts` holds
+the ported badge table to `game-catalog.json`.
 
 ## rtorrent quirks that cost time to discover
 

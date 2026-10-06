@@ -1,8 +1,10 @@
 /**
  * A seeded generator for the simulation, so one seed is one session: the same
- * torrents, hashes, peers and fluctuations on every load. Streams are forked
- * by name rather than drawn from one sequence, so adding a torrent (or a
- * visitor's upload) cannot shift the numbers every other torrent gets.
+ * torrents, hashes, peers and fluctuations on every load, whenever it happens
+ * (the session measures its swings from its own start, not the epoch).
+ * Streams are forked by name rather than drawn from one sequence, so adding a
+ * torrent (or a visitor's upload) cannot shift the numbers every other
+ * torrent gets.
  */
 
 export interface Random {

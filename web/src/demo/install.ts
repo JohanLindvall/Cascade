@@ -6,9 +6,9 @@
  */
 import { API_BASE } from '../api.ts';
 import { DemoServer } from './backend.ts';
-import { demoEventSource, demoFetch } from './transport.ts';
+import { demoEventSource, demoFetch, type Transport } from './transport.ts';
 
-/** One session for every visitor: the same torrents and the same timeline from the moment the page loads. */
+/** One session for every visitor: the same torrents and the same timeline from the moment the page is first shown. */
 const SEED = 0xca5cade;
 /** The server's preferences file, kept in this browser so a chosen theme outlasts a reload. */
 const PREFERENCES_KEY = 'cascade.demo.prefs';
@@ -22,26 +22,36 @@ function savedPreferences(): unknown {
   }
 }
 
-const server = new DemoServer({
-  now: () => Date.now(),
-  timers: {
-    set: (run, ms) => window.setTimeout(run, ms),
-    clear: (handle) => window.clearTimeout(handle as number | undefined),
-  },
-  seed: SEED,
-  version: __CASCADE_RTORRENT_VERSION__,
-  preferences: savedPreferences(),
-  onPreferences: (preferences) => {
-    try {
-      localStorage.setItem(PREFERENCES_KEY, JSON.stringify(preferences));
-    } catch {
-      // Private mode or a full quota: they last for this visit.
-    }
-  },
-});
+function startServer(): DemoServer {
+  return new DemoServer({
+    now: () => Date.now(),
+    timers: {
+      set: (run, ms) => window.setTimeout(run, ms),
+      clear: (handle) => window.clearTimeout(handle as number | undefined),
+    },
+    seed: SEED,
+    version: __CASCADE_RTORRENT_VERSION__,
+    preferences: savedPreferences(),
+    onPreferences: (preferences) => {
+      try {
+        localStorage.setItem(PREFERENCES_KEY, JSON.stringify(preferences));
+      } catch {
+        // Private mode or a full quota: they last for this visit.
+      }
+    },
+  });
+}
 
-const transport = {
-  server,
+let server: DemoServer | undefined;
+
+const transport: Transport = {
+  // Started by the first request rather than at load: a page opened in a
+  // background tab asks for nothing until it is shown (the stream and the
+  // polls wait for that), and a session started at load would have run its
+  // first finish and badge before anyone could see them.
+  get server() {
+    return (server ??= startServer());
+  },
   apiBase: API_BASE,
   baseUri: document.baseURI,
   // A server on the local network: quick, but not so quick that loading states never show.

@@ -24,8 +24,9 @@ const title = document.createElement('strong');
 title.textContent = 'Live demo';
 message.append(
   title,
-  span('demo-notice-long', ' — a simulated rtorrent running in your browser; nothing is downloaded.'),
-  span('demo-notice-short', ' · simulated, nothing downloads'),
+  // What matters first, so an ellipsis on a narrow screen only cuts the explanation.
+  span('demo-notice-long', ' — nothing is downloaded: a simulated rtorrent running in your browser.'),
+  span('demo-notice-short', ' · nothing downloads'),
 );
 
 const link = document.createElement('a');

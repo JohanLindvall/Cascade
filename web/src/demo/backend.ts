@@ -16,7 +16,7 @@ import type { JsonObject, StreamEvent } from '../stream.ts';
 import { Hub, type Subscription, type Timers } from './hub.ts';
 import { Rpc, RpcFault } from './rpc.ts';
 import { Session, VIEWS, viewsOf, type AddOptions } from './session.ts';
-import { SETTINGS, coerce, refusal, supportsMap, type SettingSpec } from './settings.ts';
+import { SETTINGS, applySetting, coerce, supportsMap, type SettingSpec } from './settings.ts';
 import { parseMagnet, parseTorrent } from './torrentfile.ts';
 import { Fault, HttpError, bool, int, record, text } from './validate.ts';
 
@@ -521,19 +521,22 @@ export class DemoServer {
 
     this.on('GET settings', () => this.settings());
     this.on('POST settings', (call) => {
-      // Every value is checked, in the table's order, before any is applied;
-      // then rtorrent takes them one setter at a time and may refuse one,
-      // leaving the ones before it applied, as a multicall does.
+      // Every value is checked, in the table's order, before any is applied,
+      // and a key the release has no setter for is skipped (SettingEntries).
+      // Then the setters go to rtorrent as one system.multicall, which runs
+      // every one: a refusal leaves the others applied, and the server
+      // reports the first, named after its command.
       const changes: Array<[SettingSpec, number | boolean | string]> = [];
       for (const setting of SETTINGS) {
-        if (!setting.writable || !call.has(setting.key)) continue;
+        if (setting.set === null || !call.has(setting.key)) continue;
         changes.push([setting, coerce(setting.kind, call.body[setting.key], setting.key)]);
       }
+      let refused: Fault | null = null;
       for (const [setting, value] of changes) {
-        const refused = refusal(setting.key, value);
-        if (refused) throw new Fault(-503, `${setting.set ?? setting.key}: ${refused}`);
-        Object.assign(session.settings, { [setting.key]: value });
+        const message = applySetting(session.settings, setting.key, value);
+        if (message !== null) refused ??= new Fault(-503, `${setting.set}: ${message}`);
       }
+      if (refused) throw refused;
       return this.settings();
     });
 
@@ -600,7 +603,7 @@ export class DemoServer {
   /** Every global setting this backend can report. */
   private settings(): Record<string, unknown> {
     const values: Record<string, unknown> = {};
-    for (const setting of SETTINGS) if (setting.readable) values[setting.key] = this.session.settings[setting.key];
+    for (const setting of SETTINGS) if (setting.get !== null) values[setting.key] = this.session.settings[setting.key];
     return values;
   }
 

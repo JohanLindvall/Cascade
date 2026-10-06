@@ -59,7 +59,9 @@ test('the state: the real contract, the demo policy, the release from the Docker
   assert.equal(state.status.statePollDefaultMs, DEFAULT_POLL_MS);
   assert.equal(state.status.backend.clientVersion, '0.16.24');
   assert.equal(state.status.backend.libraryVersion, '0.16.24');
-  assert.ok(Object.values(state.status.backend.supports).every(Boolean), 'every control is offered');
+  // What a real 0.16.24 has no working setter for, so the dialog greys out or hides the same controls.
+  const { supports } = state.status.backend;
+  assert.deepEqual(Object.keys(supports).filter((key) => !supports[key]).sort(), ['maxHttpOpen', 'portOpen', 'sessionDirectory']);
   assert.equal(state.status.backend.methodCount, ok<{ methods: string[] }>('GET', 'rpc/methods').methods.length);
   assert.equal(state.status.downloadDir, '/downloads');
   assert.equal(state.game.enabled, true);
@@ -115,13 +117,19 @@ test('a hash rtorrent does not hold: a 502 carrying its fault, or the bulk route
 });
 
 test('fields are checked before anything changes, and named when refused', () => {
-  const { refused, named } = setup();
+  const { ok, refused, named } = setup();
   const hash = named('ubuntu').hash;
   refused('PATCH', `torrents/${hash}`, { priority: 7 }, 400, '"priority" must be a whole number from 0 to 3');
   refused('PATCH', `torrents/${hash}`, { priority: null }, 400, '"priority" must be a whole number from 0 to 3');
   refused('PATCH', `torrents/${hash}`, { label: 5 }, 400, '"label" must be a string');
   refused('PATCH', `torrents/${hash}`, { label: 'ok', directory: '' }, 400, '"directory" must be a non-empty string');
   assert.equal(named('ubuntu').label, 'linux', 'a refused patch changed a field before the bad one');
+  // rtorrent's own bound on slots: refused by the setter, the other one of the pair applied.
+  refused('PATCH', `torrents/${hash}`, { maxUploads: 70_000, maxDownloads: 9 }, 502, 'd.uploads_max.set: Max uploads must be between 0 and 2^16.');
+  refused('PATCH', `torrents/${hash}`, { maxDownloads: 65_537 }, 502, 'd.downloads_max.set: Max downloads must be between 0 and 2^16.');
+  ok('PATCH', `torrents/${hash}`, { maxUploads: 65_536 });
+  const slots = (command: string) => ok<{ result: unknown }>('POST', 'rpc', { method: command, params: [hash] }).result;
+  assert.deepEqual([slots('d.uploads_max'), slots('d.downloads_max')], [65_536, 9]);
   refused('POST', `torrents/${hash}/files/0/priority`, { priority: 5 }, 400, '"priority" must be a whole number from 0 to 2');
   refused('POST', `torrents/${hash}/files/9/priority`, { priority: 1 }, 502, 'f.priority.set: invalid parameters: index not found');
   refused('POST', `torrents/${hash}/trackers/9/enabled`, { enabled: true }, 502, 'invalid parameters: index not found');
@@ -160,7 +168,10 @@ test('a torrent\'s fields: priority, label, throttle group, directory, slots, fi
   t = named('Sintel');
   assert.equal(t.status, 'stopped', 'a directory change leaves the torrent stopped');
   assert.equal(t.directory, '/downloads/films/Sintel (2010)');
-  assert.equal(t.basePath, '/downloads/films/Sintel (2010)');
+  // libtorrent froze the paths when it last opened the torrent; they move with the next open.
+  assert.equal(t.basePath, '/downloads/Sintel (2010)');
+  ok('POST', `torrents/${hash}/action/start`);
+  assert.equal(named('Sintel').basePath, '/downloads/films/Sintel (2010)');
 
   ok('POST', `torrents/${hash}/files/1/priority`, { priority: 0 });
   assert.equal(ok<TorrentFile[]>('GET', `torrents/${hash}/files`)[1].priority, 0);
@@ -189,6 +200,9 @@ test('removing: the data goes only from inside the data roots, refused before th
 
   const cosmos = named('Cosmos');
   ok('PATCH', `torrents/${cosmos.hash}`, { directory: '/mnt/elsewhere' });
+  // What is checked is d.base_path, which moves only when the torrent is opened there.
+  assert.equal(named('Cosmos').basePath, '/downloads/Cosmos Laundromat (2015)');
+  ok('POST', `torrents/${cosmos.hash}/action/start`);
   assert.deepEqual(ok('POST', 'torrents/remove', { hashes: [cosmos.hash], deleteData: true }), {
     ok: false,
     errors: [`${cosmos.hash}: refusing to delete "/mnt/elsewhere/Cosmos Laundromat (2015)": it is outside the permitted data roots or would delete a data root (/downloads)`],
@@ -273,6 +287,8 @@ test('settings: every readable one reported, a bad value refused by name, a good
   assert.ok(!('dhtMode' in settings) && !('encryption' in settings), 'write-only settings cannot be read back');
   assert.equal(settings.directory, '/downloads');
   assert.equal(settings.sessionDirectory, '/config/session/');
+  assert.ok(!('portOpen' in settings), '0.16 has no network.port_open');
+  assert.equal(settings.maxHttpOpen, 32);
   refused('POST', 'settings', { maxPeers: 10, downloadRate: -5 }, 400, '"downloadRate" must be a whole number from 0 to 9007199254740991');
   assert.equal(ok<Record<string, unknown>>('GET', 'settings').maxPeers, 200, 'a refused patch applied part of itself');
   const updated = ok<Record<string, unknown>>('POST', 'settings', { downloadRate: 1048576, pex: 'off', encryption: 'require, require_RC4', sessionDirectory: '/x' });
@@ -284,6 +300,71 @@ test('settings: every readable one reported, a bad value refused by name, a good
   // What rtorrent refuses itself is its fault, relayed with the command that raised it.
   refused('POST', 'settings', { encryption: 'bogus' }, 502, "protocol.encryption.set: Invalid encryption option: 'bogus'");
   refused('POST', 'settings', { portRange: '6881' }, 502, 'network.listen.port.range.set: Invalid port_range argument.');
+  // A key the release has no working setter for is skipped, as the server's table skips it.
+  ok('POST', 'settings', { maxHttpOpen: 40, portOpen: false });
+  const after = ok<Record<string, unknown>>('GET', 'settings');
+  assert.equal(after.maxHttpOpen, 32);
+  assert.ok(!('portOpen' in after));
+});
+
+test('settings: what 0.16.24 refuses, in its words, and what it takes, as it reads it back', () => {
+  const { ok, refused } = setup();
+  const before = ok<Record<string, unknown>>('GET', 'settings');
+  const cases: Array<[Record<string, unknown>, string]> = [
+    [{ memoryMax: 536_870_911 }, 'pieces.memory.max.set: set_max_memory_usage: memory limit too low, must be at least 512 MB : 536870911'],
+    [{ syncTimeout: 3601 }, 'pieces.sync.timeout.set: set_timeout_sync: invalid timeout, must be between 0 and 3600 seconds : 3601'],
+    [{ preloadType: 3 }, 'pieces.preload.type.set: set_preload_type: invalid type : 3'],
+    [{ preloadMinSize: 1023 }, 'pieces.preload.min_size.set: set_preload_min_size: invalid size, must be at least 1 KB : 1023'],
+    [{ preloadMinRate: 1023 }, 'pieces.preload.min_rate.set: set_preload_required_rate: invalid rate, must be at least 1 KB/s : 1023'],
+    [{ maxOpenSockets: 511 }, 'network.max_open_sockets.set: set_max_size_and_adjust: max_open too low, minimum is 512'],
+    [{ xmlrpcSizeLimit: 1023 }, 'network.xmlrpc.size_limit.set: XMLRPC size limit is too small to hold a request.'],
+    [{ xmlrpcSizeLimit: 67_108_865 }, 'network.xmlrpc.size_limit.set: XMLRPC size limit cannot exceed the SCGI content size limit.'],
+    [{ portRange: '0-10' }, 'network.listen.port.range.set: Invalid listen port range.'],
+    [{ portRange: '7000-6000' }, 'network.listen.port.range.set: Invalid listen port range.'],
+    [{ portRange: '70000-70001' }, 'network.listen.port.range.set: Port range out-of-bounds.'],
+    [{ bindAddress: 'not-an-address' }, 'network.bind_address.set: Could not get address info: not-an-address: Name does not resolve'],
+    [{ bindAddress: '::1' }, 'network.bind_address.set: Tried to set a bind address that is not an unspec/inet address.'],
+    [{ bindAddress: 'localhost' }, 'network.bind_address.set: Tried to set a bind address that is not an unspec/inet address.'],
+    [{ bindAddressV4: '::1' }, 'network.bind_address.ipv4.set: Could not get address info: ::1: Name has no usable address'],
+    [{ bindAddressV6: '127.0.0.1' }, 'network.bind_address.ipv6.set: Could not get address info: 127.0.0.1: Name has no usable address'],
+    [{ localAddress: '' }, 'network.local_address.set: Tried to set local address to an any address.'],
+    [{ localAddress: 'not-an-address' }, 'network.local_address.set: Could not get address info: not-an-address: Name does not resolve'],
+    [{ proxyAddress: 'bogus' }, 'network.http.proxy_address.set: Unsupported proxy scheme: '],
+    [{ proxyHttp: '' }, 'network.proxy.http.set: Unsupported proxy scheme: '],
+    [{ proxyHttp: 'ftp://10.0.0.1:21' }, 'network.proxy.http.set: Unsupported proxy scheme: ftp'],
+    [{ proxyGlobal: 'bogus' }, 'network.proxy.global.set: Proxy address must include a scheme.'],
+    [{ proxyGlobal: 'http://10.0.0.1' }, 'network.proxy.global.set: Proxy address must include a port.'],
+    [{ proxyGlobal: 'ftp://10.0.0.1:21' }, 'network.proxy.global.set: Unsupported proxy scheme: ftp'],
+    // 0.16.24 dies on a host name here; the demo gives the refusal its code means.
+    [{ proxyGlobal: 'http://proxy.example.org:3128' }, 'network.proxy.global.set: Proxy address numeric lookup failed: proxy.example.org'],
+    [{ dhtMode: 'bogus' }, 'dht.mode.set: Invalid dht mode: bogus'],
+  ];
+  for (const [body, error] of cases) assert.equal(refused('POST', 'settings', body, 502, error).faultCode, -503);
+  assert.deepEqual(ok('GET', 'settings'), before, 'a refused value was kept');
+
+  const taken = ok<Record<string, unknown>>('POST', 'settings', {
+    memoryMax: 536_870_912, syncTimeout: 3600, preloadType: 2, maxOpenSockets: 512, portRange: '6881-6889x', encryption: 'require_RC4,bogus',
+    bindAddress: '0.0.0.0', bindAddressV4: '', bindAddressV6: '::1', localAddress: '192.0.2.10', proxyHttp: 'http://proxy.example.org:3128',
+    proxyGlobal: 'socks5://10.0.0.1:1080',
+  });
+  assert.equal(taken.portRange, '6881-6889', 'sscanf reads two numbers and ignores the rest');
+  assert.equal(taken.memoryMax, 536_870_912);
+  assert.equal(taken.bindAddressV6, '::1');
+  assert.equal(taken.proxyAddress, 'http://proxy.example.org:3128', '0.16 keeps the HTTP proxy under both names');
+  assert.equal(taken.proxyGlobal, 'socks5://10.0.0.1:1080');
+  assert.equal(ok<Record<string, unknown>>('POST', 'settings', { proxyGlobal: '' }).proxyGlobal, '');
+});
+
+test('settings: a patch is one multicall — every setter runs, and the first refusal in the table\'s order is reported', () => {
+  const { ok, refused } = setup();
+  refused('POST', 'settings', { downloadRate: 123_904, encryption: 'bogus', checkHashOnCompletion: false }, 502,
+    "protocol.encryption.set: Invalid encryption option: 'bogus'");
+  const settings = ok<Record<string, unknown>>('GET', 'settings');
+  assert.equal(settings.downloadRate, 123_904);
+  assert.equal(settings.checkHashOnCompletion, false, 'a setter after the refused one ran too');
+  refused('POST', 'settings', { syncTimeout: 4000, memoryMax: 1, pex: false }, 502,
+    'pieces.memory.max.set: set_max_memory_usage: memory limit too low, must be at least 512 MB : 1');
+  assert.equal(ok<Record<string, unknown>>('GET', 'settings').pex, false);
 });
 
 test('throttle groups: names checked, rates rounded up to whole KiB/s, unknown ones a 404', () => {
@@ -356,6 +437,14 @@ test('the API console: commands that answer from the session, rtorrent\'s faults
   assert.equal(fault('f.path', [`${ubuntu.hash}:f9`]), 'invalid parameters: index not found');
   assert.equal(fault('protocol.encryption.set', ['', 'bogus']), "Invalid encryption option: 'bogus'");
   assert.equal(fault('log.add_output', ['', 'dht_debug', 'cascade']), "invalid option name : enum:11 name:'dht_debug'");
+  assert.equal(fault('protocol.encryption.set', ['']), 'No encryption options specified.');
+  assert.equal(fault('network.listen.port.range.set', ['', '70000-70001']), 'Port range out-of-bounds.');
+  // 0.16 keeps the old HTTP limit's setter as one that only warns, and has no port_open at all.
+  assert.deepEqual(rpc('network.http.max_total_connections.set', ['', 40]), { ok: true, result: 0 });
+  assert.equal(rpc('network.http.max_total_connections').result, 32);
+  assert.ok(ok<{ lines: string[] }>('GET', 'log', undefined, 'lines=5').lines.some((line) =>
+    / W network\.http\.max_total_connections\.set is deprecated, use system\.sockets\.http\.min_alloc\.set instead\.$/.test(line)));
+  assert.equal(rpc('network.port_open').fault?.code, -506);
   // rtorrent keeps a priority's low two bits.
   rpc('d.priority.set', [ubuntu.hash, 9]);
   assert.equal(named('ubuntu').priority, 1);

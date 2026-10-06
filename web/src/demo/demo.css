@@ -1,7 +1,8 @@
 /*
  * The live demo's notice: a slim strip under the app, drawn from the app's own
  * tokens so it follows every theme. The page becomes a column — the app, then
- * the strip — so the strip takes its own room instead of covering anything.
+ * the strip — so the strip takes its own room instead of covering anything,
+ * and the app's fixed layers (dialogs, sheets, the drawer, menus) cover it.
  */
 
 :root {
@@ -19,9 +20,10 @@ body {
 }
 
 .demo-notice {
-  /* Above body::before's glow, like .app. */
+  /* Above body::before's glow (also z-index 0, but earlier in the tree) and
+     under .app (z-index 1), so the app's fixed layers paint over the strip. */
   position: relative;
-  z-index: 1;
+  z-index: 0;
   flex: none;
   display: flex;
   align-items: center;
@@ -36,22 +38,36 @@ body {
   line-height: 1.4;
 }
 
+/* The ring is a scaled copy rather than an animated box-shadow, which would
+   repaint on every frame: the status dots' ping in styles.css, for the same
+   reason. */
 .demo-notice-dot {
+  position: relative;
   flex: none;
   width: 7px;
   height: 7px;
   border-radius: 50%;
+  background: var(--ok);
+}
+
+.demo-notice-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   background: var(--ok);
   animation: demo-live 2.4s ease-out infinite;
 }
 
 @keyframes demo-live {
   0% {
-    box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 55%, transparent);
+    transform: scale(1);
+    opacity: 0.55;
   }
   70%,
   100% {
-    box-shadow: 0 0 0 6px transparent;
+    transform: scale(2.7);
+    opacity: 0;
   }
 }
 
@@ -100,7 +116,9 @@ body {
   }
 }
 
-@media (max-width: 560px) {
+/* The long text needs about 600px in the retro theme's monospace, so the
+   short one takes over well before it would be cut off. */
+@media (max-width: 800px) {
   .demo-notice {
     gap: 8px;
     padding-right: calc(12px + env(safe-area-inset-right));
@@ -117,7 +135,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .demo-notice-dot {
+  .demo-notice-dot::after {
     animation: none;
   }
 }

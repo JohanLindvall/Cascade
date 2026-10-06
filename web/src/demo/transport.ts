@@ -95,19 +95,21 @@ export function demoFetch(transport: Transport, realFetch: typeof fetch): typeof
     const contentType = request.headers.get('content-type') ?? '';
     const hasBody = request.method !== 'GET' && request.method !== 'HEAD';
     const multipart = hasBody && /^multipart\/form-data/i.test(contentType);
+    const addressed = { method: request.method, path: url.pathname.slice(apiPath.length), query: url.searchParams, contentType };
+    const latency = transport.latency();
+    if (init?.keepalive && !multipart && (init.body == null || typeof init.body === 'string')) {
+      // A keepalive request is one made to outlive the page — the preferences
+      // flushed on pagehide — and nothing after an await runs once the page is
+      // going, so the server takes it before this function first waits.
+      const answer = transport.server.handle({ ...addressed, body: hasBody ? init.body ?? '' : undefined });
+      await wait(latency, signal);
+      return toResponse(answer, request.method);
+    }
     const parts = multipart ? await partsOf(request) : undefined;
     const body = hasBody && !multipart ? await request.text() : undefined;
     // Half the wait before the server sees it and half after, as with a round trip.
-    const latency = transport.latency();
     await wait(latency / 2, signal);
-    const answer = transport.server.handle({
-      method: request.method,
-      path: url.pathname.slice(apiPath.length),
-      query: url.searchParams,
-      contentType,
-      body,
-      parts,
-    });
+    const answer = transport.server.handle({ ...addressed, body, parts });
     await wait(latency / 2, signal);
     return toResponse(answer, request.method);
   };

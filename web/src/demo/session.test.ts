@@ -8,6 +8,7 @@ import type { Torrent } from '../contracts.ts';
 import { parseLogLine } from '../format.ts';
 import { CATALOG, LONG_NAME } from './catalog.ts';
 import { HISTORY_LENGTH, Session } from './session.ts';
+import type { TorrentInfo } from './torrentfile.ts';
 
 const START = Date.UTC(2026, 9, 6, 19, 0, 0) + 437;
 const SEED = 0xca5cade;
@@ -16,6 +17,23 @@ function byName(torrents: Torrent[], prefix: string): Torrent {
   const found = torrents.find((t) => t.name.startsWith(prefix));
   assert.ok(found, `no torrent named ${prefix}`);
   return found;
+}
+
+/** A torrent's log lines, without the time, the level and the hash. */
+function linesOf(session: Session, hash: string): string[] {
+  return session.logTail(3000)
+    .filter((line) => line.includes(hash))
+    .map((line) => line.replace(/^\d+ ([A-Z] )?/, '').replace(`${hash}->`, ''));
+}
+
+/** Each wanted line, in this order, with anything between them. */
+function assertInOrder(lines: string[], wanted: string[]): void {
+  let at = 0;
+  for (const line of wanted) {
+    const found = lines.indexOf(line, at);
+    assert.ok(found >= 0, `missing, or out of order: ${line}\n${lines.slice(at).join('\n')}`);
+    at = found + 1;
+  }
 }
 
 test('the session opens as the catalogue describes: 18-24 torrents, every state, one private, one tracker message', () => {
@@ -80,7 +98,8 @@ test('over simulated hours: progress only grows and stays within the size, total
       if (t.status === 'downloading' || t.status === 'seeding') assert.equal(t.isActive && t.isOpen, true);
       const old = before.get(t.hash);
       if (!old) continue;
-      assert.ok(t.progress >= old.progress, `${t.name} went back from ${old.progress} to ${t.progress}`);
+      // Only the check on completion takes it back, re-verifying from the first piece.
+      if (t.hashing !== 2) assert.ok(t.progress >= old.progress, `${t.name} went back from ${old.progress} to ${t.progress}`);
       assert.ok(t.downTotal >= old.downTotal && t.upTotal >= old.upTotal, `${t.name} totals shrank`);
       if (old.progress < 1 && t.progress >= 1) {
         finishedSeen += 1;
@@ -134,14 +153,175 @@ test('what the torrents move is what the lifetime counters and the session total
   assert.ok(Math.abs(after.status.downTotal - before.status.downTotal - down) <= tolerance);
 });
 
-test('the same seed is the same session; another seed another one', () => {
-  const run = (seed: number) => {
-    const session = new Session({ seed, now: START });
-    for (const ms of [1500, 9000, 61_000, 300_000]) session.advance(START + ms);
-    return { ...session.snapshot(), game: session.game(), log: session.logTail(400), peers: session.peers(session.list()[3].hash) };
+test('the same seed is the same session, whenever it starts; another seed another one', () => {
+  // Everything read at the same times after the start, with every timestamp counted from the start.
+  const run = (seed: number, start: number) => {
+    const session = new Session({ seed, now: start });
+    const origin = Math.floor(start / 1000);
+    const since = (at: number) => (at > 0 ? at - origin : at);
+    const reads = [1500, 9000, 61_000, 300_000].map((ms) => {
+      session.advance(origin * 1000 + ms);
+      const { torrents, status } = session.snapshot();
+      const game = session.game();
+      return {
+        torrents: torrents.map((t) => ({
+          ...t, addedAt: since(t.addedAt), startedAt: since(t.startedAt), finishedAt: since(t.finishedAt), createdAt: since(t.createdAt),
+        })),
+        status: { ...status, history: status.history.map((sample) => ({ ...sample, t: since(sample.t) })) },
+        peers: torrents.map((t) => session.peers(t.hash).map((peer) =>
+          `${peer.address}:${peer.port}:${peer.peerRate}:${peer.upTotal}:${peer.downTotal}`)),
+        game: { ...game, achievements: game.achievements.map((item) => ({ ...item, unlockedAt: item.unlockedAt && since(item.unlockedAt) })) },
+      };
+    });
+    const log = session.logTail(3000).map((line) => line.replace(/^\d+/, (stamp) => String(since(Number(stamp)))));
+    return { reads, log };
   };
-  assert.deepEqual(run(SEED), run(SEED));
-  assert.notDeepEqual(run(SEED).torrents.map((t) => t.hash), run(SEED + 1).torrents.map((t) => t.hash));
+  const first = run(SEED, START);
+  assert.deepEqual(run(SEED, START), first);
+  // Loaded seven minutes later, or a day and half a second later: the same rates, peers, DHT, graph, log and badges.
+  assert.deepEqual(run(SEED, START + 433_000), first);
+  assert.deepEqual(run(SEED, START + 86_400_500), first);
+  assert.notDeepEqual(run(SEED + 1, START).reads[0].torrents.map((t) => t.hash), first.reads[0].torrents.map((t) => t.hash));
+});
+
+test('a finished download is checked again before it seeds, then confirmed without announcing again', () => {
+  const session = new Session({ seed: SEED, now: START });
+  const arch = byName(session.list(), 'archlinux');
+  const phases: string[] = [];
+  let checked = false;
+  for (let ms = 250; ms <= 60_000; ms += 250) {
+    session.advance(START + ms);
+    const t = byName(session.list(), 'archlinux');
+    if (phases.at(-1) !== t.status) phases.push(t.status);
+    if (t.status !== 'checking') continue;
+    // pieces.hash.on_completion: d.complete is not set yet, so the check shows from its first piece.
+    checked = true;
+    assert.equal(t.hashing, 2);
+    assert.ok(t.progress < 1 && t.completed < t.size);
+    assert.equal(t.ratio, 0);
+    assert.equal(t.finishedAt, 0);
+    assert.equal(t.isActive, false);
+  }
+  assert.ok(checked);
+  assert.deepEqual(phases, ['downloading', 'checking', 'seeding']);
+  const done = byName(session.list(), 'archlinux');
+  assert.equal(done.progress, 1);
+  assert.ok(done.finishedAt > Math.floor(START / 1000) + 40, 'stamped when confirmed');
+  assert.equal(session.game().stats.completed, 44, 'counted once, when confirmed');
+
+  const lines = linesOf(session, arch.hash);
+  const from = lines.indexOf('download_list: Received finished.');
+  assert.ok(from >= 0);
+  const finish = lines.slice(from);
+  const trackers = `trackers:${arch.trackerCount}`;
+  assertInOrder(finish, [
+    'download_list: Received finished.',
+    'download_list: Hash queue.',
+    'download_list: Pausing download: flags:1.',
+    'download: Stopping torrent: flags:1.',
+    `tracker_controller: disabled : ${trackers}`,
+    'download: Closing torrent: flags:0.',
+    'download_list: Opening download.',
+    'download: Checking hash: allocated:1 try_quick:0.',
+    'download_list: Hash done.',
+    'download_list: Confirming finished.',
+    'tracker_controller: sending completed event : queued',
+    'download_list: Resuming download: flags:e.',
+    'download: Starting torrent: flags:e.',
+    `tracker_controller: enabled : ${trackers}`,
+  ]);
+  // The trackers hear nothing of the pause or the resume, and the baseline is kept.
+  assert.ok(!finish.some((line) => /sending (stop|start) event|sending (stopped|started) :|Setting new baseline/.test(line)), finish.join('\n'));
+  // The completed event goes out when the trackers are next due.
+  session.advance(START + 2_000_000);
+  const later = linesOf(session, arch.hash);
+  const announced = later.slice(later.indexOf('download_list: Confirming finished.')).filter((line) => line.startsWith('tracker_list: sending '));
+  assert.ok(announced.length > 0 && announced[0].startsWith('tracker_list: sending completed :'), announced.join('\n'));
+});
+
+test('with the check on completion off, a finish is confirmed at once and announced while it runs', () => {
+  const session = new Session({ seed: SEED, now: START });
+  session.settings.checkHashOnCompletion = false;
+  const arch = byName(session.list(), 'archlinux');
+  const phases: string[] = [];
+  for (let ms = 250; ms <= 60_000; ms += 250) {
+    session.advance(START + ms);
+    const status = byName(session.list(), 'archlinux').status;
+    if (phases.at(-1) !== status) phases.push(status);
+  }
+  assert.deepEqual(phases, ['downloading', 'seeding']);
+  const finish = linesOf(session, arch.hash);
+  assertInOrder(finish, [
+    'download_list: Received finished.',
+    'download_list: Confirming finished.',
+    'tracker_controller: sending completed event : requesting',
+  ]);
+  assert.ok(!finish.includes('download_list: Hash queue.'));
+});
+
+test('a recheck of a complete torrent: d.complete holds, the ratio reads 0 until it ends, the best ratio is left alone', () => {
+  const session = new Session({ seed: SEED, now: START });
+  session.advance(START + 5000);
+  const ubuntu = byName(session.list(), 'ubuntu');
+  assert.ok(Math.abs(ubuntu.ratio - 3.42) < 0.01, `${ubuntu.ratio}`);
+  session.action(ubuntu.hash, 'recheck');
+  let checking = 0;
+  for (let ms = 5250; ms <= 180_000; ms += 250) {
+    session.advance(START + ms);
+    const t = byName(session.list(), 'ubuntu');
+    if (t.status !== 'checking') break;
+    checking += 1;
+    // As rtorrent has it: no ratio over the bytes checked so far, and no progress lost to celebrate again.
+    assert.equal(t.ratio, 0);
+    assert.equal(t.progress, 1);
+    assert.equal(t.eta, 0);
+    assert.ok(t.completed < t.size);
+  }
+  assert.ok(checking > 40, `checked for only ${checking} steps`);
+  const after = byName(session.list(), 'ubuntu');
+  assert.equal(after.status, 'paused');
+  assert.equal(after.ratio, ubuntu.ratio);
+  assert.equal(after.finishedAt, ubuntu.finishedAt);
+  // The best is what some torrent really has: Debian's 12.84, grown by what it seeded meanwhile.
+  const best = session.game().stats.bestRatio;
+  assert.equal(best, Math.max(...session.list().map((t) => t.ratio)));
+  assert.ok(best > 12.84 && best < 13, `${best}`);
+});
+
+test('d.timestamp.started is set at the first start and kept; a finish with files skipped stamps nothing', () => {
+  const session = new Session({ seed: SEED, now: START });
+  for (const t of session.list()) {
+    if (t.status === 'checking') assert.equal(t.startedAt, 0, `${t.name} started before its first check ended`);
+    else assert.equal(t.startedAt, t.addedAt, t.name);
+    if (t.finishedAt > 0) assert.ok(t.startedAt <= t.finishedAt, `${t.name} started after it finished`);
+  }
+  const freebsd = byName(session.list(), 'FreeBSD');
+  ['pause', 'resume', 'stop', 'start'].forEach((action, i) => {
+    session.advance(START + (i + 1) * 2000);
+    session.action(freebsd.hash, action);
+  });
+  assert.equal(byName(session.list(), 'FreeBSD').status, 'seeding');
+  assert.equal(byName(session.list(), 'FreeBSD').startedAt, freebsd.startedAt);
+  const tears = byName(session.list(), 'Tears of Steel');
+  session.advance(START + 120_000);
+  const started = byName(session.list(), 'Tears of Steel');
+  assert.equal(started.status, 'downloading');
+  assert.ok(started.startedAt > tears.addedAt && started.startedAt <= Math.floor(START / 1000) + 120, 'its start is when its check ended');
+
+  const info: TorrentInfo = {
+    infoHash: 'AB'.repeat(20), name: 'partial', size: 3 * 1024 * 1024, pieceLength: 256 * 1024, isPrivate: false, isMultiFile: true,
+    files: [{ path: 'wanted.bin', size: 2 * 1024 * 1024 }, { path: 'skipped.bin', size: 1024 * 1024 }],
+    trackers: [['http://tracker.example.org/announce']], createdAt: 0,
+  };
+  const partial = session.addTorrent(info, { start: true, directory: '', label: '' });
+  session.setFilePriority(partial.hash, 1, 0);
+  session.advance(START + 180_000);
+  const t = byName(session.list(), 'partial');
+  assert.equal(session.files(t.hash)[0].progress, 1, 'the wanted file is in');
+  assert.equal(t.status, 'downloading');
+  assert.ok(t.progress < 1);
+  assert.equal(t.finishedAt, 0);
+  assert.ok(!linesOf(session, t.hash).includes('download_list: Received finished.'));
 });
 
 test('throttle groups and the global limit hold the rates', () => {
@@ -196,7 +376,7 @@ test('the log is rtorrent\'s format throughout, and in order', () => {
     assert.ok(parsed.at.getTime() >= last, `out of order: ${line}`);
     last = parsed.at.getTime();
   }
-  assert.ok(lines.some((line) => / I [0-9A-F]{40}->download_list: Confirming finished download\.$/.test(line)));
+  assert.ok(lines.some((line) => / I [0-9A-F]{40}->download_list: Confirming finished\.$/.test(line)));
   assert.ok(lines.some((line) => /->tracker_list: received \d+ peers : /.test(line)));
   assert.ok(lines.some((line) => /->tracker_list: received failure : .* msg:'/.test(line)));
 });
@@ -213,7 +393,8 @@ test('the checking torrent finishes its check and starts; a recheck clears the m
   let t = byName(session.list(), failing.name);
   assert.equal(t.status, 'checking');
   assert.equal(t.message, '');
-  assert.ok(t.progress < 1, 'a recheck starts from nothing verified');
+  assert.ok(t.completed < t.size, 'a recheck starts from nothing verified');
+  assert.equal(t.progress, 1, 'd.complete holds through a recheck');
   session.advance(START + 300_000);
   t = byName(session.list(), failing.name);
   assert.equal(t.status, 'paused');

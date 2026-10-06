@@ -7,9 +7,9 @@
  * refused argument are copied from a running 0.16.24 wherever one was checked.
  */
 import {
-  type Session, type SimTorrent, SESSION_DIR, VIEWS, basePathOf, completedBytes, directoryOf, isComplete, ratioPermille, viewsOf,
+  type Session, type SimTorrent, SESSION_DIR, VIEWS, basePathOf, completedBytes, directoryOf, ratioPermille, viewsOf,
 } from './session.ts';
-import { SETTINGS, refusal } from './settings.ts';
+import { SETTINGS, applySetting } from './settings.ts';
 import { HttpError } from './validate.ts';
 
 export class RpcFault extends Error {
@@ -95,7 +95,7 @@ function torrentGetters(session: Session): Record<string, (t: SimTorrent) => Val
     'd.bytes_done': (t) => completedBytes(t),
     'd.chunk_size': (t) => t.chunk,
     'd.chunks_hashed': (t) => (t.check ? Math.floor(t.check.pos / t.chunk) : Math.ceil(t.size / t.chunk)),
-    'd.complete': (t) => flag(isComplete(t)),
+    'd.complete': (t) => flag(t.complete),
     'd.completed_bytes': (t) => completedBytes(t),
     'd.completed_chunks': (t) => row(t).chunksDone,
     'd.creation_date': (t) => t.createdAt,
@@ -108,7 +108,7 @@ function torrentGetters(session: Session): Record<string, (t: SimTorrent) => Val
     'd.hash': (t) => t.hash,
     'd.hashing': (t) => t.hashing,
     'd.hashing_failed': () => 0,
-    'd.incomplete': (t) => flag(!isComplete(t)),
+    'd.incomplete': (t) => flag(!t.complete),
     'd.is_active': (t) => flag(t.active),
     'd.is_hash_checked': (t) => flag(t.hashing === 0 && t.unchecked === null),
     'd.is_hash_checking': (t) => flag(t.hashing > 0),
@@ -196,11 +196,11 @@ function fileGetters(session: Session): Record<string, (t: SimTorrent, index: nu
       if (!t.everOpened) return '';
       const name = row(t, i).onDisk || t.files[i].path.slice(t.files[i].path.lastIndexOf('/') + 1);
       const dirs = t.files[i].path.split('/').slice(0, -1);
-      return [t.multi ? basePathOf(t) : t.parent, ...dirs, name].join('/');
+      return [t.multi ? basePathOf(t) : t.frozen, ...dirs, name].join('/');
     },
     'f.is_created': (t, i) => flag(row(t, i).created),
     'f.is_open': () => 0,
-    'f.last_touched': (t) => t.startedAt * 1_000_000,
+    'f.last_touched': (t) => Math.max(t.activeSince, t.startedAt) * 1_000_000,
     'f.offset': (t, i) => t.files[i].offset,
     'f.path': (t, i) => t.files[i].path,
     'f.path_components': (t, i) => t.files[i].path.split('/'),
@@ -534,20 +534,25 @@ export class Rpc {
             case 'string':
               next = string(params);
               break;
-            case 'flags': {
-              // protocol.encryption.set takes one argument per flag.
-              const flags = params.slice(1).map((_flag, i) => string(params, i + 1));
-              next = flags.length > 0 ? flags.join(',') : 'none';
+            case 'flags':
+              // protocol.encryption.set takes one argument per flag; given none, it refuses.
+              next = params.slice(1).map((_flag, i) => string(params, i + 1)).join(',');
               break;
-            }
           }
-          const refused = refusal(setting.key, next);
-          if (refused) throw new RpcFault(-503, refused);
-          Object.assign(session.settings, { [setting.key]: next });
+          const refused = applySetting(session.settings, setting.key, next);
+          if (refused !== null) throw new RpcFault(-503, refused);
           return 0;
         });
       }
     }
+    // 0.16 keeps the old name of the HTTP connection limit as a setter that
+    // only warns, which is why the settings table offers no setter for it.
+    this.on('network.http.max_total_connections.set', (params) => {
+      if (typeof params[0] !== 'string') throw new RpcFault(-503, 'invalid parameters: target must be a string');
+      value(params);
+      session.note('W', 'network.http.max_total_connections.set is deprecated, use system.sockets.http.min_alloc.set instead.');
+      return 0;
+    });
     const rates = () => session.globalRates();
     this.on('throttle.global_down.rate', () => rates().down);
     this.on('throttle.global_up.rate', () => rates().up);

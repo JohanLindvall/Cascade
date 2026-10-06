@@ -5,7 +5,10 @@
  * the node test runner drives it through simulated hours in a moment.
  *
  * Time moves in fixed steps from the moment the session was made, however
- * often it is read: the same seed and the same reads give the same session.
+ * often it is read, and everything that varies with the clock — the rates'
+ * swings, which peers are connected, the DHT's size — runs from that moment
+ * rather than from the epoch: the same seed and the same actions give the
+ * same session whenever it starts.
  * Everything shown is derived from one model, so the numbers agree with each
  * other: a torrent's completed bytes are its files', its ratio its own totals',
  * the global rates the sum of the torrents', and the badges' lifetime totals
@@ -42,6 +45,8 @@ const DELETE_ROOTS = [DOWNLOAD_DIR];
 
 const NOT_FOUND = 'invalid parameters: info-hash not found';
 const NO_INDEX = 'invalid parameters: index not found';
+/** The most upload or download slots rtorrent gives one torrent: 2^16. */
+const MAX_SLOTS = 65_536;
 
 /** rtorrent 0.16 dropped these subsystem groups (service/logs.go), so it refuses to attach them. */
 const MISSING_SCOPES = new Set(['connection_debug', 'dht_debug', 'peer_debug', 'tracker_debug']);
@@ -54,6 +59,14 @@ const LETTERS = 'CEWNID';
 
 /** d.priority's share of the bandwidth: off, low, normal, high. */
 const PRIORITY_WEIGHT = [0, 0.55, 1, 1.35];
+
+/** libtorrent's start and stop flags, which the log prints in hex. */
+const START_NO_CREATE = 0x2;
+const START_KEEP_BASELINE = 0x4;
+const START_SKIP_TRACKER = 0x8;
+const STOP_SKIP_TRACKER = 0x1;
+/** A check of what was just written reads from the page cache: a real 0.16.24 checked 6 GiB in about 5 s. */
+const CACHED_CHECK_SPEED = 1024 * MiB;
 
 /* --------------------------------- model --------------------------------- */
 
@@ -152,6 +165,8 @@ export interface SimTorrent {
   label: string;
   /** Where the torrent goes: its files' directory, or for a multi-file torrent its own directory's parent. */
   parent: string;
+  /** parent as of the last open: libtorrent freezes the paths there, so d.base_path follows a move only once reopened. */
+  frozen: string;
   throttle: string;
   priority: number;
   maxUploads: number;
@@ -159,9 +174,15 @@ export interface SimTorrent {
   message: string;
   /** d.state: whether it should be running. */
   state: number;
+  /**
+   * d.complete: a stored flag, set when a download is confirmed finished or a
+   * check ends with every piece; a recheck leaves it alone, so a complete
+   * torrent reads complete while its data is checked again.
+   */
+  complete: boolean;
   open: boolean;
   active: boolean;
-  /** d.hashing: 1 the first check, 3 a recheck. */
+  /** d.hashing: 1 the first check, 2 the one on completion, 3 a recheck. */
   hashing: number;
   check: { pos: number; speed: number; target: number[]; restart: boolean } | null;
   /** What a check stopped part way left unverified, for the next start to check again. */
@@ -172,6 +193,7 @@ export interface SimTorrent {
   /** When it last began transferring, unix seconds: the oldest a connected peer can be. */
   activeSince: number;
   addedAt: number;
+  /** d.timestamp.started and .finished: each set once, the first time, and kept. */
   startedAt: number;
   finishedAt: number;
   downTotal: number;
@@ -213,13 +235,18 @@ export function directoryOf(t: SimTorrent): string {
   return t.multi ? join(t.parent, t.name) : t.parent;
 }
 
-/** d.base_path, which rtorrent leaves empty until the torrent is first opened. */
+/** d.base_path: where the torrent was last opened, and empty until it first is. */
 export function basePathOf(t: SimTorrent): string {
-  return t.everOpened ? join(t.parent, t.name) : '';
+  return t.everOpened ? join(t.frozen, t.name) : '';
 }
 
-/** d.ratio: uploaded per mille of what is done, as rtorrent's integer division leaves it. */
+/**
+ * d.ratio: uploaded per mille of what is done, as rtorrent's integer division
+ * leaves it — and 0 during a check, as retrieve_d_ratio has it, rather than
+ * the upload over the few bytes checked so far.
+ */
 export function ratioPermille(t: SimTorrent): number {
+  if (t.hashing > 0) return 0;
   const done = completedBytes(t);
   return done > 0 ? Math.floor((t.upTotal * 1000) / done) : 0;
 }
@@ -230,16 +257,22 @@ export function statusOf(t: SimTorrent): TorrentStatus {
   if (t.hashing > 0) return 'checking';
   if (!t.open) return 'stopped';
   if (!t.active) return 'paused';
-  return isComplete(t) ? 'seeding' : 'downloading';
+  return t.complete ? 'seeding' : 'downloading';
+}
+
+/** The listing's progress, as MapTorrent derives it: 1 for d.complete, else the bytes done. */
+export function progressOf(t: SimTorrent): number {
+  if (t.complete) return 1;
+  return t.size > 0 ? Math.min(1, Math.max(0, completedBytes(t) / t.size)) : 0;
 }
 
 /** The views rtorrent lists a torrent in, for d.multicall2 and the listing's ?view=. */
 export const VIEWS = ['main', 'default', 'name', 'active', 'started', 'stopped', 'complete', 'incomplete', 'hashing', 'seeding', 'leeching'];
 
 export function viewsOf(t: SimTorrent): string[] {
-  const out = ['main', 'default', 'name', t.state === 1 ? 'started' : 'stopped', isComplete(t) ? 'complete' : 'incomplete'];
+  const out = ['main', 'default', 'name', t.state === 1 ? 'started' : 'stopped', t.complete ? 'complete' : 'incomplete'];
   if (t.hashing > 0) out.push('hashing');
-  if (t.open && t.active) out.push(isComplete(t) ? 'seeding' : 'leeching', 'active');
+  if (t.open && t.active) out.push(t.complete ? 'seeding' : 'leeching', 'active');
   return out;
 }
 
@@ -356,6 +389,8 @@ export class Session {
   readonly pid: number;
   readonly hostname: string;
   private time: number;
+  /** When the session started, epoch seconds: what every clock-driven swing is measured from. */
+  private readonly origin: number;
   private readonly rng: Random;
   private readonly torrents = new Map<string, SimTorrent>();
   /** Cascade's saved groups, which the throttle dialog lists. */
@@ -380,9 +415,13 @@ export class Session {
   /** Announces scheduled at load, spaced so the log has something to show at once. */
   private stagger = 0;
 
-  constructor({ seed, now }: SessionOptions) {
+  constructor({ seed, now: given }: SessionOptions) {
+    // On a whole second, so the steps and the graph's once-a-second samples
+    // fall alike whatever fraction of a second the page loaded at.
+    const now = Math.floor(given / 1000) * 1000;
     this.rng = seeded(seed);
     this.time = now;
+    this.origin = now / 1000;
     const nowS = Math.floor(now / 1000);
     this.startedAt = nowS - Math.round(HISTORY.uptimeDays * DAY);
     this.pid = this.rng.int(140, 190);
@@ -396,7 +435,7 @@ export class Session {
       const torrent = this.fromCatalog(entry, now);
       this.torrents.set(torrent.hash, torrent);
       this.seenHashes.add(torrent.hash);
-      if (isComplete(torrent)) this.completedHashes.add(torrent.hash);
+      if (torrent.complete) this.completedHashes.add(torrent.hash);
     }
     this.stats = {
       lifetimeUp: HISTORY.lifetimeUp,
@@ -499,7 +538,7 @@ export class Session {
 
   dhtNodes(): number {
     if (this.settings.dhtMode === 'disable' || this.settings.dhtMode === 'off') return 0;
-    const at = this.time / 1000;
+    const at = this.time / 1000 - this.origin;
     return Math.round(262 + 31 * Math.sin(at / 300) + 12 * Math.sin(at / 47 + 1.3));
   }
 
@@ -590,10 +629,11 @@ export class Session {
     if (count === 0) return [];
     const pool = isComplete(t) ? t.pool.filter((peer) => !peer.seed) : t.pool;
     const rotate = 53;
-    const turn = Math.floor(at / rotate + t.swarm.phase);
+    const turn = Math.floor((at - this.origin) / rotate + t.swarm.phase);
     const out: Array<{ peer: SimPeer; since: number }> = [];
     for (let i = 0; i < Math.min(count, pool.length); i++) {
-      const joined = (turn + i - count + 1 - t.swarm.phase) * rotate;
+      // When the peer joined, back in epoch seconds: its age and totals count from there.
+      const joined = this.origin + (turn + i - count + 1 - t.swarm.phase) * rotate;
       out.push({ peer: pool[(turn + i) % pool.length], since: Math.max(t.activeSince, Math.floor(joined)) });
     }
     return out;
@@ -625,7 +665,7 @@ export class Session {
         downRate: Math.round(t.downRate * shareDown),
         upTotal: peer.seed ? 0 : Math.round(((t.swarm.up * peer.weight) / nominal) * age),
         downTotal: wanting ? Math.round(((t.swarm.down * downWeight(peer)) / nominal) * age) : 0,
-        peerRate: peer.seed ? 0 : Math.round(peer.swarmRate * (0.8 + 0.2 * Math.sin(at / 13 + peer.weight * 7))),
+        peerRate: peer.seed ? 0 : Math.round(peer.swarmRate * (0.8 + 0.2 * Math.sin((at - this.origin) / 13 + peer.weight * 7))),
         peerTotal: Math.round(peer.swarmRate * (age + 900 * peer.weight)),
         encrypted: peer.encrypted,
         obfuscated: peer.obfuscated,
@@ -816,7 +856,10 @@ export class Session {
     if (wasActive) this.start(t, nowS);
   }
 
-  /** Stopped and closed first, as SetDirectory does; the data itself is not moved. */
+  /**
+   * Stopped and closed first, as SetDirectory does; the data itself is not
+   * moved. Only d.directory changes: d.base_path follows at the next open.
+   */
   setDirectory(hash: string, directory: string): void {
     const t = this.get(hash);
     const nowS = Math.floor(this.time / 1000);
@@ -825,10 +868,23 @@ export class Session {
     t.parent = directory.length > 1 ? directory.replace(/\/+$/, '') : directory;
   }
 
+  /**
+   * d.uploads_max.set and d.downloads_max.set, sent together as the server
+   * sends them: each applied unless rtorrent refuses it, the first refusal
+   * reported, named after its command.
+   */
   setSlots(hash: string, uploads: number | null, downloads: number | null): void {
     const t = this.get(hash, uploads !== null ? 'd.uploads_max.set' : 'd.downloads_max.set');
-    if (uploads !== null) t.maxUploads = uploads;
-    if (downloads !== null) t.maxDownloads = downloads;
+    let refused: Fault | null = null;
+    if (uploads !== null) {
+      if (uploads > MAX_SLOTS) refused = new Fault(-503, 'd.uploads_max.set: Max uploads must be between 0 and 2^16.');
+      else t.maxUploads = uploads;
+    }
+    if (downloads !== null) {
+      if (downloads > MAX_SLOTS) refused ??= new Fault(-503, 'd.downloads_max.set: Max downloads must be between 0 and 2^16.');
+      else t.maxDownloads = downloads;
+    }
+    if (refused) throw refused;
   }
 
   setFilePriority(hash: string, index: number, priority: number): void {
@@ -956,6 +1012,7 @@ export class Session {
     if (t.open) return;
     t.open = true;
     t.everOpened = true;
+    t.frozen = t.parent;
     this.info(t, 'download_list: Opening download.', nowS);
     this.info(t, 'download: Opening torrent: flags:fffffffe.', nowS);
     this.info(t, 'file_list: Opening.', nowS);
@@ -975,15 +1032,24 @@ export class Session {
     this.activate(t, nowS);
   }
 
-  private activate(t: SimTorrent, nowS: number): void {
+  /**
+   * Resuming, which starts the transfer: a plain start announces "started"
+   * to every tracker, while confirm_finished's resume skips the trackers and
+   * keeps the baseline, leaving them their queued "completed".
+   */
+  private activate(t: SimTorrent, nowS: number, flags = 0): void {
     t.active = true;
-    t.startedAt = nowS;
+    // event.download.resumed: d.timestamp.started.set_if_z.
+    if (t.startedAt === 0) t.startedAt = nowS;
     t.activeSince = nowS;
     if (t.meta) t.meta.readyAt = Math.max(t.meta.readyAt, this.time + 3_000);
-    this.info(t, 'download_list: Resuming download: flags:0.', nowS);
-    this.info(t, 'download: Starting torrent: flags:0.', nowS);
+    this.info(t, `download_list: Resuming download: flags:${flags.toString(16)}.`, nowS);
+    this.info(t, `download: Starting torrent: flags:${flags.toString(16)}.`, nowS);
     this.track(`${t.hash}->tracker_controller: enabled : trackers:${t.trackers.length}`, nowS);
-    this.track(`${t.hash}->download: Setting new baseline on start: uploaded:${Math.round(t.upTotal)} completed:${completedBytes(t)}.`, nowS);
+    if (!(flags & START_KEEP_BASELINE)) {
+      this.track(`${t.hash}->download: Setting new baseline on start: uploaded:${Math.round(t.upTotal)} completed:${completedBytes(t)}.`, nowS);
+    }
+    if (flags & START_SKIP_TRACKER) return;
     this.track(`${t.hash}->tracker_controller: sending start event : requesting`, nowS);
     for (const tracker of t.trackers) {
       if (!tracker.enabled) continue;
@@ -992,15 +1058,23 @@ export class Session {
     }
   }
 
-  /** d.pause, and the first half of d.stop: inactive, stopped announced, still open. */
-  private pause(t: SimTorrent, nowS: number): void {
+  /**
+   * d.pause, and the first half of d.stop: inactive, stopped announced, still
+   * open. The hash queue pauses without a word to the trackers, which keep
+   * their schedule for when it resumes.
+   */
+  private pause(t: SimTorrent, nowS: number, flags = 0): void {
     if (!t.active) return;
     t.active = false;
     t.downRate = 0;
     t.upRate = 0;
     t.peersConnected = 0;
-    this.info(t, 'download_list: Pausing download: flags:0.', nowS);
-    this.info(t, 'download: Stopping torrent: flags:0.', nowS);
+    this.info(t, `download_list: Pausing download: flags:${flags.toString(16)}.`, nowS);
+    this.info(t, `download: Stopping torrent: flags:${flags.toString(16)}.`, nowS);
+    if (flags & STOP_SKIP_TRACKER) {
+      this.track(`${t.hash}->tracker_controller: disabled : trackers:${t.trackers.length}`, nowS);
+      return;
+    }
     this.track(`${t.hash}->tracker_controller: sending stop event : requesting`, nowS);
     for (const tracker of t.trackers) {
       if (!tracker.enabled || tracker.lastActivity === 0 || tracker.failure) {
@@ -1051,10 +1125,11 @@ export class Session {
     this.beginCheck(t, nowS, 3, target, restart);
   }
 
-  private beginCheck(t: SimTorrent, nowS: number, kind: number, target: number[], restart: boolean): void {
+  /** A check from the first piece; it leaves d.complete as it was until it ends. */
+  private beginCheck(t: SimTorrent, nowS: number, kind: number, target: number[], restart: boolean, speed = t.check?.speed ?? 90 * MiB): void {
     t.hashing = kind;
     t.active = false;
-    t.check = { pos: 0, speed: t.check?.speed ?? 90 * MiB, target, restart };
+    t.check = { pos: 0, speed, target, restart };
     for (const file of t.files) file.done = 0;
     const chunks = Math.ceil(t.size / t.chunk);
     this.info(t, `download: Checking hash: allocated:1 try_quick:${kind === 1 ? 1 : 0}.`, nowS);
@@ -1072,6 +1147,7 @@ export class Session {
     if (check.pos < t.size) return;
     t.files.forEach((file, i) => (file.done = check.target[i]));
     t.check = null;
+    const kind = t.hashing;
     t.hashing = 0;
     const chunks = Math.ceil(t.size / t.chunk);
     const wanted = t.files.some((file) => file.priority > 0 && file.done < file.size) ? Math.ceil(wantedLeft(t) / t.chunk) : 0;
@@ -1079,7 +1155,15 @@ export class Session {
     this.info(t, 'hash_torrent: confirmed checked', nowS);
     this.info(t, `download: update priorities: chunks_selected:${chunks} wanted_chunks:${wanted}`, nowS);
     this.info(t, 'download_list: Hash done.', nowS);
-    if (isComplete(t) && t.finishedAt === 0) t.finishedAt = nowS;
+    if (kind === 2) {
+      // The check pieces.hash.on_completion asked for: the data it read is
+      // what was just downloaded, so it confirms the finish.
+      if (isComplete(t)) this.confirmFinished(t, nowS);
+      return;
+    }
+    // d.complete.set(is_done), then event.download.hash_done stamps a complete one's finish if it has none.
+    t.complete = isComplete(t);
+    if (t.complete && t.finishedAt === 0) t.finishedAt = nowS;
     // recheck-restart's second half is the server's housekeeping: d.open and d.start, once the check ends.
     if (check.restart) {
       this.open(t, nowS);
@@ -1107,6 +1191,7 @@ export class Session {
     t.size = t.files.reduce((sum, file) => sum + file.size, 0);
     t.chunk = pieceLengthFor(t.size);
     t.parent = meta.directory || this.settings.directory;
+    t.frozen = t.parent;
     t.createdAt = nowS - rng.int(3, 2000) * DAY;
     t.everOpened = true;
     this.info(t, 'download_list: Inserting download.', nowS);
@@ -1142,10 +1227,11 @@ export class Session {
       this.diskFree = Math.max(0, this.diskFree - got);
       this.stats.lifetimeDown += got;
       this.stats.lifetimeUp += sent;
+      // A finish that goes to the hash queue pauses the torrent, so it counts nothing towards the global rates.
+      if (wanting && wantedLeft(t) <= 0) this.finished(t, nowS);
       down += t.downRate;
       up += t.upRate;
       t.peersConnected = this.peerCount(t, at);
-      if (wanting && wantedLeft(t) <= 0) this.finished(t, nowS);
     }
     this.downRate = down;
     this.upRate = up;
@@ -1180,10 +1266,10 @@ export class Session {
     if (!t.open || !t.active || t.hashing > 0 || t.meta || t.priority === 0) return { down: 0, up: 0 };
     const weight = PRIORITY_WEIGHT[t.priority] ?? 1;
     const wanting = wantedLeft(t) > 0;
-    const up = t.swarm.leechers > 0 ? t.swarm.up * level(t.swarm.upWave, at) * weight : 0;
+    const up = t.swarm.leechers > 0 ? t.swarm.up * level(t.swarm.upWave, at - this.origin) * weight : 0;
     if (!wanting) return { down: 0, up: isComplete(t) ? up : up * 0.5 };
     const progress = t.size > 0 ? completedBytes(t) / t.size : 0;
-    return { down: t.swarm.down * level(t.swarm.downWave, at) * weight, up: up * (0.35 + 0.65 * progress) };
+    return { down: t.swarm.down * level(t.swarm.downWave, at - this.origin) * weight, up: up * (0.35 + 0.65 * progress) };
   }
 
   /** Bytes in, spread over the wanted files: high priority first, then in proportion to what each lacks. */
@@ -1207,25 +1293,55 @@ export class Session {
     return written;
   }
 
+  /**
+   * The last wanted piece arrived. libtorrent signals a finish only when
+   * every file is complete, so one with files skipped stays a download. With
+   * pieces.hash.on_completion on, as it is by default, the hash queue pauses
+   * it, closes and reopens it and checks the data again; the check's end
+   * confirms the finish.
+   */
   private finished(t: SimTorrent, nowS: number): void {
-    t.finishedAt = nowS;
-    if (!isComplete(t)) return; // Only the skipped files are missing: rtorrent calls it finished, not complete.
-    this.info(t, 'download_list: Confirming finished download.', nowS);
+    if (!isComplete(t)) return;
+    this.info(t, 'download_list: Received finished.', nowS);
+    if (!this.settings.checkHashOnCompletion) {
+      this.confirmFinished(t, nowS);
+      return;
+    }
+    this.info(t, 'download_list: Hash queue.', nowS);
+    this.pause(t, nowS, STOP_SKIP_TRACKER);
+    this.info(t, 'download: Closing torrent: flags:0.', nowS);
+    this.info(t, 'file_list: Closing.', nowS);
+    t.open = false;
+    this.open(t, nowS);
+    this.beginCheck(t, nowS, 2, t.files.map((file) => file.done), false, CACHED_CHECK_SPEED);
+  }
+
+  /**
+   * confirm_finished: d.complete set, the finish stamped if it has no stamp,
+   * the completed event sent — or queued, for a download the hash queue
+   * paused, which then resumes without announcing again.
+   */
+  private confirmFinished(t: SimTorrent, nowS: number): void {
+    this.info(t, 'download_list: Confirming finished.', nowS);
+    t.complete = true;
+    if (t.finishedAt === 0) t.finishedAt = nowS;
+    this.track(`${t.hash}->tracker_controller: sending completed event : ${t.active ? 'requesting' : 'queued'}`, nowS);
     for (const tracker of t.trackers) {
       if (!tracker.enabled || tracker.failure) continue;
       tracker.pending = 'completed';
-      tracker.nextActivity = nowS;
+      if (t.active) tracker.nextActivity = nowS;
     }
+    if (!t.active && t.open && t.state === 1) this.activate(t, nowS, START_NO_CREATE | START_SKIP_TRACKER | START_KEEP_BASELINE);
   }
 
   private peerCount(t: SimTorrent, at: number): number {
     if (!t.open || !t.active) return 0;
-    if (t.meta) return 2 + (Math.floor(at / 7) % 3);
+    if (t.meta) return 2 + (Math.floor((at - this.origin) / 7) % 3);
     const seeding = isComplete(t);
     if (seeding && t.swarm.leechers === 0) return 0;
     const cap = seeding && this.settings.maxPeersSeed >= 0 ? this.settings.maxPeersSeed : this.settings.maxPeers;
     const pool = seeding ? t.pool.filter((peer) => !peer.seed).length : t.pool.length;
-    const typical = t.swarm.peers * (0.86 + 0.14 * Math.sin(at / 97 + t.swarm.phase * 6));
+    const typical = t.swarm.peers * (0.86 + 0.14 * Math.sin((at - this.origin) / 97 + t.swarm.phase * 6));
     return Math.max(0, Math.min(cap, pool, Math.round(typical)));
   }
 
@@ -1296,7 +1412,8 @@ export class Session {
     let peers = 0;
     const labels = new Set<string>();
     for (const t of this.torrents.values()) {
-      const complete = isComplete(t);
+      // What the store goes by: the listing's progress.
+      const complete = progressOf(t) >= 1;
       if (statusOf(t) === 'seeding') seeding += 1;
       peers += t.peersConnected;
       if (t.label) labels.add(t.label);
@@ -1378,8 +1495,8 @@ export class Session {
     const swarmDown = rng.range(0.6, 3.2) * MiB;
     return {
       hash, name, files: laid, size, multi, isPrivate: false, chunk, createdAt: 0, label: '', parent: DOWNLOAD_DIR,
-      throttle: '', priority: 2, maxUploads: this.settings.maxUploads, maxDownloads: this.settings.maxDownloads, message: '',
-      state: 0, open: false, active: false, hashing: 0, check: null, unchecked: null, meta: null, everOpened: false,
+      frozen: DOWNLOAD_DIR, throttle: '', priority: 2, maxUploads: this.settings.maxUploads, maxDownloads: this.settings.maxDownloads,
+      message: '', state: 0, complete: false, open: false, active: false, hashing: 0, check: null, unchecked: null, meta: null, everOpened: false,
       activeSince: 0, addedAt: 0, startedAt: 0, finishedAt: 0, downTotal: 0, upTotal: 0, downRate: 0, upRate: 0,
       peersConnected: 0,
       swarm: {
@@ -1470,8 +1587,11 @@ export class Session {
     t.state = state === 'stopped' ? 0 : 1;
     t.open = state !== 'stopped';
     t.active = state === 'seeding' || state === 'downloading';
-    t.startedAt = state === 'stopped' ? t.addedAt : Math.max(t.addedAt, this.startedAt);
-    t.activeSince = t.active ? t.startedAt : 0;
+    t.complete = entry.progress >= 1;
+    // Started once, when it was added — but the one still on its first check has not started yet.
+    t.startedAt = state === 'checking' ? 0 : t.addedAt;
+    // The last resume, which no connected peer predates: this rtorrent's start, for one running since before it.
+    t.activeSince = t.active ? Math.max(t.addedAt, this.startedAt) : 0;
 
     // What is on disk.
     if (entry.progress >= 1) {
@@ -1589,8 +1709,11 @@ export class Session {
     for (const t of this.torrents.values()) {
       if (t.addedAt > hour) {
         info(t.addedAt, t, 'download_list: Inserting download.');
-        info(t.addedAt, t, 'download_list: Hash done.');
-        info(t.addedAt, t, 'download: Starting torrent: flags:0.');
+        // The one still on its first check has not started yet.
+        if (t.startedAt > 0) {
+          info(t.addedAt, t, 'download_list: Hash done.');
+          info(t.addedAt, t, 'download: Starting torrent: flags:0.');
+        }
       }
       if (t.check) {
         const began = nowS - Math.round(t.check.pos / t.check.speed);
@@ -1615,11 +1738,11 @@ export class Session {
     for (const [at, group, letter, text] of events) this.write(group, letter, text, at);
   }
 
-  /** The torrent's row as the listing maps it. */
+  /** The torrent's row as the listing maps it: progress and ETA from d.complete, the pieces from the data. */
   row(t: SimTorrent): Torrent {
     const completed = completedBytes(t);
     const left = t.size - completed;
-    const complete = isComplete(t);
+    const allChunks = isComplete(t);
     const chunksTotal = Math.ceil(t.size / t.chunk);
     const peers = this.connected(t);
     const status = statusOf(t);
@@ -1627,7 +1750,7 @@ export class Session {
       hash: t.hash,
       name: t.name,
       status,
-      progress: complete ? 1 : t.size > 0 ? Math.min(1, Math.max(0, completed / t.size)) : 0,
+      progress: progressOf(t),
       size: t.size,
       completed,
       left,
@@ -1636,7 +1759,7 @@ export class Session {
       downTotal: Math.round(t.downTotal),
       upTotal: Math.round(t.upTotal),
       ratio: ratioPermille(t) / 1000,
-      eta: complete ? 0 : t.downRate > 0 && left > 0 ? Math.round(left / t.downRate) : null,
+      eta: t.complete ? 0 : t.downRate > 0 && left > 0 ? Math.round(left / t.downRate) : null,
       priority: t.priority,
       label: t.label,
       message: t.message,
@@ -1649,11 +1772,11 @@ export class Session {
       isMultiFile: t.multi,
       hashing: t.hashing,
       chunkSize: t.chunk,
-      chunksDone: complete ? chunksTotal : Math.max(0, Math.min(chunksTotal - 1, Math.floor(completed / t.chunk))),
+      chunksDone: allChunks ? chunksTotal : Math.max(0, Math.min(chunksTotal - 1, Math.floor(completed / t.chunk))),
       chunksTotal,
       peersConnected: t.peersConnected,
       peersNotConnected: t.active ? Math.round(t.peersConnected * 0.6) + 3 : t.open ? 4 : 0,
-      peersComplete: complete ? 0 : peers.filter(({ peer }) => peer.seed).length,
+      peersComplete: allChunks ? 0 : peers.filter(({ peer }) => peer.seed).length,
       trackerCount: t.trackers.length,
       addedAt: t.addedAt,
       startedAt: t.startedAt,

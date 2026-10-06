@@ -15,9 +15,16 @@ function demoEntry(): Plugin {
       order: 'pre',
       handler(html) {
         const entry = '/src/main.tsx';
+        const title = '<title>Cascade</title>';
         // A renamed entry must fail the build, not ship the app without its server.
         if (!html.includes(entry)) throw new Error(`index.html no longer loads ${entry}; update the demo's entry swap`);
-        return html.replace(entry, '/src/demo/entry.ts');
+        // The demo's own name in tabs, history, bookmarks and link previews, not that of every install.
+        if (!html.includes(title)) throw new Error(`index.html no longer has ${title}; update the demo's title swap`);
+        return html.replace(entry, '/src/demo/entry.ts').replace(
+          title,
+          '<title>Cascade — live demo</title>\n    <meta name="description" content="Try Cascade, a web UI for rtorrent, in your browser: ' +
+            'the real interface over a simulated rtorrent, so nothing is downloaded." />',
+        );
       },
     },
   };

@@ -18,11 +18,13 @@ const API = `${BASE}api/`;
 // api.ts resolves its base against the document when it loads.
 Object.assign(globalThis, { document: { baseURI: BASE } });
 const passed: string[] = [];
+const kept: Array<{ theme: string }> = [];
 const server = new DemoServer({
   now: () => Date.now(),
   timers: { set: (run, ms) => setTimeout(run, ms), clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>) },
   seed: 9,
   version: '0.16.24',
+  onPreferences: (preferences) => kept.push(preferences),
 });
 let latency = 2;
 const transport: Transport = { server, apiBase: API, baseUri: BASE, latency: () => latency };
@@ -49,6 +51,23 @@ test('the API is answered with real responses that api.ts reads as it reads the 
     error instanceof ApiError && error.status === 400 && error.message === '"priority" must be a whole number from 0 to 3');
   await assert.rejects(api.files('0000000000000000000000000000000000000000'), (error: unknown) =>
     error instanceof ApiError && error.status === 502 && error.message === 'invalid parameters: info-hash not found');
+});
+
+test('a keepalive save reaches the server before fetch first waits, as the one prefs.ts sends on pagehide must', async () => {
+  const save = (theme: string, keepalive: boolean) => request<{ theme: string }>('prefs', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ theme }),
+    keepalive,
+  });
+  const flushed = save('retro', true);
+  // Nothing after an await runs once the page is going: the server has it, and has kept it, already.
+  assert.equal(server.preferences().theme, 'retro');
+  assert.equal(kept.at(-1)?.theme, 'retro');
+  const plain = save('light', false);
+  assert.equal(server.preferences().theme, 'retro', 'any other request waits half a round trip first');
+  assert.equal((await flushed).theme, 'retro');
+  assert.equal((await plain).theme, 'light');
 });
 
 test('other URLs go to the network as before', async () => {
