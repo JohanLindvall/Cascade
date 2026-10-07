@@ -10,8 +10,11 @@ package service
 
 import (
 	"encoding/base64"
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -36,15 +39,59 @@ func onDisk(path string) bool {
 }
 
 // standIn is a release before 0.16.13: no .base64 variants, so the base path
-// arrives as rtorrent's stand-in. files is the f.multicall answer, f.path and
-// f.is_created per file.
-func standIn(t *testing.T, reported func(downloads string) string, files ...[]any) (subject, *rtorrenttest.FakeClient) {
+// arrives as rtorrent's stand-in, and the torrent holds files.
+func standIn(t *testing.T, reported func(downloads string) string, files ...held) (subject, *rtorrenttest.FakeClient) {
 	t.Helper()
-	client := backend("f.is_created")
+	client := backend("f.is_created", "f.frozen_path", "not")
 	s := newService(t, client, nil)
 	client.Answer("d.base_path", reported(s.cfg.DownloadDir))
-	client.Answer("f.multicall", files)
+	client.Answer("f.multicall", heldFiles(t, files))
 	return s, client
+}
+
+// held is one of a torrent's files as rtorrent holds it: whether f.is_created
+// finds it, and whether it is padding — a BEP 47 file marked 'p', which
+// libtorrent 0.15 and later never write or open, so it has no frozen path,
+// and which f.is_created says is there without looking.
+type held struct {
+	name             string
+	created, padding bool
+}
+
+func found(name string) held       { return held{name: name, created: true} }
+func missing(name string) held     { return held{name: name} }
+func paddingFile(name string) held { return held{name: name, created: true, padding: true} }
+
+// heldFiles answers f.multicall a field at a time, as rtorrent does, and for
+// numbers only: a name xmlrpc-c refuses (not UTF-8, or an emoji), as a string
+// inside a multicall answer, crashes rtorrent 0.16.3 to 0.16.6.
+func heldFiles(t *testing.T, files []held) func(params []any) (any, error) {
+	return func(params []any) (any, error) {
+		rows := make([]any, len(files))
+		for i, file := range files {
+			row := []any{}
+			for _, field := range params[2:] {
+				switch field {
+				case "f.is_created=":
+					row = append(row, oneIf(file.created))
+				case "not=$f.frozen_path=":
+					row = append(row, oneIf(file.padding))
+				default:
+					t.Errorf("f.multicall asked for %v: a string such as %q in its answer crashes rtorrent 0.16.3 to 0.16.6", field, file.name)
+					return nil, errors.New("rtorrent closed the connection without responding")
+				}
+			}
+			rows[i] = row
+		}
+		return rows, nil
+	}
+}
+
+func oneIf(yes bool) int {
+	if yes {
+		return 1
+	}
+	return 0
 }
 
 func under(name string) func(string) string {
@@ -52,7 +99,7 @@ func under(name string) func(string) string {
 }
 
 func TestALatin1NameRtorrentEscapesIsDeletedWhereItIsOnDisk(t *testing.T) {
-	s, client := standIn(t, under("Caf%E9 single on.bin"), []any{"Caf%E9 single on.bin", 1})
+	s, client := standIn(t, under("Caf%E9 single on.bin"), found("Caf\xe9 single on.bin"))
 	data := plant(t, filepath.Join(s.cfg.DownloadDir, "Caf\xe9 single on.bin"), "payload")
 	// Differs only in the byte the escape hides, so it is not a match.
 	keep := plant(t, filepath.Join(s.cfg.DownloadDir, "Caf\xe8 single on.bin"), "another")
@@ -69,7 +116,7 @@ func TestALatin1NameRtorrentEscapesIsDeletedWhereItIsOnDisk(t *testing.T) {
 
 func TestAMultiFileTorrentInAnEscapedDirectoryIsDeletedWhole(t *testing.T) {
 	// The escape covers the whole path, the UTF-8 name inside included.
-	s, _ := standIn(t, under("Caf%E9 dir"), []any{"Café.txt", 1}, []any{"sub/x%FF.bin", 1})
+	s, _ := standIn(t, under("Caf%E9 dir"), found("Café.txt"), found("sub/x\xff.bin"))
 	dir := filepath.Join(s.cfg.DownloadDir, "Caf\xe9 dir")
 	plant(t, filepath.Join(dir, "Café.txt"), "a")
 	plant(t, filepath.Join(dir, "sub", "x\xff.bin"), "b")
@@ -84,7 +131,7 @@ func TestAMultiFileTorrentInAnEscapedDirectoryIsDeletedWhole(t *testing.T) {
 func TestAStandInDeeperInThePathIsFollowedToo(t *testing.T) {
 	// A single-file torrent in a directory that is not UTF-8: only the file
 	// is the torrent's.
-	s, _ := standIn(t, under("M%FCsik/track.flac"), []any{"track.flac", 1})
+	s, _ := standIn(t, under("M%FCsik/track.flac"), found("track.flac"))
 	dir := filepath.Join(s.cfg.DownloadDir, "M\xfcsik")
 	data := plant(t, filepath.Join(dir, "track.flac"), "a")
 	if err := s.Remove(ctx, hash, true); err != nil {
@@ -96,7 +143,7 @@ func TestAStandInDeeperInThePathIsFollowedToo(t *testing.T) {
 }
 
 func TestTheQuestionMarksOfOlderReleasesAreResolvedToo(t *testing.T) {
-	s, _ := standIn(t, under("Caf? old.bin"), []any{"Caf? old.bin", 1})
+	s, _ := standIn(t, under("Caf? old.bin"), found("Caf\xe9 old.bin"))
 	data := plant(t, filepath.Join(s.cfg.DownloadDir, "Caf\xe9 old.bin"), "payload")
 	// '?' stands for a byte that is not ASCII, never for 'e'.
 	keep := plant(t, filepath.Join(s.cfg.DownloadDir, "Cafe old.bin"), "another")
@@ -111,7 +158,7 @@ func TestTheQuestionMarksOfOlderReleasesAreResolvedToo(t *testing.T) {
 func TestAnEmojiNameIsEscapedAndStillDeleted(t *testing.T) {
 	// Valid UTF-8, but outside the Basic Multilingual Plane, which is all
 	// xmlrpc-c 1.51 holds.
-	s, _ := standIn(t, under("Song %F0%9F%8E%B5.bin"), []any{"Song %F0%9F%8E%B5.bin", 1})
+	s, _ := standIn(t, under("Song %F0%9F%8E%B5.bin"), found("Song \U0001F3B5.bin"))
 	data := plant(t, filepath.Join(s.cfg.DownloadDir, "Song \U0001F3B5.bin"), "payload")
 	if err := s.Remove(ctx, hash, true); err != nil {
 		t.Fatal(err)
@@ -122,7 +169,7 @@ func TestAnEmojiNameIsEscapedAndStillDeleted(t *testing.T) {
 }
 
 func TestTwoPathsOneStandInCouldMeanAreRefusedBeforeTheErase(t *testing.T) {
-	s, client := standIn(t, under("Caf%E9 x.bin"), []any{"Caf%E9 x.bin", 1})
+	s, client := standIn(t, under("Caf%E9 x.bin"), found("Caf\xe9 x.bin"))
 	real := plant(t, filepath.Join(s.cfg.DownloadDir, "Caf\xe9 x.bin"), "payload")
 	// What the delete used to remove: a file called what rtorrent reports.
 	literal := plant(t, filepath.Join(s.cfg.DownloadDir, "Caf%E9 x.bin"), "someone else's")
@@ -141,7 +188,7 @@ func TestTwoPathsOneStandInCouldMeanAreRefusedBeforeTheErase(t *testing.T) {
 }
 
 func TestAStandInMatchingTooManyPathsIsRefused(t *testing.T) {
-	s, client := standIn(t, under("Caf?"), []any{"Caf?", 1})
+	s, client := standIn(t, under("Caf?"), found("Caf\x80"))
 	for b := 0x80; b < 0x80+maxStandInPaths+1; b++ {
 		plant(t, filepath.Join(s.cfg.DownloadDir, "Caf"+string([]byte{byte(b)})), "x")
 	}
@@ -151,7 +198,7 @@ func TestAStandInMatchingTooManyPathsIsRefused(t *testing.T) {
 }
 
 func TestAValidNameThatSpellsAnEscapeIsDeletedAsItself(t *testing.T) {
-	s, _ := standIn(t, under("Mix 100%E9.bin"), []any{"Mix 100%E9.bin", 1})
+	s, _ := standIn(t, under("Mix 100%E9.bin"), found("Mix 100%E9.bin"))
 	data := plant(t, filepath.Join(s.cfg.DownloadDir, "Mix 100%E9.bin"), "payload")
 	if err := s.Remove(ctx, hash, true); err != nil {
 		t.Fatal(err)
@@ -176,7 +223,7 @@ func TestTextThatIsNotASCIICannotBeAnEscapeAndIsTakenAsItIs(t *testing.T) {
 }
 
 func TestAStandInForDataThatIsGoneErasesAndDeletesNothing(t *testing.T) {
-	s, client := standIn(t, under("Caf%E9 gone.bin"), []any{"Caf%E9 gone.bin", 0})
+	s, client := standIn(t, under("Caf%E9 gone.bin"), missing("Caf\xe9 gone.bin"))
 	keep := plant(t, filepath.Join(s.cfg.DownloadDir, "Cafe gone.bin"), "another")
 	if err := s.Remove(ctx, hash, true); err != nil {
 		t.Fatal(err)
@@ -190,20 +237,76 @@ func TestAMatchRtorrentCannotConfirmAsItsDataIsRefused(t *testing.T) {
 	// The torrent's own file is gone; one called what rtorrent reports is
 	// someone else's, and rtorrent, which stats the real bytes, finds none of
 	// the torrent's files.
-	s, client := standIn(t, under("Caf%E9 gone.bin"), []any{"Caf%E9 gone.bin", 0})
+	s, client := standIn(t, under("Caf%E9 gone.bin"), missing("Caf\xe9 gone.bin"))
 	other := plant(t, filepath.Join(s.cfg.DownloadDir, "Caf%E9 gone.bin"), "someone else's")
 	if got := status(t, s.Remove(ctx, hash, true)); got != 409 || len(client.CallsTo("d.erase")) != 0 || !onDisk(other) {
 		t.Fatalf("%d", got)
 	}
-	// A padding file says it is there without ever being written.
-	client.Answer("f.multicall", [][]any{{".pad/1024", 1}, {"Caf%E9 gone.bin", 0}})
-	if got := status(t, s.Remove(ctx, hash, true)); got != 409 || !onDisk(other) {
-		t.Fatalf("padding taken for data: %d", got)
+}
+
+func TestPaddingIsNoSignOfTheDataWhateverItIsCalled(t *testing.T) {
+	// libtorrent 0.15 and later know padding by its BEP 47 attr, not by its
+	// name, and f.is_created answers 1 for it without looking. The torrent's
+	// own files are gone; the directory called what rtorrent reports is
+	// someone else's.
+	for _, name := range []string{"_____padding_file_0____", ".pad/6384"} {
+		s, client := standIn(t, under("Caf%E9 pad"), missing("a.bin"), paddingFile(name), missing("b.bin"))
+		other := plant(t, filepath.Join(s.cfg.DownloadDir, "Caf%E9 pad", "precious.txt"), "someone else's")
+		if got := status(t, s.Remove(ctx, hash, true)); got != 409 || len(client.CallsTo("d.erase")) != 0 || !onDisk(other) {
+			t.Fatalf("padding named %q taken for the data: %d", name, got)
+		}
+	}
+}
+
+func TestATorrentWithPaddingIsDeletedWhenItsDataIsThere(t *testing.T) {
+	s, _ := standIn(t, under("Caf%E9 pad"), found("a.bin"), paddingFile("_____padding_file_0____"), found("b.bin"))
+	dir := filepath.Join(s.cfg.DownloadDir, "Caf\xe9 pad")
+	plant(t, filepath.Join(dir, "a.bin"), "a")
+	plant(t, filepath.Join(dir, "b.bin"), "b")
+	if err := s.Remove(ctx, hash, true); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk(dir) {
+		t.Fatal("the directory is still there")
+	}
+}
+
+func TestAMatchIsConfirmedByNumbersAlone(t *testing.T) {
+	// "What? dir" is plain text, but its '?' may stand for a byte, so
+	// rtorrent is asked to confirm the one path that matches. The names of
+	// the files are no plainer for it: as strings in the multicall answer,
+	// this Latin-1 one would crash rtorrent 0.16.3 to 0.16.6.
+	s, client := standIn(t, under("What? dir"), found("Caf\xe9.txt"), found("plain.txt"))
+	dir := filepath.Join(s.cfg.DownloadDir, "What? dir")
+	plant(t, filepath.Join(dir, "Caf\xe9.txt"), "a")
+	plant(t, filepath.Join(dir, "plain.txt"), "b")
+	if err := s.Remove(ctx, hash, true); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk(dir) {
+		t.Fatal("the directory is still there")
+	}
+	asked := client.CallsTo("f.multicall")
+	if want := []any{hash, "", "f.is_created=", "not=$f.frozen_path="}; len(asked) != 1 || !reflect.DeepEqual(asked[0].Params, want) {
+		t.Fatalf("asked %v, want %v", asked, want)
+	}
+}
+
+func TestAMatchIsRefusedWhereRtorrentLacksACommandToConfirmIt(t *testing.T) {
+	needed := []string{"f.is_created", "f.frozen_path", "not"}
+	for i, lacking := range needed {
+		client := backend(slices.Delete(slices.Clone(needed), i, i+1)...)
+		s := newService(t, client, nil)
+		client.Answer("d.base_path", s.cfg.DownloadDir+"/Caf%E9 x.bin")
+		data := plant(t, filepath.Join(s.cfg.DownloadDir, "Caf\xe9 x.bin"), "payload")
+		if got := status(t, s.Remove(ctx, hash, true)); got != 409 || len(client.CallsTo("f.multicall"))+len(client.CallsTo("d.erase")) != 0 || !onDisk(data) {
+			t.Fatalf("without %s: %d %v", lacking, got, client.Methods())
+		}
 	}
 }
 
 func TestAResolvedPathMustStillLieInsideTheRoots(t *testing.T) {
-	s, client := standIn(t, under("link/Caf%E9 x.bin"), []any{"Caf%E9 x.bin", 1})
+	s, client := standIn(t, under("link/Caf%E9 x.bin"), found("Caf\xe9 x.bin"))
 	outside := filepath.Join(filepath.Dir(s.cfg.DownloadDir), "outside")
 	keep := plant(t, filepath.Join(outside, "Caf\xe9 x.bin"), "important")
 	if err := os.Symlink(outside, filepath.Join(s.cfg.DownloadDir, "link")); err != nil {

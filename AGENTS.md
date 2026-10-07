@@ -359,8 +359,13 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    `d.base_path.base64`, the bytes exactly. On older releases it matches the stand-in against the
    disk, a component at a time, and refuses with a 409 before the erase when two paths fit, or when
    the one that fits is not confirmed by rtorrent: `f.is_created` stats the real bytes, and a
-   torrent whose own data is gone must not take a namesake with it. The root checks then apply to
-   the bytes found. The listing and the Files tab ask for the `.base64` variants of `d.name`,
+   torrent whose own data is gone must not take a namesake with it. Padding confirms nothing: from
+   0.15 a file whose BEP 47 `attr` holds a `p` is padding whatever it is called, and `f.is_created`
+   answers 1 for it without a stat — but it is never opened, so its frozen path stays empty, and
+   `filesPresent` counts only a file that has one. It asks for both as numbers (`f.is_created`,
+   `not=$f.frozen_path`), never for a name: the files under a base path that reads as plain text
+   can still be named in a way that crashes 0.16.3 to 0.16.6. The root checks then apply to the
+   bytes found. The listing and the Files tab ask for the `.base64` variants of `d.name`,
    `d.base_path`, `f.path_components` and `f.frozen_path` where the backend has them
    (`ExactFields`), so an emoji shows as itself and a stray byte as U+FFFD; `d.directory` has no
    variant and borrows the base path's bytes when its stand-in fits them, and before 0.16.13 the UI

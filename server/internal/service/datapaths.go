@@ -92,20 +92,33 @@ func (s *Service) resolveStandIn(ctx context.Context, hash, reported string) (st
 	return matches[0], nil
 }
 
+// unopened is 1 for a file without a frozen path, which every file libtorrent
+// opened has: a number, where the path itself would be a string.
+const unopened = "not=$f.frozen_path"
+
 // filesPresent reports whether rtorrent finds any of the torrent's files where
-// it put them: f.is_created stats the path it holds as bytes, which no
-// stand-in blurs. A padding file (BEP 47, named .pad/N) is never written and
-// says it is there all the same.
+// it put them: f.is_created stats the frozen path, the bytes the file was
+// opened under, which no stand-in blurs.
+//
+// Padding is the exception. From libtorrent 0.15 a file is padding when its
+// BEP 47 attr holds a 'p', whatever it is called, and f.is_created answers 1
+// for it without a stat, data or no data. Padding is never opened, so it has
+// no frozen path — and without one a stat finds nothing, so requiring one
+// rules out padding and nothing else, on every release.
+//
+// Only numbers are asked for: rtorrent 0.16.3 to 0.16.6 crash on a string in a
+// multicall answer that xmlrpc-c refuses, and a base path that reads as plain
+// text says nothing of the names of the files under it.
 func (s *Service) filesPresent(ctx context.Context, hash string) (bool, error) {
-	if !s.caps.Has("f.is_created") {
+	if !s.caps.Has("f.is_created") || !s.caps.Has("f.frozen_path") || !s.caps.Has("not") {
 		return false, nil
 	}
-	rows, err := s.client.FieldMulticall(ctx, "f.multicall", []any{hash, ""}, []string{"f.path", "f.is_created"})
+	rows, err := s.client.FieldMulticall(ctx, "f.multicall", []any{hash, ""}, []string{"f.is_created", unopened})
 	if err != nil {
 		return false, err
 	}
 	for _, row := range rows {
-		if rtorrent.Number(row["f.is_created"]) != 0 && !strings.HasPrefix(rtorrent.Text(row["f.path"]), ".pad/") {
+		if rtorrent.Number(row["f.is_created"]) != 0 && rtorrent.Number(row[unopened]) == 0 {
 			return true, nil
 		}
 	}
