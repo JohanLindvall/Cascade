@@ -234,11 +234,12 @@ refuses a `/` in a torrent's name, as rtorrent did before 0.16.22; the watch dir
 links and URLs reach rtorrent's handling.
 
 0.16.25 refuses values it used to narrow without a word: a global rate over 4294967294 bytes/s,
-which earlier releases wrapped around in 32 bits (4 GiB/s read back as 0, unlimited), and a DHT
-override port past 65535, which they cut to 16 bits. Every release also keeps the global rates in
-whole KiB/s and drops the fraction, so a limit of 800 B/s became unlimited too. Cascade holds the
+which earlier 0.16 releases wrapped around in 32 bits (4 GiB/s read back as 0, unlimited), and a
+DHT override port past 65535, which they cut to 16 bits. Every release also keeps the global rates
+in whole KiB/s and drops the fraction, so a limit of 800 B/s became unlimited too. Cascade holds the
 global rates under 4 GiB/s and rounds them up to whole KiB/s, as it does a throttle group's, and
-the DHT ports to 65535, refusing anything past them by name on every release.
+the DHT ports to 65535, refusing anything past them by name on every release (0.9.8 refuses a rate
+over 1 GiB/s itself).
 
 The global proxy (`network.proxy.global`, from 0.16.16) wants its proxy by IPv4 address, scheme and
 port included — `socks5://10.0.0.1:1080`. Given a host name or an IPv6 address, rtorrent 0.16.24

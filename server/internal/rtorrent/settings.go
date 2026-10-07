@@ -86,8 +86,9 @@ func CheckProxyHost(value, field string) error {
 	return httperr.Newf(400, "%q must give the proxy by its IPv4 address: rtorrent crashes on a host name or an IPv6 address there", field)
 }
 
-// MaxRate is the highest global rate every release keeps as given: the
-// largest whole KiB/s under 0.16.25's bound of 4294967294 bytes/s.
+// MaxRate is the highest global rate the settings take: the largest whole
+// KiB/s under 0.16.25's bound of 4294967294 bytes/s, past which earlier 0.16
+// releases wrapped around. (0.9.8 stops at 2^30 and refuses past it itself.)
 const MaxRate = 4194303 * 1024
 
 // Range is the whole numbers a numeric kind takes.
