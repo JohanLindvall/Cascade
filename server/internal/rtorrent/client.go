@@ -150,6 +150,13 @@ func (c *client) MulticallSettled(ctx context.Context, calls []Call) ([]Result, 
 		if params == nil {
 			params = []any{}
 		}
+		// rtorrent built on its own XML-RPC parser (tinyxml2, not xmlrpc-c)
+		// reads an entry by position rather than by name: the first member is
+		// the method, the next one its params, and one out of that order fails
+		// the whole request — from 0.16.25 as "multicall struct's first member
+		// must be methodName". A map has no order of its own; the encoder
+		// writes a struct's members sorted by name, and "methodName" sorts
+		// before "params", which client_test pins.
 		payload[i] = map[string]any{"methodName": call.Method, "params": params}
 	}
 	result, err := c.Call(ctx, "system.multicall", payload)

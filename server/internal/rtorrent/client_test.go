@@ -9,6 +9,7 @@ package rtorrent
 
 import (
 	"context"
+	"encoding/xml"
 	"errors"
 	"math"
 	"net/http"
@@ -192,6 +193,45 @@ func TestAMulticallSendsEachEntryWithItsParams(t *testing.T) {
 		"<member><name>params</name><value><array><data></data></array></value></member></struct></value>"
 	if !strings.Contains(string(sent), want) {
 		t.Fatalf("sent %s", sent)
+	}
+}
+
+// rtorrent's tinyxml2 parser takes an entry's first member for the method and
+// the next for its params, and from 0.16.25 refuses the whole request when an
+// entry does not open with methodName. The entries are maps, so it is the
+// encoder's order — members sorted by name — that keeps them right.
+func TestEveryMulticallEntryOpensWithItsMethodNameThenItsParams(t *testing.T) {
+	var sent []byte
+	client := NewClient(target, func(_ context.Context, body []byte) ([]byte, error) {
+		sent = body
+		return respond(t, []any{[]any{int64(0)}, []any{int64(0)}, []any{int64(0)}}), nil
+	})
+	if _, err := client.Multicall(context.Background(), []Call{
+		{Method: "throttle.global_up.max_rate.set", Params: []any{"", int64(1024)}},
+		{Method: "session.save"},
+		{Method: "d.custom1.set", Params: []any{"A", "label"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var call struct {
+		Method  string `xml:"methodName"`
+		Entries []struct {
+			Members []struct {
+				Name string `xml:"name"`
+			} `xml:"struct>member"`
+		} `xml:"params>param>value>array>data>value"`
+	}
+	if err := xml.Unmarshal(sent, &call); err != nil || call.Method != "system.multicall" || len(call.Entries) != 3 {
+		t.Fatalf("sent %s: %v", sent, err)
+	}
+	for i, entry := range call.Entries {
+		var names []string
+		for _, member := range entry.Members {
+			names = append(names, member.Name)
+		}
+		if !reflect.DeepEqual(names, []string{"methodName", "params"}) {
+			t.Errorf("entry %d has the members %v", i, names)
+		}
 	}
 }
 
