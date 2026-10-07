@@ -6,8 +6,9 @@ usage: python3 docker/api-smoke.py <base-url>[/base-path] [container]
 
 What it holds the image to: readiness, the XML-RPC passthrough, validation and
 error shapes, the cross-site guard, compression and caching headers, setting
-and throttle round trips in rtorrent's own units, the state stream, and the
-libtorrent path patch (a torrent named past Linux's 255-byte limit must start).
+and throttle round trips in rtorrent's own units, a setting offered only where
+its setter works, the state stream, and the libtorrent path patch (a torrent
+named past Linux's 255-byte limit must start).
 Given the container's name it gives up as soon as the container exits rather
 than waiting out the readiness timeout.
 
@@ -147,6 +148,24 @@ def check_settings_and_throttles(cascade):
         cascade.api('/api/settings', {key: original[key] for key in patch})
 
 
+def check_inert_setter(cascade):
+    """The open-file limit is offered only where its setter works (AGENTS.md
+    quirk 7): from 0.16.15 rtorrent keeps network.max_open_files.set as a stub
+    that changes nothing, so what the server decided by release has to match
+    what the command does on this one."""
+    offered = cascade.api('/api/capabilities')['supports']['maxOpenFiles']
+    before = cascade.rpc('network.max_open_files')
+    try:
+        cascade.rpc('network.max_open_files.set', '', before + 1)
+        works = cascade.rpc('network.max_open_files') == before + 1
+        assert works == offered, f'the setter works: {works}, maxOpenFiles offered: {offered}'
+        after = cascade.api('/api/settings', {'maxOpenFiles': before + 2})['maxOpenFiles']
+        assert after == (before + 2 if offered else before), (offered, before, after)
+    finally:
+        if offered:
+            cascade.rpc('network.max_open_files.set', '', before)
+
+
 def bencode(value):
     if isinstance(value, int):
         return b'i%de' % value
@@ -257,6 +276,7 @@ def main(base, container=None):
     check_refusals(cascade)
     check_page_and_headers(cascade)
     check_settings_and_throttles(cascade)
+    check_inert_setter(cascade)
     check_long_file_name(cascade)
     check_stream(cascade)
     print(f'API smoke test passed on rtorrent {version}')
