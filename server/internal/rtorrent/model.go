@@ -334,11 +334,14 @@ func MapFile(row Row, index int) contracts.TorrentFile {
 	path := row.text("f.path")
 	// f.frozen_path is the absolute path the file was opened under; only its
 	// last component is compared, since the directories above it are the
-	// torrent's base path and already shown as such.
+	// torrent's base path and already shown as such. rtorrent sends a
+	// stand-in for a string as a whole (see standin.go), so a name that
+	// arrives as itself in f.path arrives escaped in a frozen path whose
+	// directory is not UTF-8: the same name, not a shortened one.
 	frozen := row.text("f.frozen_path")
 	onDisk := ""
-	if frozen != "" && baseName(frozen) != baseName(path) {
-		onDisk = baseName(frozen)
+	if name, disk := baseName(path), baseName(frozen); frozen != "" && disk != name && !Reports(name, disk) {
+		onDisk = disk
 	}
 	progress := 0.0
 	if sizeChunks > 0 {

@@ -49,6 +49,13 @@ if sh "$root/docker/move-completed.sh" move "$fixture/downloads/file.txt" "$fixt
 fi
 [ "$(cat "$fixture/completed/file.txt")" = original ]
 [ "$(cat "$fixture/downloads/file.txt")" = new ]
+# rtorrent hands the move the path as bytes, which need not be UTF-8 (a Latin-1
+# name from an old torrent) and must move as they are.
+latin1="$(printf 'Caf\351 single.bin')"
+printf 'payload' > "$fixture/downloads/$latin1"
+sh "$root/docker/move-completed.sh" move "$fixture/downloads/$latin1" "$fixture/completed"
+[ "$(cat "$fixture/completed/$latin1")" = payload ]
+[ ! -e "$fixture/downloads/$latin1" ]
 # The entrypoint, sourced as a library: stub rtorrent and cascade commands
 # script which rc commands a probe finds and which log scopes the state file
 # holds, and each case runs in a shell of its own.

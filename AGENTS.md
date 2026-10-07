@@ -19,7 +19,8 @@ server/                   the Go module: main.go serves, and answers the entrypo
                           everything above it depends on (a Transport can be injected).
                           capabilities.go: probes system.listMethods, picks a command dialect.
                           settings.go: every rtorrent global setting as one declarative table.
-                          model.go: rtorrent fields -> Torrent/File/Peer/Tracker
+                          model.go: rtorrent fields -> Torrent/File/Peer/Tracker.
+                          standin.go: what rtorrent sends for a name XML-RPC cannot carry
   internal/rtorrent/rtorrenttest/  FakeClient, the scripted rtorrent the tests use
   internal/contracts/     the HTTP data shapes (web/src/contracts.ts mirrors them)
   internal/options/       every environment variable as one catalog; renders --help and the
@@ -33,7 +34,8 @@ server/                   the Go module: main.go serves, and answers the entrypo
                           (per-torrent changes), settings.go, throttles.go, logs.go,
                           restarts.go (the recheck & restart decision, pure), serial.go
                           (the per-torrent and per-group mutation queues, shared reads),
-                          datapaths.go (the delete-data path checks)
+                          datapaths.go (the delete-data path checks, and the bytes on
+                          disk a reported path stands for)
   internal/store/         the one JSON state file; throttle group validation
   internal/game/          badge definitions, XP and level curve
   internal/torrentfile/   bencode parse: reject non-torrents, derive the info hash
@@ -339,10 +341,30 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    and runs `path_fit_test.cc` with the same toolchain first. What reports what: `d.name` and
    `f.path` keep the torrent's own names (rtorrent joins `f.path` from the components itself,
    deliberately left alone); `frozen_path`, `d.base_path` and `d.directory` are the on-disk truth,
-   so delete-data is right. The Files tab fetches `f.frozen_path` and shows "on disk as …" when the
-   two differ (`MapFile`'s `OnDisk`), which is also what the API smoke test checks.
-   `docker/patches/apply-<repo>.sh` is the general hook — one per repository, run after clone and
-   before configure.
+   so delete-data is right — as bytes, which XML-RPC cannot always carry (below). The Files tab
+   fetches `f.frozen_path` and shows "on disk as …" when the two differ (`MapFile`'s `OnDisk`),
+   which is also what the API smoke test checks. `docker/patches/apply-<repo>.sh` is the general
+   hook — one per repository, run after clone and before configure.
+
+   **Nor does anything make those names UTF-8, and XML-RPC text must be.** An old torrent names its
+   files in Latin-1 and libtorrent writes those bytes as they are — 0.16.25 still names a single
+   file by its legacy `name`, whatever `name.utf-8` says. xmlrpc-c, every image's RPC layer, takes a
+   string only if it is UTF-8 inside the Basic Multilingual Plane, so an emoji fails as well (1.51,
+   and the current release still); rtorrent then sends a stand-in for the whole string
+   (`internal/rtorrent/standin.go`): from 0.16.3 every byte outside printable ASCII as `%XX`,
+   upper-case (libtorrent's `string_with_escape_codes`), before that every non-ASCII byte as `?`.
+   `%` is not escaped and `?` stands for itself, so neither can be undone from the text, and a
+   delete that took `d.base_path` at its word removed nothing and answered 200 — or removed a file
+   that really is called `Caf%E9 …`. `dataPath` (`service/datapaths.go`) asks 0.16.13 and later for
+   `d.base_path.base64`, the bytes exactly. On older releases it matches the stand-in against the
+   disk, a component at a time, and refuses with a 409 before the erase when two paths fit, or when
+   the one that fits is not confirmed by rtorrent: `f.is_created` stats the real bytes, and a
+   torrent whose own data is gone must not take a namesake with it. The root checks then apply to
+   the bytes found. A stand-in is chosen per string, so a UTF-8 file name under a Latin-1
+   directory arrives escaped in `f.frozen_path` and as itself in `f.path`: `MapFile` does not take
+   that for a shortened name (it used to say "on disk as Caf%C3%A9.txt"). The completion move gets
+   the path from rtorrent as an argument, bytes and all, and never sees a stand-in; a directory
+   change takes a path from the user and can only set one that is UTF-8.
 
 13. **What the client calls itself is compile-time, in two places.** The HTTP `User-Agent`
    (`USER_AGENT`, patched into rtorrent's `set_user_agent(USER_AGENT)` call by

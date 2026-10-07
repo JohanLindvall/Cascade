@@ -6,10 +6,12 @@ usage: python3 docker/api-smoke.py <base-url>[/base-path] [container]
 
 What it holds the image to: readiness, the XML-RPC passthrough, validation and
 error shapes, the cross-site guard, compression and caching headers, setting
-and throttle round trips in rtorrent's own units, the state stream, and the
-libtorrent path patch (a torrent named past Linux's 255-byte limit must start).
-Given the container's name it gives up as soon as the container exits rather
-than waiting out the readiness timeout.
+and throttle round trips in rtorrent's own units, the state stream, the
+libtorrent path patch (a torrent named past Linux's 255-byte limit must start),
+and deleting the data of a torrent whose name is not UTF-8. Given the
+container's name it gives up as soon as the container exits rather than
+waiting out the readiness timeout, and looks at its disk where a check needs
+to; without it, such a check is skipped.
 
 Standard library only. It restores what it changes and removes what it adds,
 but it does change a live rtorrent: point it at a disposable container.
@@ -57,6 +59,19 @@ class Cascade:
         reply = self.api('/api/rpc', {'method': method, 'params': params})
         assert reply['ok'], reply
         return reply['result']
+
+    def run(self, *argv, user=None):
+        """A command's output in the container, as bytes. Arguments travel to
+        Docker as JSON strings, so bytes that are not UTF-8 have to come from
+        the command itself, never from an argument."""
+        command = ['docker', 'exec', *(['-u', user] if user else []), self.container, *argv]
+        return subprocess.run(command, capture_output=True, check=True).stdout
+
+    def names(self, directory):
+        """The entries of a directory in the container, as the bytes on disk."""
+        listing = self.run('sh', '-c', 'for f in "$1"/* "$1"/.[!.]*; do [ -e "$f" ] || [ -L "$f" ] && '
+                           'printf "%s\\0" "${f##*/}"; done; true', 'sh', directory)
+        return set(name for name in listing.split(b'\0') if name)
 
     def alive(self):
         if not self.container:
@@ -205,6 +220,90 @@ def check_long_file_name(cascade):
             cascade.fetch(f'/api/torrents/{info_hash}', method='DELETE')
 
 
+def upload_torrents(cascade, *torrents):
+    boundary = 'cascade-smoke-' + uuid.uuid4().hex
+    form = b''.join(
+        (f'--{boundary}\r\nContent-Disposition: form-data; name="torrents"; filename="t{i}.torrent"\r\n'
+         'Content-Type: application/x-bittorrent\r\n\r\n').encode() + torrent + b'\r\n'
+        for i, torrent in enumerate(torrents)) + f'--{boundary}--\r\n'.encode()
+    status, _, body = cascade.fetch('/api/torrents/upload', form, 'POST',
+                                    {'content-type': f'multipart/form-data; boundary={boundary}'})
+    assert status == 200, (status, body)
+    return json.loads(body)
+
+
+def check_names_that_are_not_text(cascade):
+    """A name that is not UTF-8 cannot travel as XML-RPC text, so rtorrent
+    reports a stand-in: "Caf%E9" from 0.16.3, "Caf?" before. Deleting with data
+    used to remove the path the stand-in spells, which is nothing — or another
+    file of that name. The data must go, and a file named like the stand-in
+    must stay unless the server cannot tell the two apart, when it refuses."""
+    if not cascade.container:
+        print('skipped deleting a name that is not UTF-8: it needs the container, to look at its disk')
+        return
+    directory = cascade.rpc('directory.default').rstrip('/') or '/'
+    owner = cascade.run('stat', '-c', '%u:%g', directory).decode().strip()
+    tag = uuid.uuid4().hex[:8]
+    data = b'\xe9' * (256 * 1024)
+    common = {'piece length': 262144, 'pieces': hashlib.sha1(data).digest()}
+    single = {**common, 'name': b'Caf\xe9 smoke-' + tag.encode() + b'.bin', 'length': len(data)}
+    # A UTF-8 name inside a directory that is not: escaped with its path, but
+    # the same name, not one the filesystem made it shorten.
+    multi = {**common, 'name': b'Caf\xe9 smoke-' + tag.encode(),
+             'files': [{'length': len(data), 'path': ['Café.txt']}]}
+    hashes = [hashlib.sha1(bencode(info)).hexdigest().upper() for info in (single, multi)]
+    torrents = [bencode({'announce': 'http://tracker.invalid/announce', 'info': info}) for info in (single, multi)]
+    try:
+        result = upload_torrents(cascade, *torrents)
+        assert result['added'] == 2, result
+        files = {}
+        for _ in range(30):
+            listed = {t['hash']: t for t in cascade.api('/api/state')['torrents']}
+            for info_hash in hashes:
+                if info_hash in listed:
+                    status, _, body = cascade.fetch(f'/api/torrents/{info_hash}/files')
+                    files[info_hash] = json.loads(body) if status == 200 else []
+            if all(files.get(h) and all(f['created'] for f in files[h]) for h in hashes):
+                break
+            time.sleep(1)
+        on_disk = cascade.names(directory)
+        if single['name'] not in on_disk or multi['name'] not in on_disk:
+            print(f'skipped deleting a name that is not UTF-8: this rtorrent did not write it as given ({files})')
+            return
+        inside = files.get(hashes[1]) or [{}]
+        assert inside[0].get('path') == 'Café.txt' and inside[0].get('onDisk') == '', inside
+
+        methods = cascade.rpc('system.listMethods')
+        exact = 'd.base_path.base64' in methods
+        reported = cascade.rpc('d.base_path', hashes[0])
+        stand_in = reported.rsplit('/', 1)[1].encode()
+        assert stand_in != single['name'], reported
+        cascade.run('sh', '-c', 'printf other > "$1"', 'sh', reported, user=owner)
+
+        status, _, body = cascade.fetch(f'/api/torrents/{hashes[0]}?deleteData=true', method='DELETE')
+        if status == 403 and b'disabled' in body:
+            print('skipped deleting a name that is not UTF-8: data deletion is switched off')
+            return
+        if not exact:
+            # Two paths fit the stand-in; which one rtorrent means it cannot say.
+            assert status == 409 and b'more than one path' in body, (status, body)
+            assert {single['name'], stand_in} <= cascade.names(directory), 'a refused delete removed something'
+            cascade.run('rm', '--', reported)
+            status, _, body = cascade.fetch(f'/api/torrents/{hashes[0]}?deleteData=true', method='DELETE')
+        assert status == 200, (status, body)
+        left = cascade.names(directory)
+        assert single['name'] not in left, 'the data is still on disk'
+        assert stand_in in left or not exact, 'a file named like the stand-in was deleted'
+
+        status, _, body = cascade.fetch(f'/api/torrents/{hashes[1]}?deleteData=true', method='DELETE')
+        assert status == 200, (status, body)
+        assert multi['name'] not in cascade.names(directory), 'the directory is still on disk'
+    finally:
+        for info_hash in hashes:
+            cascade.fetch(f'/api/torrents/{info_hash}', method='DELETE')
+        cascade.run('sh', '-c', 'rm -rf -- "$1"/*"$2"*', 'sh', directory, tag)
+
+
 def check_stream(cascade):
     """The state stream: a compressed snapshot first, then a delta once a
     change lands — here a preference, which the status carries."""
@@ -258,6 +357,7 @@ def main(base, container=None):
     check_page_and_headers(cascade)
     check_settings_and_throttles(cascade)
     check_long_file_name(cascade)
+    check_names_that_are_not_text(cascade)
     check_stream(cascade)
     print(f'API smoke test passed on rtorrent {version}')
 

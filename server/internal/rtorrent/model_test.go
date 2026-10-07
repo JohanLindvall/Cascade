@@ -177,6 +177,20 @@ func TestFilesPeersAndTrackersMapTheirBooleansAndScaledNumbers(t *testing.T) {
 		t.Errorf("unopened file reported as %q", got)
 	}
 
+	// rtorrent sends a stand-in for a string as a whole: under a directory
+	// that is not UTF-8 the frozen path arrives escaped while f.path does not,
+	// and the name is still the same one.
+	for _, frozen := range []string{"/downloads/Caf%E9 dir/Caf%C3%A9.txt", "/downloads/Caf? dir/Caf??.txt"} {
+		if got := MapFile(Row{"f.path": "Café.txt", "f.frozen_path": frozen}, 0).OnDisk; got != "" {
+			t.Errorf("%q: the same name reported as %q", frozen, got)
+		}
+	}
+	escapedCut := MapFile(Row{"f.path": "Caf%E9 " + strings.Repeat("x", 300) + ".bin",
+		"f.frozen_path": "/downloads/Caf%E9 xxx~1a2b3c4d.bin"}, 0)
+	if escapedCut.OnDisk != "Caf%E9 xxx~1a2b3c4d.bin" {
+		t.Errorf("shortened escaped name reported as %q", escapedCut.OnDisk)
+	}
+
 	peer := MapPeer(Row{"p.address": "10.0.0.1", "p.port": int64(6881), "p.completed_percent": int64(50),
 		"p.is_encrypted": int64(1), "p.is_incoming": int64(0)})
 	if peer.Progress != 0.5 || !peer.Encrypted || peer.Incoming || peer.Client != "" || peer.Port != 6881 || peer.Address != "10.0.0.1" {

@@ -53,8 +53,11 @@ vulnerability:
   the network.
 - **Deleting data is confined** to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and
   `CASCADE_DELETE_ROOTS`, as set when the container starts (a default directory changed in the
-  settings dialog is not added); `CASCADE_ALLOW_DATA_DELETE=0` forbids it altogether. That covers
-  deletion only: a torrent's directory may be any path rtorrent's user can write.
+  settings dialog is not added); `CASCADE_ALLOW_DATA_DELETE=0` forbids it altogether. The check is
+  made on the path as bytes on disk, the same bytes that are then deleted: a name rtorrent can only
+  report by a stand-in (`%E9` or `?` for a byte that is not UTF-8) is resolved first, and refused
+  when it could be more than one path. That covers deletion only: a torrent's directory may be any
+  path rtorrent's user can write.
 - **Tracker secrets are hidden on screen, not from the API.** The UI masks passkeys and
   credentials in tracker URLs, messages and log lines; the API returns them as rtorrent stores
   them, because clients need them.
