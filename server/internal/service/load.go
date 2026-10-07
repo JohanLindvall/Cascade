@@ -265,11 +265,13 @@ func checkLoadOptions(options contracts.LoadOptions) error {
 }
 
 // loadCommands are the commands a load runs on the new torrent: its
-// directory, and its label URL-encoded (see quirk 11).
+// directory, without the trailing slashes d.directory.set would keep before a
+// multi-file torrent's name ("dir//X", see rtorrent/directory.go), and its
+// label URL-encoded (see quirk 11).
 func (s *Service) loadCommands(options contracts.LoadOptions) []any {
 	commands := []any{}
 	if options.Directory != "" {
-		commands = append(commands, `d.directory.set="`+escapeArg(options.Directory)+`"`)
+		commands = append(commands, `d.directory.set="`+escapeArg(rtorrent.TrimDirectory(options.Directory))+`"`)
 	}
 	if options.Label != "" && s.caps.Supports("labels") {
 		commands = append(commands, `d.custom1.set="`+escapeArg(encodeURIComponent(options.Label))+`"`)

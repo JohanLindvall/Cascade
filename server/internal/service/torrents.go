@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"path"
 	"strconv"
-	"strings"
 
 	"github.com/JohanLindvall/Cascade/server/internal/httperr"
 	"github.com/JohanLindvall/Cascade/server/internal/rtorrent"
@@ -270,6 +269,10 @@ func (s *Service) SetTorrentSlots(ctx context.Context, hash string, uploads, dow
 // offers changes nothing when it is sent back as it is.
 func (s *Service) SetDirectory(ctx context.Context, hash, directory string) error {
 	ctx = detached(ctx)
+	// As rtorrent keeps a directory, and as DataDirectory reads the listing's:
+	// without the trailing slashes d.directory.set would keep before the name
+	// it appends ("dir//X").
+	directory = rtorrent.TrimDirectory(directory)
 	return s.torrentWrites.run(hash, func() error {
 		if err := s.caps.Ensure(ctx); err != nil {
 			return err
@@ -281,7 +284,7 @@ func (s *Service) SetDirectory(ctx context.Context, hash, directory string) erro
 		if err != nil {
 			return err
 		}
-		if rtorrent.DataDirectory(where) == trimDirectory(directory) {
+		if rtorrent.DataDirectory(where) == directory {
 			return nil
 		}
 		method, value, err := s.directoryCommand(where, directory)
@@ -362,15 +365,6 @@ func (s *Service) directoryCommand(where rtorrent.Row, directory string) (method
 	return "", "", httperr.Backend(fmt.Sprintf(
 		"cannot keep this torrent's folder, %q: its name cannot be read from rtorrent exactly or sent back as text, "+
 			"and it is not the torrent's own; nothing was changed", path.Base(rtorrent.Text(where["d.directory"]))))
-}
-
-// trimDirectory is a directory as rtorrent keeps one, without trailing
-// slashes — though "/" stays "/" here, as the UI reads the root.
-func trimDirectory(directory string) string {
-	if trimmed := strings.TrimRight(directory, "/"); trimmed != "" || directory == "" {
-		return trimmed
-	}
-	return "/"
 }
 
 // SetFilePriority sets a file's priority — 0 skip, 1 normal, 2 high — and

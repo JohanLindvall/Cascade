@@ -13,7 +13,11 @@ package rtorrent
 // ("/downloads/X/X"), on 0.9.8 as on 0.16.25. d.directory_base.set
 // (d.directory.base.set from 0.16.22, which keeps the old name as a redirect)
 // sets the root itself. Both strip the trailing slashes of the root they set
-// — "/" or "" leaves "." — and expand a leading "~".
+// — "/" or "" leaves "." — and expand a leading "~", but the name
+// d.directory.set appends keeps the slashes before it: given "/downloads//",
+// the root is "/downloads//X". So the directory above a folder is read
+// without its trailing slashes, as a change is (TrimDirectory), and Cascade
+// sends a directory without them.
 //
 // A multi-file torrent's folder is not always named after it: a root set with
 // d.directory_base.set — by another tool, or in rtorrent's own console — is
@@ -59,21 +63,30 @@ func parentUnlessMulti(base string, multi bool) string {
 
 // DataDirectory is the directory a torrent's data goes into, as the UI shows
 // it: d.directory for a single file, the directory above a multi-file
-// torrent's own folder. It is what "Change directory" offers and takes — what
-// an add's directory names — and the UI reads its listing the same way
-// (dataFolder in web/src/dataFolder.ts).
+// torrent's own folder, without the slashes d.directory.set may have left
+// before it. It is what "Change directory" offers and takes — what an add's
+// directory names — and the UI reads its listing the same way (dataFolder in
+// web/src/dataFolder.ts).
 func DataDirectory(row Row) string {
 	directory := shownDirectory(row)
 	if !row.flag("d.is_multi_file") {
 		return directory
 	}
-	switch cut := strings.LastIndexByte(directory, '/'); {
-	case cut > 0:
-		return directory[:cut]
-	case cut == 0:
-		return "/"
+	if cut := strings.LastIndexByte(directory, '/'); cut >= 0 {
+		return TrimDirectory(directory[:cut+1])
 	}
 	return ""
+}
+
+// TrimDirectory is a directory as rtorrent keeps one, without trailing
+// slashes — though "/" stays "/" here, as the UI reads the root. DataDirectory
+// reads the listing through it, and a change or an add sends its directory
+// through it, so what the UI offers compares equal to what it was sent as.
+func TrimDirectory(directory string) string {
+	if trimmed := strings.TrimRight(directory, "/"); trimmed != "" || directory == "" {
+		return trimmed
+	}
+	return "/"
 }
 
 // Folder is the name of a multi-file torrent's own folder as the bytes on

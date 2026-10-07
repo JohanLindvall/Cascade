@@ -264,7 +264,12 @@ export function directorySet(t: SimTorrent, directory: string): void {
   t.folder = fitComponent(t.name);
 }
 
-/** d.directory_base.set: d.directory itself, a multi-file torrent's folder named as the path ends. */
+/**
+ * d.directory_base.set: d.directory itself, a multi-file torrent's folder
+ * named as the path ends. The directory above it is kept without trailing
+ * slashes, as the server reads it (DataDirectory): a root of "/downloads//X"
+ * has its folder in "/downloads".
+ */
 export function directoryBaseSet(t: SimTorrent, root: string): void {
   const path = trimDirectory(root);
   if (!t.multi) {
@@ -272,7 +277,7 @@ export function directoryBaseSet(t: SimTorrent, root: string): void {
     return;
   }
   const cut = path.lastIndexOf('/');
-  t.parent = cut > 0 ? path.slice(0, cut) : cut === 0 ? '/' : '';
+  t.parent = cut < 0 ? '' : trimDirectory(path.slice(0, cut + 1));
   t.folder = path.slice(cut + 1);
 }
 

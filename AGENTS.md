@@ -791,7 +791,11 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   nested the torrent inside itself (`/downloads/X/X`, on 0.9.8 as on 0.16.25). "Change directory"
   offers `dataFolder` (`web/src/dataFolder.ts`); the server reads the listing the same way
   (`DataDirectory`, `internal/rtorrent/directory.go`) and leaves a torrent already there alone,
-  running or not. A multi-file torrent keeps the folder it has, by its bytes, through
+  running or not. Both sides of that comparison are read without trailing slashes
+  (`TrimDirectory`), and a change or an add sends its directory without them: `d.directory.set`
+  keeps the slashes it is given before the name it appends (`/downloads//X`, on 0.9.8 as on
+  0.16.25), and a parent read as `/downloads/` matched no offer, so confirming one stopped the
+  torrent. A multi-file torrent keeps the folder it has, by its bytes, through
   `d.directory_base.set` (`d.directory.base.set` from 0.16.22, the old name a redirect): a folder
   set by another tool, or shortened by the libtorrent patch (quirk 12), is not named after the
   torrent. Bytes that cannot be read exactly (a stand-in no base path vouches for) or sent back

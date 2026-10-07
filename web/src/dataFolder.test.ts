@@ -24,6 +24,18 @@ test('the folder\'s own name plays no part: one named otherwise, or shortened to
   assert.equal(dataFolder(torrent('b', 'x'.repeat(300), `/downloads/${'x'.repeat(246)}~1a2b3c4d`, true)), '/downloads');
 });
 
+test('the directory above a folder is read without the slashes d.directory.set may leave before it', () => {
+  // Given "/d//", d.directory.set appends the name after both slashes.
+  assert.equal(dataFolder(torrent('a', 'Show', '/d//Show', true)), '/d');
+  assert.equal(dataFolder(torrent('b', 'Show', '//Show', true)), '/');
+  // So the selection shares one directory with a file rtorrent keeps at "/d".
+  const byHash = new Map([
+    ['multi', torrent('multi', 'Show', '/d//Show', true)],
+    ['single', torrent('single', 'film.mkv', '/d', false)],
+  ]);
+  assert.equal(sharedDataFolder(byHash, ['multi', 'single']), '/d');
+});
+
 test('nothing to offer where rtorrent names no directory', () => {
   assert.equal(dataFolder(torrent('a', 'Show S01', '', true)), '');
   assert.equal(dataFolder(torrent('b', 'Show S01', '.', true)), '');

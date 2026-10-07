@@ -19,6 +19,10 @@ func TestTheDataDirectoryIsWhereTheDataGoesNotTheTorrentsOwnFolder(t *testing.T)
 		{Row{"d.directory": "/downloads/Season One", "d.name": "Show S01", "d.is_multi_file": int64(1)}, "/downloads"},
 		{Row{"d.directory": "/Show S01", "d.is_multi_file": int64(1)}, "/"},
 		{Row{"d.directory": ".", "d.is_multi_file": int64(1)}, ""},
+		// d.directory.set keeps the slashes it was given before the name it
+		// appends; the directory above is read without them, as a change is.
+		{Row{"d.directory": "/downloads//Show S01", "d.is_multi_file": int64(1)}, "/downloads"},
+		{Row{"d.directory": "//Show S01", "d.is_multi_file": int64(1)}, "/"},
 		// The stand-in read from the base path, as the listing shows it.
 		{Row{"d.directory": "/downloads/Caf%E9/Plain", "d.is_multi_file": int64(1),
 			"d.base_path.base64": b64("/downloads/Caf\xe9/Plain")}, "/downloads/Caf\uFFFD"},
@@ -64,6 +68,17 @@ func TestAFolderIsKeptByItsBytesOrNotAtAll(t *testing.T) {
 	} {
 		if folder, ok := Folder(c.row); folder != c.folder || ok != c.ok {
 			t.Errorf("%s: %q %v", c.name, folder, ok)
+		}
+	}
+}
+
+func TestADirectoryIsTrimmedAsRtorrentKeepsOne(t *testing.T) {
+	for directory, want := range map[string]string{
+		"/downloads": "/downloads", "/downloads/": "/downloads", "/downloads//": "/downloads",
+		"/": "/", "//": "/", "": "", ".": ".", "./": ".", "~/": "~",
+	} {
+		if got := TrimDirectory(directory); got != want {
+			t.Errorf("%q: %q", directory, got)
 		}
 	}
 }

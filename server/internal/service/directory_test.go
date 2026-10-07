@@ -52,12 +52,15 @@ func movedWith(method, value string) []rtorrent.Call {
 func b64(raw string) string { return base64.StdEncoding.EncodeToString([]byte(raw)) }
 
 func TestChangingADirectoryClosesFirstAndLeavesItStopped(t *testing.T) {
-	client := placed("/downloads", false)
-	if err := newService(t, client, nil).SetDirectory(ctx, hash, "/downloads/moved"); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := changes(client), movedWith("d.directory.set", "/downloads/moved"); !reflect.DeepEqual(got, want) {
-		t.Fatalf("%v", got)
+	// Trailing slashes or not: a directory goes to rtorrent as it keeps one.
+	for _, to := range []string{"/downloads/moved", "/downloads/moved//"} {
+		client := placed("/downloads", false)
+		if err := newService(t, client, nil).SetDirectory(ctx, hash, to); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := changes(client), movedWith("d.directory.set", "/downloads/moved"); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: %v", to, got)
+		}
 	}
 	unsupported := backend()
 	if code := status(t, newService(t, unsupported, nil).SetDirectory(ctx, hash, "/downloads/moved")); code != 501 || len(unsupported.CallsTo("d.stop")) != 0 {
@@ -79,6 +82,12 @@ func TestAMultiFileTorrentKeepsItsFolderInsideTheDirectoryGiven(t *testing.T) {
 		// rtorrent leaves "." for a root of "/" or "": no folder to keep, so
 		// it is named after the torrent, as an add names it.
 		{"no folder of its own", ".", "/media", nil, "d.directory.set", "/media"},
+		// Sent without trailing slashes, which d.directory.set would keep
+		// before the name it appends ("/media//Show S01"); the base setter
+		// is given the root as rtorrent would make it.
+		{"a doubled trailing slash", "/downloads/Season One", "/media/tv//", nil, "d.directory_base.set", "/media/tv/Season One"},
+		{"a doubled trailing slash, named on rtorrent's side", ".", "/media//", nil, "d.directory.set", "/media"},
+		{"the root with a slash too many", "/downloads/Show S01", "//", nil, "d.directory_base.set", "/Show S01"},
 	} {
 		client := placed(c.directory, true, c.extra...).Answer("d.name", "Show S01")
 		if err := newService(t, client, nil).SetDirectory(ctx, hash, c.to); err != nil {
@@ -100,6 +109,10 @@ func TestTheDirectoryOfferedChangesNothing(t *testing.T) {
 		{"/downloads/Season One", true, []string{"/downloads"}},
 		{"/downloads", false, []string{"/downloads", "/downloads/"}},
 		{"/Show S01", true, []string{"/", "//"}},
+		// d.directory.set given "/downloads//" keeps the slashes before the
+		// name it appends; the UI offers the directory without them.
+		{"/downloads//Show S01", true, []string{"/downloads", "/downloads/"}},
+		{"//Show S01", true, []string{"/"}},
 	} {
 		client := placed(c.directory, c.multi)
 		s := newService(t, client, nil)

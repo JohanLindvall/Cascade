@@ -239,6 +239,27 @@ test('a directory change takes the directory the data goes into, as an add does'
   assert.equal(named('Cosmos').directory, '/media/films/Cosmos/Cosmos Laundromat (2015)');
 });
 
+test('a directory change reads the directory above a folder without trailing slashes, as the server does', () => {
+  const { ok, named } = setup();
+  const rpc = (method: string, ...params: unknown[]) => ok('POST', 'rpc', { method, params });
+  // Typed with a doubled trailing slash, the directory is sent without it.
+  const bunny = named('Big Buck Bunny');
+  ok('PATCH', `torrents/${bunny.hash}`, { directory: '/media/new//' });
+  assert.equal(named('Big Buck Bunny').directory, '/media/new/Big Buck Bunny');
+  // A root set with one leaves its folder in the directory without it: what
+  // the prompt offers changes nothing, and a running torrent keeps running.
+  const cosmos = named('Cosmos');
+  ok('POST', `torrents/${cosmos.hash}/action/stop`);
+  rpc('d.directory_base.set', cosmos.hash, '/downloads//Cosmos');
+  ok('POST', `torrents/${cosmos.hash}/action/start`);
+  const before = named('Cosmos');
+  assert.notEqual(before.status, 'stopped');
+  assert.equal(dataFolder(before), '/downloads');
+  ok('PATCH', `torrents/${cosmos.hash}`, { directory: dataFolder(before) });
+  const after = named('Cosmos');
+  assert.deepEqual([after.directory, after.status], [before.directory, before.status]);
+});
+
 test('removing: the data goes only from inside the data roots, refused before the torrent is erased', () => {
   const { ok, named, torrents } = setup();
   const before = ok<StateResponse>('GET', 'state');

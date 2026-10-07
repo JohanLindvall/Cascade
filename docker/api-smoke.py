@@ -428,7 +428,10 @@ def check_directory_change(cascade):
     does. d.directory is a multi-file torrent's own folder, and d.directory.set
     appends the torrent's name to what it is given, so the directory the UI
     offered back used to nest the torrent inside itself. The offer must change
-    nothing, and a new directory get the folder, by the name it has."""
+    nothing, and a new directory get the folder, by the name it has. Trailing
+    slashes, which d.directory.set keeps before the name it appends
+    ("e//multi"), must not turn the offer into a change, and Cascade sends a
+    directory without them."""
     tag = uuid.uuid4().hex[:8]
     root = cascade.rpc('directory.default').rstrip('/') + f'/smoke-dir-{tag}'
     data = tag.encode() * 2048
@@ -460,6 +463,16 @@ def check_directory_change(cascade):
         cascade.rpc('d.directory_base.set', hashes[1], f'{root}/b/Other {tag}')
         move(f'{root}/c')
         assert directories() == [f'{root}/c', f'{root}/c/Other {tag}'], directories()
+        # Typed as "e//", the multi-file torrent's root is "e//multi …": the
+        # directory offered is "e", and changes nothing.
+        for info_hash in hashes:
+            cascade.rpc('d.directory.set', info_hash, f'{root}/e//')
+        assert directories() == [f'{root}/e', f'{root}/e//multi {tag}'], directories()
+        move(f'{root}/e')
+        assert directories() == [f'{root}/e', f'{root}/e//multi {tag}'], f'the directory offered moved them: {directories()}'
+        # Cascade sends a directory without them.
+        move(f'{root}/f//')
+        assert directories() == [f'{root}/f', f'{root}/f/multi {tag}'], directories()
     finally:
         for info_hash in hashes:
             cascade.fetch(f'/api/torrents/{info_hash}', method='DELETE')
