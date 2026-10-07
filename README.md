@@ -629,9 +629,11 @@ index that is not a number, a tracker that is not an announce URL — is answere
 naming the field. Adding a torrent the session already holds — a `.torrent` or a magnet
 with the same info hash — is a `409` naming it rather than a success: rtorrent would drop the load,
 and its label and directory, without a word. In an upload batch it is one of the per-file
-`errors`. Bulk routes validate every hash before applying anything, normalize case and
-deduplicate, then return runtime failures by hash in `errors`. Numeric settings reject null,
-booleans, fractions, unsafe integers and malformed strings; a typo cannot become unlimited.
+`errors`. Removing a torrent with its data is a `409`, before anything is removed, when the path
+of that data cannot be pinned down on disk (see *Notes and limitations*). Bulk routes validate
+every hash before applying anything, normalize case and deduplicate, then return runtime failures
+by hash in `errors`. Numeric settings reject null, booleans, fractions, unsafe integers and
+malformed strings; a typo cannot become unlimited.
 
 Uploads accept up to 50 files and URLs combined. `CASCADE_MAX_UPLOAD_MB` bounds the combined
 file bytes in a batch. The response contains `added`, `errors`, `failedFiles` and `failedUrls`;
@@ -726,13 +728,28 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
   extension, and appends `~` plus a short hash of the original to distinguish long names;
   the torrent keeps its own names in the list and the Files tab, which notes *on disk as …*
   where the two differ.
+- Names are bytes to rtorrent, but XML-RPC text has to be UTF-8 — and through xmlrpc-c, the RPC
+  layer the image builds with, UTF-8 within the Basic Multilingual Plane, which leaves out emoji.
+  For a name that is not, such as a Latin-1 `Café.bin` from an old torrent, rtorrent sends a
+  stand-in: `Caf%E9.bin` from 0.16.7, `Caf?.bin` before 0.16.3. Releases 0.16.3 to 0.16.6 garble
+  that stand-in into text XML-RPC cannot carry either, so they cannot report such a name at all:
+  asked for it alone, rtorrent answers with an error, and asked for a list that holds it — the
+  torrent list among them — rtorrent crashes. From rtorrent 0.16.13 Cascade asks for the bytes
+  instead and shows the name as it is, emoji included, with `�` for a byte that is not UTF-8; on
+  older releases the UI shows the stand-in.
 - Global settings changed in the UI are not persisted to `rtorrent.rc`; the environment is the
   source of truth on restart.
 - "Change directory" stops the torrent and updates its saved path. Move already-downloaded files
   yourself, then use **Recheck & restart** before transferring at the new location.
 - Deleting torrent data is confined to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and any
   `CASCADE_DELETE_ROOTS`. Paths are checked before removing metadata, and deletion stays anchored
-  to an open root directory even if symlinks change. A root itself cannot be deleted.
+  to an open root directory even if symlinks change. A root itself cannot be deleted. A path
+  rtorrent can only report by a stand-in (see above) is taken as bytes from rtorrent 0.16.13 on;
+  on an older release it is matched against the disk, and when more than one path fits, or
+  rtorrent cannot confirm that the one that fits holds the torrent's files, the delete is refused
+  with a `409` before anything is removed. On 0.16.3 to 0.16.6, which cannot report such a path,
+  it fails with a `502`, also before anything is removed. A file that happens to be called
+  `Caf%E9.bin` is never taken for the torrent's `Café.bin`.
 - Completion moves use the actual on-disk filename, refuse existing destinations, and reopen
   the torrent at its new location. A failed move leaves the source data in place.
 - Throttle groups cannot be removed from a running rtorrent — deleting one sets it to unlimited
@@ -786,9 +803,11 @@ three run inside every image build, so a red test fails the build exactly as a t
 `docker/api-smoke.py` (Python 3's standard library only) exercises a running container against
 the rtorrent inside it: readiness, the `/RPC2` passthrough, validation and error shapes, the
 cross-site guard, compression and cache headers, setting and throttle round trips in rtorrent's
-own units, the state stream, and the long file name patch. It restores what it changes, but
-point it at a disposable container — `make smoke` makes one and removes it even when a check
-fails, and CI and the release run the same script against every image they build:
+own units, the state stream, the long file name patch, and deleting the data of a torrent whose
+name is not UTF-8 (which looks at the container's disk, so it needs the container's name). It
+restores what it changes, but point it at a disposable container — `make smoke` makes one and
+removes it even when a check fails, and CI and the release run the same script against every
+image they build:
 
 ```bash
 python3 docker/api-smoke.py http://127.0.0.1:18080 [container-name]

@@ -136,7 +136,7 @@ func (s *Service) removeTorrent(ctx context.Context, hash string, deleteData boo
 		if !s.cfg.AllowDataDelete {
 			return httperr.New(http.StatusForbidden, "deleting torrent data is disabled (CASCADE_ALLOW_DATA_DELETE=0)")
 		}
-		basePath, err := s.client.Call(ctx, "d.base_path", hash)
+		base, err := s.dataPath(ctx, hash)
 		if err != nil {
 			return err
 		}
@@ -144,7 +144,7 @@ func (s *Service) removeTorrent(ctx context.Context, hash string, deleteData boo
 		// left the metadata gone and the data behind — the one combination the
 		// user did not ask for. An empty base path (never started) has nothing
 		// to check or delete.
-		if base := rtorrent.Text(basePath); base != "" {
+		if base != "" {
 			if data, err = prepareDataDeletion(base, s.cfg.DeleteRoots); err != nil {
 				return err
 			}

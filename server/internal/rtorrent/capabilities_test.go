@@ -95,6 +95,20 @@ func TestFieldListsAreFilteredToWhatTheBackendImplements(t *testing.T) {
 	}
 }
 
+func TestNamesAndPathsAreAskedForByTheirExactVariantsWhereTheBackendHasThem(t *testing.T) {
+	caps := rtorrent.NewCapabilities(backend([]string{"d.multicall2", "d.hash", "d.name", "d.name.base64",
+		"d.directory", "d.base_path", "d.base_path.base64", "f.path", "f.path_components.base64", "f.frozen_path",
+		"f.frozen_path.base64", "f.size_bytes"}, nil), fields)
+	ensure(t, caps)
+	dialect := caps.Dialect()
+	if want := []string{"d.hash", "d.name.base64", "d.directory", "d.base_path.base64"}; !reflect.DeepEqual(dialect.TorrentFields, want) {
+		t.Errorf("torrent fields %#v, want %#v", dialect.TorrentFields, want)
+	}
+	if want := []string{"f.path_components.base64", "f.frozen_path.base64", "f.size_bytes"}; !reflect.DeepEqual(dialect.FileFields, want) {
+		t.Errorf("file fields %#v, want %#v", dialect.FileFields, want)
+	}
+}
+
 func TestABackendExposingNoTorrentFieldGetsTheFullListToFaultLoudly(t *testing.T) {
 	caps := rtorrent.NewCapabilities(backend([]string{"d.multicall2"}, nil), fields)
 	ensure(t, caps)

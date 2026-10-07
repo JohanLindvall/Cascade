@@ -3,15 +3,210 @@
 package service
 
 import (
+	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/JohanLindvall/Cascade/server/internal/httperr"
+	"github.com/JohanLindvall/Cascade/server/internal/rtorrent"
 )
+
+// dataPath is the torrent's base path as the bytes on disk, or "" when it has
+// none yet (a torrent never opened has no base path).
+//
+// rtorrent cannot always name it in XML-RPC text: a path that is not UTF-8,
+// or that holds an emoji, arrives as a stand-in (see rtorrent/standin.go) —
+// "/downloads/Caf%E9.bin" for the byte 0xE9. Taken as a path, that named
+// nothing, so the delete removed nothing and reported success; or, worse, a
+// file really called that. From 0.16.13 rtorrent sends the bytes themselves
+// on request; on an older release the stand-in is matched against the disk
+// instead, and what cannot be told apart is refused before anything is
+// erased. (0.16.3 to 0.16.6 garble the stand-in and answer with a fault,
+// which ends the delete before the erase too.)
+func (s *Service) dataPath(ctx context.Context, hash string) (string, error) {
+	if s.caps.Has("d.base_path.base64") {
+		encoded, err := s.client.Call(ctx, "d.base_path.base64", hash)
+		if err != nil {
+			return "", err
+		}
+		raw, err := base64.StdEncoding.DecodeString(rtorrent.Text(encoded))
+		if err != nil {
+			return "", httperr.Backend("rtorrent answered d.base_path.base64 with something other than base64")
+		}
+		return string(raw), nil
+	}
+	answer, err := s.client.Call(ctx, "d.base_path", hash)
+	if err != nil {
+		return "", err
+	}
+	reported := rtorrent.Text(answer)
+	if reported == "" || !rtorrent.MayStandIn(reported) {
+		return reported, nil
+	}
+	return s.resolveStandIn(ctx, hash, reported)
+}
+
+// maxStandInPaths bounds how many paths on disk a stand-in is followed into.
+const maxStandInPaths = 16
+
+// resolveStandIn finds the path on disk a reported base path stands for, and
+// refuses rather than guesses.
+func (s *Service) resolveStandIn(ctx context.Context, hash, reported string) (string, error) {
+	matches, err := pathsReportedAs(reported, maxStandInPaths)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case len(matches) == 0:
+		// Nothing on disk is what rtorrent means, whatever it means: there is
+		// no data to delete. The path still goes through the root checks, as
+		// every path always has.
+		return reported, nil
+	case len(matches) > 1:
+		return "", httperr.Newf(http.StatusConflict,
+			"refusing to delete the data: rtorrent reports its path as %q, which more than one path on disk matches (%s); "+
+				"nothing was removed — remove the torrent without its data and delete the right one yourself",
+			reported, quoteSome(matches))
+	}
+	// One path matches. It is the torrent's own if that data is on disk at
+	// all, since the data would match too; with the data gone, it can be
+	// another torrent's, named alike. rtorrent can tell: it stats the bytes it
+	// holds.
+	present, err := s.filesPresent(ctx, hash)
+	if err != nil {
+		return "", err
+	}
+	if !present {
+		return "", httperr.Newf(http.StatusConflict,
+			"refusing to delete the data: rtorrent reports its path as %q, which may stand for another name, and "+
+				"finds none of the torrent's files on disk to confirm that %q is its data; nothing was removed — "+
+				"remove the torrent without its data and delete that yourself if it is", reported, matches[0])
+	}
+	return matches[0], nil
+}
+
+// unopened is 1 for a file without a frozen path, which every file libtorrent
+// opened has: a number, where the path itself would be a string.
+const unopened = "not=$f.frozen_path"
+
+// filesPresent reports whether rtorrent finds any of the torrent's files where
+// it put them: f.is_created stats the frozen path, the bytes the file was
+// opened under, which no stand-in blurs.
+//
+// Padding is the exception. From libtorrent 0.15 a file is padding when its
+// BEP 47 attr holds a 'p', whatever it is called, and f.is_created answers 1
+// for it without a stat, data or no data. Padding is never opened, so it has
+// no frozen path — and without one a stat finds nothing, so requiring one
+// rules out padding and nothing else, on every release.
+//
+// Only numbers are asked for: rtorrent 0.16.3 to 0.16.6 crash on a string in a
+// multicall answer that xmlrpc-c refuses, and a base path that reads as plain
+// text says nothing of the names of the files under it.
+func (s *Service) filesPresent(ctx context.Context, hash string) (bool, error) {
+	if !s.caps.Has("f.is_created") || !s.caps.Has("f.frozen_path") || !s.caps.Has("not") {
+		return false, nil
+	}
+	rows, err := s.client.FieldMulticall(ctx, "f.multicall", []any{hash, ""}, []string{"f.is_created", unopened})
+	if err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		if rtorrent.Number(row["f.is_created"]) != 0 && rtorrent.Number(row[unopened]) == 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// pathsReportedAs lists the paths on disk rtorrent could have reported as
+// reported — once more than limit turn up, only as many as it took to find
+// out. A component that cannot be a stand-in is taken as it is; for one that
+// can, the directory above it is read and every entry rtorrent could have
+// reported that way is followed. Every form keeps '/', so the components
+// match one for one.
+func pathsReportedAs(reported string, limit int) ([]string, error) {
+	if !strings.HasPrefix(reported, "/") {
+		return nil, nil // never a data path; the root checks refuse it
+	}
+	paths := []string{""}
+	for _, part := range strings.Split(reported[1:], "/") {
+		if !rtorrent.MayStandIn(part) {
+			for i := range paths {
+				paths[i] += "/" + part
+			}
+			continue
+		}
+		var next []string
+		for _, dir := range paths {
+			names, err := entryNames(dir + "/")
+			if err != nil {
+				return nil, err
+			}
+			for _, name := range names {
+				if rtorrent.Reports(name, part) {
+					next = append(next, dir+"/"+name)
+				}
+			}
+			if len(next) > limit {
+				return next, nil
+			}
+		}
+		if paths = next; len(paths) == 0 {
+			return nil, nil
+		}
+	}
+	found := paths[:0]
+	for _, path := range paths {
+		if _, err := os.Lstat(path); err == nil {
+			found = append(found, path)
+		} else if !absent(err) {
+			return nil, err
+		}
+	}
+	sort.Strings(found)
+	return found, nil
+}
+
+// entryNames is a directory's entries, named by the bytes on disk; a
+// directory that is not there has none.
+func entryNames(dir string) ([]string, error) {
+	f, err := os.Open(dir)
+	if absent(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return f.Readdirnames(-1)
+}
+
+func absent(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
+
+// quoteSome quotes the first few paths as Go quotes them: a byte that is not
+// UTF-8 shows as \xe9 rather than vanishing into U+FFFD.
+func quoteSome(paths []string) string {
+	const shown = 3
+	quoted := make([]string, 0, shown+1)
+	for i, path := range paths {
+		if i == shown {
+			quoted = append(quoted, fmt.Sprintf("and %d more", len(paths)-shown))
+			break
+		}
+		quoted = append(quoted, fmt.Sprintf("%q", path))
+	}
+	return strings.Join(quoted, ", ")
+}
 
 func within(candidate, root string) bool {
 	relative, err := filepath.Rel(root, candidate)
@@ -63,7 +258,7 @@ func assertDeletable(basePath string, deleteRoots []string) (string, error) {
 		listed = "none"
 	}
 	refuse := httperr.Newf(http.StatusForbidden,
-		`refusing to delete "%s": it is outside the permitted data roots or would delete a data root (%s)`, resolved, listed)
+		`refusing to delete %q: it is outside the permitted data roots or would delete a data root (%s)`, resolved, listed)
 	inRoots := func(path string, roots []string) bool {
 		for _, root := range roots {
 			if within(path, root) {
