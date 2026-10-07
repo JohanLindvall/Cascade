@@ -87,8 +87,9 @@ func CheckProxyHost(value, field string) error {
 }
 
 // MaxRate is the highest global rate the settings take: the largest whole
-// KiB/s under 0.16.25's bound of 4294967294 bytes/s, past which earlier 0.16
-// releases wrapped around. (0.9.8 stops at 2^30 and refuses past it itself.)
+// KiB/s under 0.16.25's bound of 4294967294 bytes/s. Releases before 0.16.25
+// wrap a rate around at 2^32 (4 GiB/s became 0, unlimited), 0.9.8 included,
+// which itself refuses a rate over 2^30 and under 2^32.
 const MaxRate = 4194303 * 1024
 
 // Range is the whole numbers a numeric kind takes.

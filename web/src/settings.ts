@@ -19,8 +19,8 @@ export function settingsPatch(stored: Settings, draft: Settings): Settings {
  * The highest global rate the server takes, bytes/s (MaxRate in
  * server/internal/rtorrent/settings.go): rtorrent keeps the global rates in
  * whole KiB/s in 32 bits, and this is the most whole KiB/s under the
- * 4294967294 bytes/s that 0.16.25 refuses past and earlier 0.16 releases
- * wrapped around to unlimited.
+ * 4294967294 bytes/s that 0.16.25 refuses past and earlier releases wrapped
+ * around (4 GiB/s became 0, unlimited).
  */
 export const MAX_RATE = 4194303 * 1024;
 
