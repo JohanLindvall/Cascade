@@ -45,10 +45,56 @@ apply_defaults() {
   # place.
   SCREEN_DIR="$SCGI_DIR/screen"
   RUN_USER=rtorrent
+  # Settled here, before write_rc writes a missing RT_CONFIG_FILE: asked
+  # after that, the generated rc would pass for a supplied one.
+  if keeps_supplied_rc; then RC_KEPT=1; else RC_KEPT=0; fi
+  scgi_listener
 
   export TZ RT_LOG_FILE RT_LOG_LEVEL CASCADE_STATE_FILE CASCADE_BOOT_SETTINGS="$BOOT_SETTINGS"
-  export CASCADE_SCGI="${CASCADE_SCGI:-$RT_SCGI_SOCKET}"
   export SCREENDIR="$SCREEN_DIR"
+}
+
+# rtorrent takes a single SCGI listener: a second network.scgi.open_* stops
+# the rc with "SCGI already enabled.", and rtorrent with it, which the
+# supervisor then restarted for ever. So RT_SCGI_PORT replaces the unix socket
+# rather than joining it. SCGI_LISTEN is that port as the rc spells it, and
+# SCGI_CLIENT how the server reaches it: a wildcard bind is no address to
+# connect to, so that one is reached on the loopback.
+#
+# A supplied rc is not read. On earlier releases it had to open the socket,
+# the only listener waited for, and with RT_SCGI_PORT set it may open that
+# port instead, so for it either one counts (SCGI_SOCKET_OK). SCGI_WANTED
+# names what the wait looks for. CASCADE_SCGI, unless it was given
+# (SCGI_GIVEN), follows the listener that answered (launch_rtorrent).
+scgi_listener() {
+  SCGI_GIVEN="${CASCADE_SCGI:-}"
+  SCGI_PORT='' SCGI_LISTEN='' SCGI_CLIENT=''
+  SCGI_SOCKET_OK=1
+  SCGI_WANTED="$RT_SCGI_SOCKET"
+  [ -n "${RT_SCGI_PORT:-}" ] || return 0
+  # Leading zeros go: rtorrent reads a number as C does, so to it 05000 would
+  # be octal, port 2560, and to the server port 5000.
+  SCGI_PORT="${RT_SCGI_PORT#"${RT_SCGI_PORT%%[!0]*}"}"
+  # An IPv6 address may come with its brackets or without, and goes out with
+  # them: rtorrent splits the host from the port at the first colon otherwise.
+  scgi_bind="${RT_SCGI_BIND:-127.0.0.1}"
+  scgi_bind="${scgi_bind#[[]}"
+  scgi_bind="${scgi_bind%[]]}"
+  case "$scgi_bind" in
+    *:*) SCGI_LISTEN="[$scgi_bind]:$SCGI_PORT" ;;
+    *) SCGI_LISTEN="$scgi_bind:$SCGI_PORT" ;;
+  esac
+  case "$scgi_bind" in
+    # Anything but 0.0.0.0 or ::, however many zeros spell them.
+    *[!0:.]*) SCGI_CLIENT="$SCGI_LISTEN" ;;
+    *) SCGI_CLIENT="127.0.0.1:$SCGI_PORT" ;;
+  esac
+  if [ "$RC_KEPT" = 1 ]; then
+    SCGI_WANTED="$RT_SCGI_SOCKET or $SCGI_LISTEN"
+  else
+    SCGI_SOCKET_OK=0
+    SCGI_WANTED="$SCGI_LISTEN"
+  fi
 }
 
 # enabled <name> <value>: the boolean options, spelled as the server spells
@@ -97,6 +143,22 @@ validate_options() {
   enabled CASCADE_CHOWN_DOWNLOADS "${CASCADE_CHOWN_DOWNLOADS:-0}" || :
   # pick_port_commands writes the range into a probe rc whatever rc is used.
   check_rc_value RT_PORT_RANGE "$RT_PORT_RANGE" '[0-9]{1,5}-[0-9]{1,5}' 'a port range like 50000-50000'
+  # Where rtorrent listens counts whatever rc is used: a generated one opens
+  # that port, a supplied one may, and the wait and the server follow it.
+  if [ -n "${RT_SCGI_PORT:-}" ]; then
+    # Decimal and in range. Leading zeros pass, as the server reads them, and
+    # scgi_listener drops them before rtorrent, which would read octal.
+    check_rc_value RT_SCGI_PORT "$RT_SCGI_PORT" \
+      '0*([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])' \
+      'a TCP port from 1 to 65535, in decimal'
+    # An IPv4 address, an IPv6 one (at least two colons, so an address with
+    # its port does not pass for one) with or without brackets, or a name.
+    octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+    v6='[0-9A-Fa-f.]*:[0-9A-Fa-f.]*:[0-9A-Fa-f:.]*(%[0-9A-Za-z._-]+)?'
+    check_rc_value RT_SCGI_BIND "${RT_SCGI_BIND:-127.0.0.1}" \
+      "($octet\\.){3}$octet|$v6|\\[$v6\\]|[0-9A-Za-z._-]*[A-Za-z][0-9A-Za-z._-]*" \
+      'an IP address or a host name, like 127.0.0.1, 0.0.0.0 or ::'
+  fi
   # The rest only reach a generated rc; a supplied one never reads them.
   if keeps_supplied_rc; then
     return 0
@@ -111,9 +173,6 @@ validate_options() {
   fi
   check_rc_value RT_UMASK "$RT_UMASK" '[0-7]{1,4}' 'an octal umask like 0022'
   check_rc_value RT_WATCH_INTERVAL "$RT_WATCH_INTERVAL" '[0-9]+(:[0-9]{1,2}){0,2}' 'a number of seconds, or a time like 00:00:10'
-  if [ -n "${RT_SCGI_PORT:-}" ]; then
-    check_rc_value RT_SCGI_PORT "$RT_SCGI_PORT" '[0-9]{1,5}' 'a TCP port'
-  fi
 }
 
 detect_rtorrent() {
@@ -323,9 +382,11 @@ render_rc() {
     echo
   fi
   rc_line "# XML-RPC over SCGI — this is what the web UI and any external client talk to."
-  rc_line "network.scgi.open_local = $(quote "$RT_SCGI_SOCKET")"
+  # One or the other: rtorrent refuses a second listener (scgi_listener).
   if [ -n "${RT_SCGI_PORT:-}" ]; then
-    rc_line "network.scgi.open_port = $(quote "${RT_SCGI_BIND:-127.0.0.1}:${RT_SCGI_PORT}")"
+    rc_line "network.scgi.open_port = $(quote "$SCGI_LISTEN")"
+  else
+    rc_line "network.scgi.open_local = $(quote "$RT_SCGI_SOCKET")"
   fi
   echo
   rc_line "log.open_file = \"cascade\", $(quote "$RT_LOG_FILE")"
@@ -420,18 +481,77 @@ start_rtorrent() {
     screen -dmS rtorrent rtorrent -n -o import="$RC_FILE"
 }
 
+# tcp_listening <port>: whether a socket listens on the port, IPv4 or IPv6,
+# read from the kernel's own tables (st 0A is LISTEN), which takes no tool and
+# which the tests stand in for through PROC_NET. Only a listener counts: the
+# connections of an rtorrent that died linger on the same port, in TIME_WAIT,
+# for a minute after it.
+tcp_listening() {
+  port_hex="$(printf '%04X' "$1")"
+  cat "${PROC_NET:-/proc/net}/tcp" "${PROC_NET:-/proc/net}/tcp6" 2>/dev/null |
+    awk -v port=":$port_hex" '$4 == "0A" && substr($2, length($2) - 4) == port { up = 1 } END { exit !up }'
+}
+
+# unix_listening <path>: whether a unix socket listens at the path, read from
+# the kernel's table as the port is (flags 00010000 mark a listener, and the
+# path is all that follows the seventh field, spaces and all). Not from the
+# file, which an rtorrent killed outright leaves behind; and not any entry
+# with the path, which the connections rtorrent accepted carry as well.
+unix_listening() {
+  path="$1" awk '$4 == "00010000" {
+      p = $0
+      for (i = 0; i < 7; i++) sub(/^[^ ]+ +/, "", p)
+      if (p == ENVIRON["path"]) up = 1
+    }
+    END { exit !up }' "${PROC_NET:-/proc/net}/unix" 2>/dev/null
+}
+
+# scgi_up: whether rtorrent runs and listens where it was told to: on the
+# socket, on the port, or for a supplied rc on either (scgi_listener). The
+# socket file alone proved nothing: an rtorrent that stops at a later rc line
+# leaves it behind, which is how a crash loop once passed for a start. When
+# it does listen, SCGI_HEARD is the listener and SCGI_UP the server's way to
+# it.
+scgi_up() {
+  pidof rtorrent >/dev/null 2>&1 || return 1
+  if [ "$SCGI_SOCKET_OK" = 1 ] && unix_listening "$RT_SCGI_SOCKET"; then
+    SCGI_HEARD="$RT_SCGI_SOCKET" SCGI_UP="$RT_SCGI_SOCKET"
+  elif [ -n "$SCGI_PORT" ] && tcp_listening "$SCGI_PORT"; then
+    SCGI_HEARD="$SCGI_LISTEN" SCGI_UP="$SCGI_CLIENT"
+  else
+    return 1
+  fi
+}
+
+# wait_for_socket: up to 30s for rtorrent's SCGI listener (scgi_up); false,
+# after saying what it waited for and whether rtorrent still runs, if it does
+# not come.
 wait_for_socket() {
   waited=0
-  while [ ! -S "$RT_SCGI_SOCKET" ]; do
+  until scgi_up; do
     waited=$((waited + 1))
     if [ "$waited" -gt 30 ]; then
-      log "rtorrent did not create $RT_SCGI_SOCKET within 30s — recent log:"
-      [ ! -f "$RT_LOG_FILE" ] || tail -n 30 "$RT_LOG_FILE" >&2
-      die "rtorrent failed to start (check the config at $RC_FILE)"
+      if pidof rtorrent >/dev/null 2>&1; then
+        log "rtorrent did not listen on $SCGI_WANTED within 30s, though it runs"
+      else
+        log "rtorrent did not listen on $SCGI_WANTED within 30s, and is not running"
+      fi
+      return 1
     fi
     sleep 1
   done
-  log "rtorrent is up"
+  log "rtorrent is up on $SCGI_HEARD"
+}
+
+# The end of rtorrent's log, after a start that failed. rtorrent buffers it,
+# so one that has stopped has often said more than one still running.
+show_log_tail() {
+  if [ -s "$RT_LOG_FILE" ]; then
+    log "the end of $RT_LOG_FILE:"
+    tail -n 30 "$RT_LOG_FILE" >&2
+  else
+    log "nothing in $RT_LOG_FILE"
+  fi
 }
 
 # Started as a simple command rather than through as_user: $! has to be the
@@ -457,20 +577,18 @@ wait_rtorrent() {
   done
 }
 
-# SIGINT is rtorrent's clean shutdown: it announces "stopped" to every
-# tracker, drops the requests still unanswered after about ten seconds, then
-# saves the session and releases its lock — 12s to 21s, measured, with 100
-# torrents behind a tracker that never answers. It used to get 10s, then
-# SIGTERM and this script's exit, and the exit is what did the damage: the
-# container goes with it and the kernel kills whatever is left, so rtorrent
-# died mid-shutdown on every stop — lock left behind, no "stopped" sent, a
-# stale peer in every tracker's table. Hence 30s for SIGINT, then SIGTERM (its
-# quick shutdown, which skips the trackers) and 10s more for that. Docker's
-# stop timeout must outlast both — run the container with --stop-timeout 60.
-stop_all() {
-  STOPPING=1
-  log "shutting down"
-  [ -z "$SERVER_PID" ] || kill "$SERVER_PID" 2>/dev/null || true
+# stop_rtorrent: rtorrent's clean shutdown, if it runs. SIGINT is that: it
+# announces "stopped" to every tracker, drops the requests still unanswered
+# after about ten seconds, then saves the session and releases its lock — 12s
+# to 21s, measured, with 100 torrents behind a tracker that never answers. It
+# used to get 10s, then SIGTERM and this script's exit, and the exit is what
+# did the damage: the container goes with it and the kernel kills whatever is
+# left, so rtorrent died mid-shutdown on every stop — lock left behind, no
+# "stopped" sent, a stale peer in every tracker's table. Hence 30s for
+# SIGINT, then SIGTERM (its quick shutdown, which skips the trackers) and 10s
+# more for that. Docker's stop timeout must outlast both — run the container
+# with --stop-timeout 60.
+stop_rtorrent() {
   # The pid lists stay unquoted: pidof names every match, one word each.
   if pids="$(pidof rtorrent)"; then
     # shellcheck disable=SC2086
@@ -484,8 +602,47 @@ stop_all() {
       wait_rtorrent 10 || log "rtorrent did not stop; the next start clears its session lock"
     fi
   fi
+}
+
+stop_all() {
+  STOPPING=1
+  log "shutting down"
+  [ -z "$SERVER_PID" ] || kill "$SERVER_PID" 2>/dev/null || true
+  stop_rtorrent
   [ -z "$SERVER_PID" ] || wait "$SERVER_PID" 2>/dev/null || true
   exit "${1:-0}"
+}
+
+# launch_rtorrent: the first start. rtorrent comes up, and CASCADE_SCGI points
+# the server at the listener it opened unless one was given; or the start
+# ends here, but not with rtorrent still running. This script's exit takes
+# the container down, and an rtorrent the kernel kills leaves its session
+# lock behind, naming this container, which its next start may then take for
+# a live one (clear_session_lock). A stopped rtorrent has also written out
+# the log shown.
+launch_rtorrent() {
+  log "rtorrent $RT_VERSION | uid=$PUID gid=$PGID | scgi=$SCGI_WANTED"
+  start_rtorrent
+  if ! wait_for_socket; then
+    stop_rtorrent
+    show_log_tail
+    [ "$RC_KEPT" = 0 ] ||
+      die "rtorrent failed to start (check the config at $RC_FILE, which has to open RT_SCGI_SOCKET or the port RT_SCGI_PORT names)"
+    die "rtorrent failed to start (check the config at $RC_FILE)"
+  fi
+  export CASCADE_SCGI="${SCGI_GIVEN:-$SCGI_UP}"
+}
+
+# restart_rtorrent: the supervisor's restart, with the first start's wait but
+# not its exit: the log says whether rtorrent came back, with its last lines
+# when it did not, and the loop goes on restarting it whenever it has exited.
+restart_rtorrent() {
+  log "rtorrent died, restarting it"
+  start_rtorrent
+  if ! wait_for_socket; then
+    show_log_tail
+    log "rtorrent did not come back up"
+  fi
 }
 
 supervise() {
@@ -500,8 +657,7 @@ supervise() {
       stop_all 1
     fi
     if ! pidof rtorrent >/dev/null 2>&1; then
-      log "rtorrent died, restarting it"
-      start_rtorrent
+      restart_rtorrent
     fi
   done
 }
@@ -528,10 +684,7 @@ main() {
   STOPPING=0
   trap stop_all TERM INT
 
-  log "rtorrent $RT_VERSION | uid=$PUID gid=$PGID | scgi=$RT_SCGI_SOCKET"
-  start_rtorrent
-  wait_for_socket
-
+  launch_rtorrent
   if [ $# -gt 0 ]; then
     exec "$@"
   fi

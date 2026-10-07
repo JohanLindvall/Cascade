@@ -106,11 +106,11 @@ Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `RT_SCGI_SOCKET` | `/run/rtorrent/rpc.socket` | Unix socket rtorrent listens on |
-| `RT_SCGI_PORT` | unset | Also listen for SCGI on this TCP port (unauthenticated — keep it private) |
-| `RT_SCGI_BIND` | `127.0.0.1` | Interface for RT_SCGI_PORT |
+| `RT_SCGI_SOCKET` | `/run/rtorrent/rpc.socket` | Unix socket rtorrent listens on, unless RT_SCGI_PORT is set |
+| `RT_SCGI_PORT` | unset | Listen for SCGI on this TCP port instead of the socket (unauthenticated — keep it private) |
+| `RT_SCGI_BIND` | `127.0.0.1` | Address RT_SCGI_PORT listens on; 0.0.0.0 lets a published port reach it |
 | `RT_XMLRPC_SIZE_LIMIT` | `16777216` | Max XML-RPC request size, bytes (raises the .torrent upload ceiling) |
-| `CASCADE_SCGI` | RT_SCGI_SOCKET | Endpoint the web server talks to — a path, or host:port for a remote rtorrent |
+| `CASCADE_SCGI` | RT_SCGI_SOCKET, or RT_SCGI_PORT (on 127.0.0.1 for a wildcard RT_SCGI_BIND) | Endpoint the web server talks to — a path, or host:port for a remote rtorrent |
 
 ### Web server
 

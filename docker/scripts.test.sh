@@ -74,8 +74,38 @@ cat > "$entry/bin/cascade" <<'STUB'
 #!/bin/sh
 [ "$1" = log-scopes ] && echo "${STUB_SCOPES:-}"
 STUB
-chmod +x "$entry/bin/rtorrent" "$entry/bin/cascade"
+# pidof says whether an rtorrent runs (STUB_RUNNING), naming a pid above
+# Linux's limit, so a signal sent to it by mistake reaches no process. screen
+# only says how it was asked to start rtorrent, su-exec runs its command as
+# it is, and sleep returns at once, so the waits' seconds pass in no time.
+cat > "$entry/bin/pidof" <<'STUB'
+#!/bin/sh
+[ "${STUB_RUNNING:-0}" = 1 ] && echo 99999999
+STUB
+cat > "$entry/bin/screen" <<'STUB'
+#!/bin/sh
+echo "screen $*"
+STUB
+cat > "$entry/bin/su-exec" <<'STUB'
+#!/bin/sh
+shift
+exec "$@"
+STUB
+printf '#!/bin/sh\n' > "$entry/bin/sleep"
+chmod +x "$entry/bin/rtorrent" "$entry/bin/cascade" "$entry/bin/pidof" "$entry/bin/screen" \
+  "$entry/bin/su-exec" "$entry/bin/sleep"
+# kill is a builtin, which a function of that name overrides: sourced by the
+# cases that stop rtorrent, this one notes each signal in STUB_SIGNALS, and
+# SIGINT stops the stub rtorrent, as it does the real one.
+cat > "$entry/kill.sh" <<'STUB'
+kill() {
+  echo "kill $*" >> "$STUB_SIGNALS"
+  [ "$1" != -INT ] || export STUB_RUNNING=0
+}
+STUB
 echo '{}' > "$entry/state.json"
+nl='
+'
 # with_entrypoint <shell code>: run it with the functions loaded. A shell of
 # its own rather than a subshell: under `if`, a subshell runs with set -e
 # suspended, and a step that failed would not end the case.
@@ -99,6 +129,19 @@ expect_ok() {
 expect_refused() {
   if with_entrypoint "$2" >/dev/null 2>&1; then
     echo "accepted: $1" >&2
+    exit 1
+  fi
+}
+# refused_by <variable> <shell code>: a case the entrypoint must stop, naming
+# that variable.
+refused_by() {
+  if with_entrypoint "$2" >/dev/null 2>"$fixture/stderr"; then
+    echo "accepted: $2" >&2
+    exit 1
+  fi
+  if ! grep -q "FATAL: $1 must be" "$fixture/stderr"; then
+    cat "$fixture/stderr" >&2
+    echo "refused, but not for $1: $2" >&2
     exit 1
   fi
 }
@@ -143,8 +186,6 @@ for good in RT_PORT_RANDOM=Yes RT_PORT_RANDOM=TRUE RT_PORT_RANDOM=off RT_UMASK=2
             RT_SESSION_LOCK_KEEP=False CASCADE_CHOWN_DOWNLOADS=yes; do
   expect_ok "$good" "export \"$good\"; apply_defaults; validate_options"
 done
-nl='
-'
 for bad in RT_PORT_RANGE=50000:50000 "RT_PORT_RANGE=1-2${nl}execute=x" RT_PORT_RANDOM=maybe RT_UMASK=abc \
            RT_UMASK=8 RT_WATCH_INTERVAL=soon RT_WATCH_INTERVAL=10s RT_SCGI_PORT=x RT_CONFIG_KEEP=ture \
            RT_WATCH_ENABLE=ture RT_SESSION_LOCK_KEEP=ture CASCADE_CHOWN_DOWNLOADS=ture; do
@@ -200,6 +241,208 @@ fi
 for bad in RT_USE_SANITIZED_NAME=maybe RT_ALLOW_LEGACY_UTF8=2; do
   expect_refused "$bad" "export \"$bad\"; apply_defaults; validate_options"
 done
+
+# The kernel's tables, which the wait reads where PROC_NET points:
+# tables <unix entries> <tcp entries> <tcp6 entries>. tcp_listener <port> is
+# a LISTEN entry on the port (st 0A), unix_listener <path> a listening socket
+# at the path (flags 00010000).
+net="$entry/net"
+mkdir -p "$net"
+tcp_header='  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode'
+tables() {
+  printf 'Num       RefCount Protocol Flags    Type St Inode Path\n%s\n' "$1" > "$net/unix"
+  printf '%s\n%s\n' "$tcp_header" "$2" > "$net/tcp"
+  printf '%s\n%s\n' "$tcp_header" "$3" > "$net/tcp6"
+}
+tcp_listener() {
+  printf '   3: 00000000:%04X 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 103 1 0000000000000000 100 0 0 10 0' "$1"
+}
+unix_listener() {
+  printf '0000000000000000: 00000002 00000000 00010000 0001 01  4242 %s' "$1"
+}
+sock=/run/rtorrent/rpc.socket
+
+# rtorrent takes one SCGI listener and stops its rc at a second, so
+# RT_SCGI_PORT replaces the unix socket, and the server follows it there: a
+# wildcard bind on the loopback, any other address as it is, unless
+# CASCADE_SCGI names an endpoint itself. scgi <assignments> renders
+# rtorrent.rc, starts rtorrent and waits for it in the tables staged, and
+# prints the CASCADE_SCGI the entrypoint exports once it is up.
+scgi() {
+  with_entrypoint "PROC_NET='$net'; export STUB_RUNNING=1; $1
+    { apply_defaults; validate_options; pick_port_commands; write_rc; launch_rtorrent; } >/dev/null
+    printf '%s\n' \"\$CASCADE_SCGI\"" 2>"$fixture/stderr" ||
+    { cat "$fixture/stderr" >&2; echo "failed: $1" >&2; exit 1; }
+}
+# check_scgi <assignments> <CASCADE_SCGI> <the one SCGI line of rtorrent.rc>
+check_scgi() {
+  got="$(scgi "$1")"
+  [ "$got" = "$2" ] || { echo "$1: CASCADE_SCGI is \"$got\", not \"$2\"" >&2; exit 1; }
+  [ "$(grep -c '^network\.scgi\.open' "$rc")" = 1 ] || { echo "$1: not one SCGI listener" >&2; cat "$rc" >&2; exit 1; }
+  grep -Fxq -- "$3" "$rc" || { echo "$1: rtorrent.rc lacks: $3" >&2; cat "$rc" >&2; exit 1; }
+}
+# Every listener the cases ask for is up: a generated rc opens one, and the
+# wait has to find that one and pass over the rest.
+tables "$(unix_listener "$sock")$nl$(unix_listener /srv/rt.sock)" \
+  "$(tcp_listener 5000)$nl$(tcp_listener 65535)$nl$(tcp_listener 1)" ''
+check_scgi : "$sock" "network.scgi.open_local = \"$sock\""
+check_scgi 'RT_SCGI_SOCKET=/srv/rt.sock' /srv/rt.sock 'network.scgi.open_local = "/srv/rt.sock"'
+check_scgi 'RT_SCGI_PORT=5000' 127.0.0.1:5000 'network.scgi.open_port = "127.0.0.1:5000"'
+check_scgi 'RT_SCGI_PORT=05000' 127.0.0.1:5000 'network.scgi.open_port = "127.0.0.1:5000"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=' 127.0.0.1:5000 'network.scgi.open_port = "127.0.0.1:5000"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=0.0.0.0' 127.0.0.1:5000 'network.scgi.open_port = "0.0.0.0:5000"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=::' 127.0.0.1:5000 'network.scgi.open_port = "[::]:5000"'
+check_scgi 'RT_SCGI_PORT=65535 RT_SCGI_BIND=[::]' 127.0.0.1:65535 'network.scgi.open_port = "[::]:65535"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=10.0.0.5' 10.0.0.5:5000 'network.scgi.open_port = "10.0.0.5:5000"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=::1' '[::1]:5000' 'network.scgi.open_port = "[::1]:5000"'
+check_scgi 'RT_SCGI_PORT=1 RT_SCGI_BIND=rtorrent.lan' rtorrent.lan:1 'network.scgi.open_port = "rtorrent.lan:1"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=0.0.0.0 CASCADE_SCGI=rt.internal:6000' rt.internal:6000 \
+  'network.scgi.open_port = "0.0.0.0:5000"'
+check_scgi 'CASCADE_SCGI=unix:/elsewhere.sock' unix:/elsewhere.sock "network.scgi.open_local = \"$sock\""
+# A supplied rc is not read for its listener. On earlier releases it had to
+# open the socket, the only one waited for; with RT_SCGI_PORT set it may open
+# that port instead. Either passes, and the server goes to the one that
+# answered unless CASCADE_SCGI is given. rtorrent never reads RT_SCGI_PORT
+# then, so 05000 is port 5000, as the server reads it.
+kept="RT_CONFIG_FILE='$mine' RT_CONFIG_KEEP=1 RT_SCGI_PORT=5000 RT_SCGI_BIND=0.0.0.0"
+tables "$(unix_listener "$sock")" '' ''
+got="$(scgi "$kept")"
+[ "$got" = "$sock" ] || { echo "a kept rc on the socket, RT_SCGI_PORT set: CASCADE_SCGI is \"$got\"" >&2; exit 1; }
+got="$(scgi "RT_CONFIG_FILE='$mine' RT_CONFIG_KEEP=1 RT_SCGI_PORT=05000")"
+[ "$got" = "$sock" ] || { echo "a kept rc on the socket, RT_SCGI_PORT=05000: CASCADE_SCGI is \"$got\"" >&2; exit 1; }
+tables '' "$(tcp_listener 5000)" ''
+got="$(scgi "$kept")"
+[ "$got" = 127.0.0.1:5000 ] || { echo "a kept rc on RT_SCGI_PORT: CASCADE_SCGI is \"$got\"" >&2; exit 1; }
+got="$(scgi "$kept CASCADE_SCGI=rt.internal:6000")"
+[ "$got" = rt.internal:6000 ] || { echo "a kept rc, CASCADE_SCGI given: CASCADE_SCGI is \"$got\"" >&2; exit 1; }
+[ "$(cat "$mine")" = '# my own rtorrent.rc' ] || { echo 'RT_SCGI_PORT rewrote a kept rc' >&2; exit 1; }
+refused_by RT_SCGI_PORT "RT_CONFIG_FILE='$mine' RT_CONFIG_KEEP=1 RT_SCGI_PORT=x; apply_defaults; validate_options"
+# Whether the rc is supplied is settled before write_rc writes a missing
+# RT_CONFIG_FILE, or the rc it generates, which opens the port alone, would
+# pass for a supplied one, and the socket for its listener.
+fresh="$entry/fresh.rc"
+tables "$(unix_listener "$sock")" '' ''
+expect_refused 'a generated RT_CONFIG_FILE with RT_SCGI_PORT, up on the socket' "
+  PROC_NET='$net'; export STUB_RUNNING=1; RT_CONFIG_FILE='$fresh' RT_CONFIG_KEEP=1 RT_SCGI_PORT=5000
+  apply_defaults; pick_port_commands; write_rc; launch_rtorrent"
+grep -Fxq 'network.scgi.open_port = "127.0.0.1:5000"' "$fresh" || { echo "no rc generated at $fresh" >&2; exit 1; }
+rm -f "$fresh"
+
+# A port is decimal and from 1 to 65535, its leading zeros dropped before the
+# rc: rtorrent reads a number as C does, so 05000 would be port 2560 to it and
+# 0x1388 port 5000, against the server's reading. A bind address is an
+# address or a name — not one with its port, not a wildcard rtorrent cannot
+# resolve, not an IPv4 spelling the two read apart — and both are checked only
+# once RT_SCGI_PORT asks for a port.
+for good in 1 5000 65535 05000 000065535; do
+  expect_ok "RT_SCGI_PORT=$good" "RT_SCGI_PORT=$good; apply_defaults; validate_options"
+done
+for bad in x 0 00 65536 99999 065536 0x1388 -1 5000x ' 5000' "5000${nl}execute=x"; do
+  refused_by RT_SCGI_PORT "RT_SCGI_PORT='$bad'; apply_defaults; validate_options"
+done
+for good in 0.0.0.0 127.0.0.1 255.255.255.255 :: '[::]' ::1 '[::1]' 'fe80::1%eth0' ::ffff:10.0.0.1 localhost \
+            rtorrent.lan my_host; do
+  expect_ok "RT_SCGI_BIND=$good" "RT_SCGI_PORT=5000 RT_SCGI_BIND='$good'; apply_defaults; validate_options"
+done
+for bad in 0.0.0.0:5000 '[::]:5000' localhost:5000 '*' 'local host' 256.0.0.1 127.1 0 01.2.3.4 '[]' \
+           '[localhost]' '::1]' 'a;b' "::${nl}execute=x"; do
+  refused_by RT_SCGI_BIND "RT_SCGI_PORT=5000 RT_SCGI_BIND='$bad'; apply_defaults; validate_options"
+done
+expect_ok 'RT_SCGI_BIND without RT_SCGI_PORT' "RT_SCGI_BIND='not used'; apply_defaults; validate_options"
+
+# The wait wants a running rtorrent listening where it was told to, in the
+# kernel's tables: for a port a LISTEN entry, IPv4 or IPv6, for the socket a
+# listening one at its path. What a restart finds there must not pass for
+# one: the last rtorrent's connections on 5000 (1388) in TIME_WAIT, and the
+# server's to it, beside the web server listening on 8080 (1F90); on the
+# socket's side, a connection rtorrent accepted, which carries its path, a
+# listener on a longer path and screen's.
+stale='   0: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 101 1 0000000000000000 100 0 0 10 0
+   1: 0100007F:1388 0100007F:C350 06 00000000:00000000 03:000016A8 00000000     0        0 0 3 0000000000000000
+   2: 0100007F:C351 0100007F:1388 01 00000000:00000000 00:00000000 00000000  1000        0 102 1 0000000000000000 20 4 30 10 -1'
+listen4="$(tcp_listener 5000)"
+listen6='   0: 00000000000000000000000000000000:1388 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 104 1 0000000000000000 100 0 0 10 0'
+unix_stale="0000000000000000: 00000003 00000000 00000000 0001 03  4243 $sock
+$(unix_listener "$sock.old")
+$(unix_listener /run/rtorrent/screen/77.rtorrent)"
+echo 'the last line of the log' > "$entry/rtorrent.log"
+# wait_case <up|down> <unix entries> <tcp entries> <tcp6 entries> <shell code>
+wait_case() {
+  tables "$2" "$3" "$4"
+  if with_entrypoint "PROC_NET='$net' RT_LOG_FILE='$entry/rtorrent.log'; $5; apply_defaults; wait_for_socket" \
+       >"$fixture/out" 2>&1; then
+    came=up
+  else
+    came=down
+  fi
+  [ "$came" = "$1" ] || { cat "$fixture/out" >&2; echo "the wait came $came, not $1: $5" >&2; exit 1; }
+}
+# said <text>: the last case printed it.
+said() {
+  grep -Fq -- "$1" "$fixture/out" || { cat "$fixture/out" >&2; echo "did not say: $1" >&2; exit 1; }
+}
+wait_case up "$unix_stale" "$stale$nl$listen4" '' 'export STUB_RUNNING=1; RT_SCGI_PORT=5000'
+said 'rtorrent is up on 127.0.0.1:5000'
+wait_case up '' "$stale" "$listen6" 'export STUB_RUNNING=1; RT_SCGI_PORT=5000 RT_SCGI_BIND=::'
+wait_case down '' "$stale" '' 'export STUB_RUNNING=1; RT_SCGI_PORT=5000 RT_SCGI_BIND=0.0.0.0'
+said 'rtorrent did not listen on 0.0.0.0:5000 within 30s, though it runs'
+wait_case up "$unix_stale$nl$(unix_listener "$sock")" "$listen4" '' 'export STUB_RUNNING=1'
+said "rtorrent is up on $sock"
+wait_case down "$unix_stale" "$listen4" '' 'export STUB_RUNNING=1'
+said "rtorrent did not listen on $sock within 30s, though it runs"
+wait_case up "$(unix_listener '/srv/rt sock')" '' '' "export STUB_RUNNING=1; RT_SCGI_SOCKET='/srv/rt sock'"
+# Nor does a listener count without a running rtorrent: one that stopped at a
+# later rc line left its socket file behind, which is how the rc with two
+# listeners passed for a start.
+wait_case down '' "$listen4" '' 'export STUB_RUNNING=0; RT_SCGI_PORT=5000'
+said 'within 30s, and is not running'
+wait_case down "$(unix_listener "$sock")" '' '' 'export STUB_RUNNING=0'
+# The socket counts for a generated rc only when it is that rc's listener; for
+# a supplied one with RT_SCGI_PORT set, it or the port does, and a failed wait
+# names both.
+wait_case down "$(unix_listener "$sock")" '' '' 'export STUB_RUNNING=1; RT_SCGI_PORT=5000'
+wait_case down "$unix_stale" "$stale" '' "export STUB_RUNNING=1; $kept"
+said "rtorrent did not listen on $sock or 0.0.0.0:5000 within 30s"
+
+# The first start (launch_rtorrent) ends the container when rtorrent does not
+# come up, but stops it first if it runs: the exit takes the container down,
+# and an rtorrent the kernel kills leaves its session lock behind. The
+# supervisor's restart (restart_rtorrent) waits the same way, and its loop
+# goes on whether rtorrent came back or not.
+# start_case <ok|failed> <shell code>
+start_case() {
+  : > "$fixture/signals"
+  rm -f "$entry/session/rtorrent.lock"
+  if with_entrypoint "PROC_NET='$net' RT_LOG_FILE='$entry/rtorrent.log' STUB_SIGNALS='$fixture/signals'
+       . '$entry/kill.sh'; $2" >"$fixture/out" 2>&1; then
+    ended=ok
+  else
+    ended=failed
+  fi
+  [ "$ended" = "$1" ] || { cat "$fixture/out" >&2; echo "it ended $ended, not $1: $2" >&2; exit 1; }
+}
+tables "$(unix_listener "$sock")" '' ''
+start_case ok 'export STUB_RUNNING=1; apply_defaults; restart_rtorrent'
+said 'rtorrent died, restarting it'
+said "screen -dmS rtorrent rtorrent -n -o import=$rc"
+said "rtorrent is up on $sock"
+tables '' '' ''
+start_case ok 'export STUB_RUNNING=1; apply_defaults; restart_rtorrent'
+said 'the last line of the log'
+said 'rtorrent did not come back up'
+start_case failed 'export STUB_RUNNING=1; apply_defaults; launch_rtorrent'
+said 'rtorrent stopped cleanly after 0s'
+said 'the last line of the log'
+said "FATAL: rtorrent failed to start (check the config at $rc)"
+grep -Fxq 'kill -INT 99999999' "$fixture/signals" ||
+  { cat "$fixture/out" >&2; echo 'a failed start left rtorrent running' >&2; exit 1; }
+start_case failed 'export STUB_RUNNING=0; apply_defaults; launch_rtorrent'
+said 'FATAL: rtorrent failed to start'
+[ ! -s "$fixture/signals" ] ||
+  { cat "$fixture/signals" >&2; echo 'a failed start signalled an rtorrent that had exited' >&2; exit 1; }
+# A supplied rc is told what it has to open, by name.
+start_case failed "export STUB_RUNNING=1; RT_CONFIG_FILE='$mine' RT_CONFIG_KEEP=1; apply_defaults; launch_rtorrent"
+said "check the config at $mine, which has to open RT_SCGI_SOCKET or the port RT_SCGI_PORT names"
 
 # A lock held by another host (or a dead process) is cleared; one held by a
 # live process here is not, and RT_SESSION_LOCK_KEEP keeps any.

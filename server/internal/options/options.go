@@ -539,19 +539,19 @@ var Options = []Option{
 	{
 		Name:    "RT_SCGI_SOCKET",
 		Section: "RPC",
-		Summary: "Unix socket rtorrent listens on",
+		Summary: "Unix socket rtorrent listens on, unless RT_SCGI_PORT is set",
 		Default: ptr("/run/rtorrent/rpc.socket"),
 	},
 	{
 		Name:    "RT_SCGI_PORT",
 		Section: "RPC",
-		Summary: "Also listen for SCGI on this TCP port (unauthenticated — keep it private)",
+		Summary: "Listen for SCGI on this TCP port instead of the socket (unauthenticated — keep it private)",
 		Note:    "unset",
 	},
 	{
 		Name:    "RT_SCGI_BIND",
 		Section: "RPC",
-		Summary: "Interface for RT_SCGI_PORT",
+		Summary: "Address RT_SCGI_PORT listens on; 0.0.0.0 lets a published port reach it",
 		Default: ptr("127.0.0.1"),
 	},
 	{
@@ -565,7 +565,7 @@ var Options = []Option{
 		Name:    "CASCADE_SCGI",
 		Section: "RPC",
 		Summary: "Endpoint the web server talks to — a path, or host:port for a remote rtorrent",
-		Note:    "RT_SCGI_SOCKET",
+		Note:    "RT_SCGI_SOCKET, or RT_SCGI_PORT (on 127.0.0.1 for a wildcard RT_SCGI_BIND)",
 	},
 
 	// ------------------------------- web server -------------------------------
