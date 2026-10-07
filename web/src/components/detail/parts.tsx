@@ -24,12 +24,19 @@ export function Flags({ flags }: { flags: Flag[] }) {
 
 export const yesNo = (value: boolean) => (value ? 'yes' : 'no');
 
-/** Key/value block shown when a peer or tracker row is expanded. */
-export function MiniKv({ rows }: { rows: Array<[string, ReactNode]> }) {
+/**
+ * Key/value block shown when a peer or tracker row is expanded, as wide as
+ * the pane on screen however wide the table. Every value shows whole, wrapping
+ * where its column is too narrow; a 'wide' row has a line of its own, for a
+ * long value that is read or copied whole: a peer's address, ID and client.
+ * A value that changes with the polls must fit beside its key unwrapped, or
+ * the block grows and shrinks as it changes: expanded.test.ts counts letters.
+ */
+export function MiniKv({ rows }: { rows: Array<[key: string, value: ReactNode, width?: 'wide']> }) {
   return (
     <div className="mini-kv">
-      {rows.map(([key, value]) => (
-        <div key={key}>
+      {rows.map(([key, value, width]) => (
+        <div key={key} className={width}>
           <span>{key}</span>
           <b>{value}</b>
         </div>
@@ -84,7 +91,7 @@ export function RowToggle({ open, onToggle, children }: { open: boolean; onToggl
       <span className="caret" aria-hidden="true">
         {open ? '▾' : '▸'}
       </span>
-      {children}
+      <span className="row-toggle-label">{children}</span>
     </button>
   );
 }

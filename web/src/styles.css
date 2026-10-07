@@ -1440,6 +1440,12 @@ table.torrents td {
   overflow: auto;
   padding: 12px 14px;
   min-height: 0;
+  /* The width on screen, which an expanded peer or tracker row is sized to
+     (.mini-kv) rather than to the table it sits in. The scroll container
+     itself is the container: on a wrapper inside it, a browser that applies
+     layout containment with container-type would make the table's overflow
+     unscrollable. */
+  container-type: inline-size;
 }
 
 .kv-grid {
@@ -1547,6 +1553,29 @@ table.grid tbody tr:hover {
   cursor: pointer;
 }
 
+/* A label longer than its fixed column ends in an ellipsis inside it rather
+   than running into the next: a peer's IPv6 address with its port is up to
+   47 characters, over twice the column. The cell's title holds the whole.
+   The label may use the cell's right padding too (table.grid td's 9px), as
+   an unclipped one always could: at the table's 1000px minimum the content
+   box alone is about 4px short of an IPv4 address on a five-digit port, a
+   common shape (185.199.108.153:51413), and would cut two digits off the port. */
+td.clip .row-toggle {
+  display: flex;
+  align-items: baseline;
+  max-width: calc(100% + 9px);
+}
+
+td.clip .caret {
+  flex: none;
+}
+
+td.clip .row-toggle-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 table.grid tr.expandable {
   cursor: pointer;
 }
@@ -1593,7 +1622,19 @@ table.grid tr.detail-row > td {
   background: var(--accent-soft);
 }
 
+/* An expanded row's cell spans the whole table, 1000px at least, which is
+   wider than the pane on a phone and on a desktop window below about 1280px:
+   a block as wide as the cell had its later columns off-screen. The block is
+   as wide as the pane's width on screen instead (100cqw of .detail-body, less
+   the cell's 21px and 9px of padding), and sticks at the cell's left padding,
+   so it stays in view while the table scrolls sideways under it. Firefox
+   counts a classic scrollbar into 100cqw, so there the block ends up to the
+   scrollbar's width nearer the pane's edge, and over the last of a sideways
+   scroll moves left by as much: on screen either way. */
 .mini-kv {
+  position: sticky;
+  left: 21px;
+  max-width: calc(100cqw - 30px);
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(226px, 1fr));
   gap: 2px 20px;
@@ -1617,13 +1658,44 @@ table.grid tr.detail-row > td {
   white-space: nowrap;
 }
 
+/* Every value is shown whole: one longer than the room beside its key (a
+   tracker's ID; on a phone, a peer's address, ID or client) wraps rather than
+   ending in an ellipsis, inside a word if it has to, and copies as it was.
+   A value that changes with the polls must fit without wrapping, or its block
+   would gain a line and lose it again, and every row below would jump with
+   it. The narrowest column is 226px, and retro draws the widest letters, its
+   keys in the mono font too: at about 7.2px each, a key and its value share
+   30 of them there, in the 216px the gap leaves. The longest key, "Peers last
+   announce", leaves its value 11, which "200 +37", as the row writes it,
+   fits and "200 (37 new)" did not. expanded.test.ts holds each such pair to
+   that count. */
 .mini-kv b {
   font-family: var(--mono);
   font-size: 11.5px;
   font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* The table's cells do not wrap, and this one would inherit that. */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+/* What says who a peer is, its address, ID and client, takes a line of its
+   own: each can be wider than a column of the block. The value follows its
+   key, since the line is as wide as the pane and at its far end the value
+   would sit a long way from the key; the keys are as wide as the longest
+   ("Address", in the sans font and in retro's mono alike), so the values
+   start in one column. */
+.mini-kv > .wide {
+  grid-column: 1 / -1;
+  justify-content: flex-start;
+}
+
+.mini-kv > .wide span {
+  min-width: 4.5em;
+}
+
+.mini-kv > .wide b {
+  text-align: left;
 }
 
 .flags {
@@ -2430,8 +2502,13 @@ body {
 
   .mini-kv {
     grid-template-columns: 1fr;
-    /* Expanded details remain readable beside the left edge of a wide table. */
-    max-width: calc(100vw - 60px);
+  }
+
+  /* The block is one column here, as narrow as the screen, so a peer's
+     address, ID and client can end at the right edge as every other row's
+     value does. */
+  .mini-kv > .wide {
+    justify-content: space-between;
   }
 
   /* Dialogs take the whole screen. */

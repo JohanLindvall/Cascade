@@ -2,7 +2,7 @@
 
 import { Fragment, memo, useState } from 'react';
 import { api } from '../../api';
-import { duration, relative, until } from '../../format';
+import { announcePeers, duration, relative, until } from '../../format';
 import { redactUrl } from '../../redact';
 import type { Tracker } from '../../types';
 import { useClock } from '../clock';
@@ -134,7 +134,10 @@ export const TrackersTab = memo(function TrackersTab({
                           ['Next retry', tracker.failures > 0 ? until(tracker.nextFailure) : '—'],
                           ['Announce interval', duration(tracker.interval)],
                           ['Min interval', duration(tracker.minInterval)],
-                          ['Peers last announce', `${tracker.sumPeers} (${tracker.newPeers} new)`],
+                          // The row's own "200 +37": beside this key, the longest, retro's
+                          // narrowest column leaves 11 letters, and a value that wrapped would
+                          // make the block grow and shrink as the count changed.
+                          ['Peers last announce', announcePeers(tracker.sumPeers, tracker.newPeers)],
                           ['Scrapes', String(tracker.scrapes)],
                           ['Last scrape', relative(tracker.lastScrape)],
                           ['Scrapable', yesNo(tracker.canScrape)],
