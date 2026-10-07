@@ -118,13 +118,14 @@ the directory a torrent's data goes into (`dataFolder.ts`), formatting and parsi
 right-click rule (`components/menuRules.ts`), the toast hold (`components/toastHold.ts`) and where
 focus goes on selection or menu opening (`app/rowFocus.ts`) live apart from the components for exactly
 that reason. What cannot be split off is pinned by reading the source instead:
-`components/detail/tabs.test.ts` checks the detail tabs stay memoized. A pure module
-that imports another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`): the
-runner resolves specifiers literally, and Vite and tsc accept either. A module that touches
-`window` or `document` at load time cannot be imported statically: `api.test.ts` stubs
-`document.baseURI` and then imports `api.ts` dynamically, and `preferences.ts` (the shape and its
-repair) is kept apart from `prefs.ts` (the fetch, the cache, the `pagehide` flush) so its tests
-need no stub at all.
+`components/detail/tabs.test.ts` checks the detail tabs stay memoized, and
+`app/useTorrentActions.test.ts` that "Change directory" is pre-filled from `sharedDataFolder`.
+A pure module that imports another spells the specifier with `.ts` (`preferences.ts` →
+`'./sort.ts'`): the runner resolves specifiers literally, and Vite and tsc accept either. A module
+that touches `window` or `document` at load time cannot be imported statically: `api.test.ts`
+stubs `document.baseURI` and then imports `api.ts` dynamically, and `preferences.ts` (the shape and
+its repair) is kept apart from `prefs.ts` (the fetch, the cache, the `pagehide` flush) so its
+tests need no stub at all.
 
 Go runs in Docker too, as uid 1000 so the files it writes keep their owner:
 
