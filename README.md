@@ -760,8 +760,14 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
   with a `409` before anything is removed. On 0.16.3 to 0.16.6, which cannot report such a path,
   it fails with a `502`, also before anything is removed. A file that happens to be called
   `Caf%E9.bin` is never taken for the torrent's `Café.bin`.
-- Completion moves use the actual on-disk filename, refuse existing destinations, and reopen
-  the torrent at its new location. A failed move leaves the source data in place.
+- Completion moves (`RT_COMPLETED_DIR`) take the data under the name it has on disk, refuse an
+  existing destination, and reopen the torrent pointing at exactly what they moved: a single file
+  goes into the directory, and a multi-file torrent's folder keeps its name there, byte for byte —
+  even when that is not the torrent's own, as for a folder "Change directory" kept from another
+  tool, which used to be looked for under the torrent's name and found missing. A failed move
+  leaves the source data in place. Only a download rtorrent finishes is moved: a torrent whose
+  data was already on disk when it was added, and that its first hash check found complete, stays
+  where it is.
 - Throttle groups cannot be removed from a running rtorrent — deleting one sets it to unlimited
   and drops it from the UI list.
 - rtorrent runs inside a detached `screen` session, so `docker exec -it cascade cascade-attach`

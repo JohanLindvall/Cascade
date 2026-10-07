@@ -287,7 +287,8 @@ stored_log_scopes() {
 # port has to be right before rtorrent binds, and 0.16 renamed the commands
 # from network.port_range to network.listen.port.range; the torrent-name
 # switches have to be right before the session loads, and arrived in 0.16.22
-# and 0.16.25.
+# and 0.16.25 — and for the setter the completion move ends with, which 0.16.22
+# renamed.
 rc_command_exists() {
   probe_rc="$(mktemp)"
   printf '%s\n' "$1" > "$probe_rc"
@@ -335,6 +336,23 @@ add_name_switch() {
   if rc_command_exists "$1 = $switch"; then
     NAME_SWITCHES="$NAME_SWITCHES$1 = $switch
 "
+  fi
+}
+
+# The completion move ends by giving the torrent the root its data has now,
+# through the base setter, which 0.16.22 renamed d.directory.base.set, keeping
+# d.directory_base.set as a redirect for now; 0.9.8 has only the old name. A
+# command that acts on a torrent cannot run in an option file, which has no
+# torrent to give it, so the probe names the new one as the target of a
+# redirect, which only a command that exists can be. It is asked here because
+# rtorrent looks a method's commands up only as it runs them, and the setter
+# runs after the move: a name this build lacks would leave the data moved and
+# the torrent pointing where it was.
+pick_base_directory_command() {
+  if rc_command_exists "method.redirect = cascade.probe, d.directory.base.set"; then
+    BASE_DIRECTORY_SET=d.directory.base.set
+  else
+    BASE_DIRECTORY_SET=d.directory_base.set
   fi
 }
 
@@ -410,12 +428,25 @@ render_rc() {
   fi
   if [ -n "${RT_COMPLETED_DIR:-}" ]; then
     rc_line "# Move data to RT_COMPLETED_DIR once a download finishes."
-    # d.name is metadata; d.base_path includes libtorrent's filename fitting.
+    # d.name is metadata; d.base_path is the data on disk, under the names it
+    # has there: shortened by libtorrent's filename fitting, or a folder
+    # renamed since the torrent was added.
     rc_line "method.insert = d.data_path, simple, \"d.base_path=\""
     # Close before moving so frozen paths refresh when reopened. Check for
     # collisions first, and change the directory only after the move succeeds.
-    rc_line "method.insert = d.move_to_complete, simple, \"execute=/usr/local/bin/cascade-move,check,\$argument.0=,\$argument.1= ; d.stop= ; d.close= ; execute=/usr/local/bin/cascade-move,move,\$argument.0=,\$argument.1= ; d.directory.set=\$argument.1= ; d.open= ; d.start= ; d.save_full_session=\""
-    rc_line "method.set_key = event.download.finished, move_complete, $(quote "d.move_to_complete=\$d.data_path=, $(quote "$RT_COMPLETED_DIR")")"
+    # The root it changes to is the destination for a single file, and for a
+    # multi-file torrent the folder moved into it, by the name it had on disk
+    # (d.base_filename, the last part of the base path): d.directory.set would
+    # append the torrent's own name instead, and look for the data where it is
+    # not. rtorrent composes the root from its own bytes, so a name that is not
+    # UTF-8 never has to travel as text.
+    # shellcheck disable=SC2016 # rtorrent's own $-calls, for rtorrent to expand
+    completion_root='"$if=$d.is_multi_file=,\"$cat=$argument.1=,/,$d.base_filename=\",$argument.1="'
+    rc_line "method.insert = d.move_to_complete, simple, $(quote "execute=/usr/local/bin/cascade-move,check,\$argument.0=,\$argument.1= ; d.stop= ; d.close= ; execute=/usr/local/bin/cascade-move,move,\$argument.0=,\$argument.1= ; $BASE_DIRECTORY_SET=$completion_root ; d.open= ; d.start= ; d.save_full_session=")"
+    # Without trailing slashes, as rtorrent keeps a directory: the root joins
+    # the folder on with a slash of its own.
+    completed_dir="${RT_COMPLETED_DIR%"${RT_COMPLETED_DIR##*[!/]}"}"
+    rc_line "method.set_key = event.download.finished, move_complete, $(quote "d.move_to_complete=\$d.data_path=, $(quote "${completed_dir:-/}")")"
     echo
   fi
   if [ -n "${RT_EXTRA_CONFIG:-}" ]; then
@@ -442,6 +473,9 @@ write_rc() {
   # shellcheck disable=SC2046
   LOG_SCOPES="$RT_LOG_LEVEL $(filter_log_scopes $(stored_log_scopes))"
   pick_name_switches
+  if [ -n "${RT_COMPLETED_DIR:-}" ]; then
+    pick_base_directory_command
+  fi
   render_rc > "$RC_FILE"
   own "$PUID:$PGID" "$RC_FILE"
 }

@@ -200,6 +200,12 @@ A full end-to-end transfer can be staged with two containers and a throwaway tra
 file from one, download it in the other, and watch progress, peers and rates in the UI. A
 completion — and so the finish animation — can be forced without a swarm: put the payload in
 `/downloads` first, then upload its `.torrent`, and rtorrent's hash check completes it outright.
+To rtorrent that is no finished download, though: `event.download.finished` fires only when a
+download completes its last piece, so the completion move (`RT_COMPLETED_DIR`) never runs for it
+(0.9.8 and 0.16.25 alike). To exercise the move, let one container download from another, no
+tracker needed: both on one Docker network, the payload and the torrent in the seeder, the torrent
+in the other, and there `POST /api/rpc` with `{"method": "add_peer", "params": ["<hash>",
+"<seeder's address>:50000"]}`.
 
 **Check UI work by looking at it.** A build only proves it typechecks; CSS regressions do not
 fail a build. Boot the image, seed a few torrents through the API, set the theme with
@@ -301,6 +307,15 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    written into the rc where `rc_command_exists` finds the command (0.16.22 and 0.16.25 added
    them), and staged as startup settings too, which re-apply the same value and name the key in
    the boot-settings warning on a build without it.
+
+   The completion move is the third case (`RT_COMPLETED_DIR`; see *Conventions*). It is a method in
+   the rc, and rtorrent looks a method's commands up only as it runs them, so a name this build
+   lacks would fail at the base setter it ends with — after the move, leaving the data moved and
+   the torrent pointing where it was. 0.16.22 renamed that setter `d.directory.base.set`, keeping
+   `d.directory_base.set` as a redirect for now, and 0.9.8 has only the old name, so
+   `pick_base_directory_command` asks for the new one. A `d.*` command cannot run in an option
+   file, which has no torrent to give it, so the probe names it as a `method.redirect`'s target,
+   which only a command that exists can be.
 
    The few values the rc carries as they are — `RT_PORT_RANGE`, `RT_UMASK`, `RT_WATCH_INTERVAL`,
    `RT_SCGI_PORT`, `RT_SCGI_BIND` — are checked by `validate_options` before anything is written,
@@ -446,11 +461,13 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    shows rtorrent's stand-ins. A stand-in is chosen per string, so a UTF-8 file name under a Latin-1
    directory arrives escaped in `f.frozen_path` and as itself in `f.path`: `MapFile` does not take
    that for a shortened name (it used to say "on disk as Caf%C3%A9.txt"). The completion move gets
-   the path from rtorrent as an argument, bytes and all, and never sees a stand-in; a directory
-   change takes a path from the user and can only set one that is UTF-8 within the BMP (xmlrpc-c
-   refuses an emoji in a request too), and keeps a multi-file torrent's folder by its bytes only
-   where those can be sent back — else through `d.directory.set`, which names the folder on
-   rtorrent's side (see the directory change under *Conventions*).
+   the path from rtorrent as an argument, bytes and all, and never sees a stand-in, and rtorrent
+   composes the root it sets afterwards from its own bytes (see the completion move under
+   *Conventions*); a directory change takes a path from the user and can only set one that is
+   UTF-8 within the BMP (xmlrpc-c refuses an emoji in a request too), and keeps a multi-file
+   torrent's folder by its bytes only where those can be sent back — else through
+   `d.directory.set`, which names the folder on rtorrent's side (see the directory change under
+   *Conventions*).
 
 13. **What the client calls itself is compile-time, in two places.** The HTTP `User-Agent`
    (`USER_AGENT`, patched into rtorrent's `set_user_agent(USER_AGENT)` call by
@@ -816,6 +833,27 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   and recheck it; `d.base_path` follows only at the next open. Keep those lifecycle commands
   separate and in the per-torrent mutation queue, as for recheck and throttle changes. The demo
   mirrors it: `setDirectory`, and `d.directory.set` against `d.directory_base.set` in its console.
+- **The completion move keeps a torrent with its data.** With `RT_COMPLETED_DIR` set, the rc's
+  `d.move_to_complete` runs on `event.download.finished`: `cascade-move check` refuses a move that
+  cannot be made, the torrent is stopped and closed, `cascade-move move` moves the data under the
+  name it has on disk, and only then does the torrent get its new root, through the base setter
+  (quirk 6), before it is reopened, started and saved. The root is the destination for a single
+  file, and for a multi-file torrent the destination and `d.base_filename`, its folder's own name.
+  It used to go through `d.directory.set`, which appends the torrent's name, so a folder not named
+  after the torrent — one "Change directory" kept, or another tool gave it — was looked for where
+  it was not, and a recheck found 0% (0.9.8 and 0.16.25 alike). rtorrent composes that root itself
+  (`if`, `cat` and `d.base_filename`, which still reads the frozen root after `d.close`), so bytes
+  that are not UTF-8 never travel as text. Nor is it read back from the script: 0.9.8 keeps an
+  `execute.capture`'s output in one buffer for every caller and serves XML-RPC while the child
+  runs, so the output of a capture made over XML-RPC meanwhile lands in rtorrent's own (measured:
+  `BBBBAAAA` where the slow one printed `AAAA`; 0.16.25 holds the XML-RPC call until rtorrent's is
+  done) — and a move can take minutes. The script takes the name by parameter expansion, since a
+  command substitution drops the newlines a name may end in, and the rc gives `RT_COMPLETED_DIR`
+  without trailing slashes, since `cat` joins the folder on with a slash of its own. Proven with
+  real downloads (see *Build and test*) of a single file, a multi-file torrent named after itself
+  and one in a renamed folder, with Latin-1 names and names the patch shortened, into `/done` and
+  into `/downloads/done`, on 0.9.8 and 0.16.25: the base path is the moved data and a recheck
+  finds it complete, after a restart too.
 - Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes `<epoch
   seconds> <level letter> <text>` for the severity scopes and `<epoch seconds> <text>` (no level)
   for the subsystem scopes such as `tracker_events` — the same two shapes on 0.9.8, 0.16.20 and

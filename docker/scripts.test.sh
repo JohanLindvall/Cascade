@@ -50,12 +50,24 @@ fi
 [ "$(cat "$fixture/completed/file.txt")" = original ]
 [ "$(cat "$fixture/downloads/file.txt")" = new ]
 # rtorrent hands the move the path as bytes, which need not be UTF-8 (a Latin-1
-# name from an old torrent) and must move as they are.
+# name from an old torrent) and must move as they are: once moved, rtorrent
+# looks for the data under the name it had (d.base_filename in the rc). So
+# must a folder renamed to such bytes, and a name that ends in a newline,
+# which a command substitution would drop.
 latin1="$(printf 'Caf\351 single.bin')"
 printf 'payload' > "$fixture/downloads/$latin1"
 sh "$root/docker/move-completed.sh" move "$fixture/downloads/$latin1" "$fixture/completed"
 [ "$(cat "$fixture/completed/$latin1")" = payload ]
 [ ! -e "$fixture/downloads/$latin1" ]
+newline="$(printf 'ends in a newline\n.')"
+for folder in "$(printf 'Dossier \351')" "${newline%.}"; do
+  mkdir "$fixture/downloads/$folder"
+  printf 'payload' > "$fixture/downloads/$folder/a.bin"
+  sh "$root/docker/move-completed.sh" move "$fixture/downloads/$folder" "$fixture/completed"
+  [ "$(cat "$fixture/completed/$folder/a.bin" 2>/dev/null)" = payload ] ||
+    { echo "a folder did not keep its name: $folder" >&2; exit 1; }
+  [ ! -e "$fixture/downloads/$folder" ]
+done
 # The entrypoint, sourced as a library: stub rtorrent and cascade commands
 # script which rc commands a probe finds and which log scopes the state file
 # holds, and each case runs in a shell of its own.
@@ -153,13 +165,26 @@ refused_by() {
   fi
 }
 
-# A 0.9-era build (no network.listen.*), quoting, scopes from both sources,
-# the watch directory and the completion move.
+# move_line <base setter>: the completion move's method in rtorrent.rc. It
+# checks, stops and closes, moves, and gives the torrent the root its data has
+# now: the destination for a single file, and for a multi-file torrent the
+# folder in it by the name it had on disk (d.base_filename) — d.directory.set
+# would append the torrent's own name, which the folder need not have.
+move_line() {
+  printf '%s%s%s\n' \
+    'method.insert = d.move_to_complete, simple, "execute=/usr/local/bin/cascade-move,check,$argument.0=,$argument.1= ; d.stop= ; d.close= ; execute=/usr/local/bin/cascade-move,move,$argument.0=,$argument.1= ; ' \
+    "$1" \
+    '=\"$if=$d.is_multi_file=,\\\"$cat=$argument.1=,/,$d.base_filename=\\\",$argument.1=\" ; d.open= ; d.start= ; d.save_full_session="'
+}
+
+# A 0.9-era build (no network.listen.*, and the base setter only by its old
+# name), quoting, scopes from both sources, the watch directory and the
+# completion move.
 expect_ok 'generating rtorrent.rc' '
   RT_DOWNLOAD_DIR="/data/\"quoted\" \\back"
   RT_COMPLETED_DIR=/done
   RT_LOG_LEVEL="info,Bad Scope,tracker_debug"
-  STUB_MISSING="network.listen.port.range.set tracker_debug"
+  STUB_MISSING="network.listen.port.range.set tracker_debug d.directory.base.set"
   STUB_SCOPES="debug evil;line tracker_events"
   export STUB_MISSING STUB_SCOPES
   apply_defaults
@@ -177,11 +202,29 @@ for line in \
   'log.add_output = "debug", "cascade"' \
   'log.add_output = "tracker_events", "cascade"' \
   "schedule = watch_directory, 10, 10, \"load.start=\\\"$entry/watch/*.torrent\\\"\"" \
+  'method.insert = d.data_path, simple, "d.base_path="' \
+  "$(move_line d.directory_base.set)" \
   'method.set_key = event.download.finished, move_complete, "d.move_to_complete=$d.data_path=, \"/done\""'; do
   grep -Fxq -- "$line" "$rc" || { echo "rtorrent.rc lacks: $line" >&2; cat "$rc" >&2; exit 1; }
 done
 if grep -Eq 'tracker_debug|Bad|evil' "$rc"; then
   echo 'a scope rtorrent refused, or an invalid one, reached rtorrent.rc' >&2; exit 1
+fi
+# From 0.16.22 the setter is d.directory.base.set, the old name a redirect
+# for now. The destination goes in without its trailing slashes: the root
+# joins the folder on with a slash of its own. Without RT_COMPLETED_DIR
+# nothing is moved.
+expect_ok 'the completion move on a later build' 'RT_COMPLETED_DIR=/done//; apply_defaults; pick_port_commands; write_rc'
+for line in "$(move_line d.directory.base.set)" \
+  'method.set_key = event.download.finished, move_complete, "d.move_to_complete=$d.data_path=, \"/done\""'; do
+  grep -Fxq -- "$line" "$rc" || { echo "rtorrent.rc lacks: $line" >&2; cat "$rc" >&2; exit 1; }
+done
+if grep -Fq 'd.directory.set' "$rc"; then
+  echo 'the completion move names a folder after its torrent' >&2; cat "$rc" >&2; exit 1
+fi
+expect_ok 'no completion move' 'apply_defaults; pick_port_commands; write_rc'
+if grep -q 'move_to_complete' "$rc"; then
+  echo 'an rc without RT_COMPLETED_DIR moves completed downloads' >&2; cat "$rc" >&2; exit 1
 fi
 
 # Values that go into the rc verbatim must be well formed, on one line —
