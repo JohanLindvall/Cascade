@@ -25,9 +25,10 @@ export function Flags({ flags }: { flags: Flag[] }) {
 export const yesNo = (value: boolean) => (value ? 'yes' : 'no');
 
 /**
- * Key/value block shown when a peer or tracker row is expanded. A 'wide' row
- * has a line of its own and wraps rather than ending in an ellipsis, for a
- * value that is read or copied whole: a peer's address.
+ * Key/value block shown when a peer or tracker row is expanded, as wide as
+ * the pane on screen however wide the table. Every value shows whole, wrapping
+ * where its column is too narrow; a 'wide' row has a line of its own, for a
+ * long value that is read or copied whole: a peer's address, ID and client.
  */
 export function MiniKv({ rows }: { rows: Array<[key: string, value: ReactNode, width?: 'wide']> }) {
   return (

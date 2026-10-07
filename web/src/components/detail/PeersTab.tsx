@@ -29,6 +29,20 @@ function breakAtColons(text: string): ReactNode[] {
   return text.split(':').flatMap((part, i) => (i === 0 ? [part] : [':', <wbr key={i} />, part]));
 }
 
+/**
+ * A peer ID, 40 hex digits, that may wrap between groups of eight (four
+ * bytes): a phone breaks it into whole groups rather than leaving a digit or
+ * two alone on the second line. <wbr>, as above, leaves a copy of it whole.
+ */
+function breakIntoGroups(text: string, size = 8): ReactNode[] {
+  const out: ReactNode[] = [];
+  for (let at = 0; at < text.length; at += size) {
+    if (at > 0) out.push(<wbr key={at} />);
+    out.push(text.slice(at, at + size));
+  }
+  return out;
+}
+
 /** The connected peers; a row expands to everything rtorrent says about the peer. Memoized, as FilesTab. */
 export const PeersTab = memo(function PeersTab({ peers }: { peers: Peer[] | undefined }) {
   const [isOpen, toggle] = useExpanded();
@@ -87,10 +101,13 @@ export const PeersTab = memo(function PeersTab({ peers }: { peers: Peer[] | unde
                   <td colSpan={COLUMNS}>
                     <MiniKv
                       rows={[
-                        // Whole here, where the column above can show only its start.
+                        // Who the peer is, each on a line of its own, as each can be wider
+                        // than a column of the block: 40 hex digits of ID, a client's name
+                        // and version, and the address whole here, where the column above
+                        // can show only its start.
                         ['Address', breakAtColons(endpoint), 'wide'],
-                        ['Peer ID', peer.id || '—'],
-                        ['Client', peer.client || 'unknown'],
+                        ['Peer ID', peer.id ? breakIntoGroups(peer.id) : '—', 'wide'],
+                        ['Client', peer.client || 'unknown', 'wide'],
                         ['Extensions', peer.options || '—'],
                         ['Direction', peer.incoming ? 'incoming' : 'outgoing'],
                         ['Encryption', peer.encrypted ? 'encrypted' : 'plaintext'],
