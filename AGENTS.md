@@ -442,7 +442,10 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    directory arrives escaped in `f.frozen_path` and as itself in `f.path`: `MapFile` does not take
    that for a shortened name (it used to say "on disk as Caf%C3%A9.txt"). The completion move gets
    the path from rtorrent as an argument, bytes and all, and never sees a stand-in; a directory
-   change takes a path from the user and can only set one that is UTF-8.
+   change takes a path from the user and can only set one that is UTF-8 within the BMP (xmlrpc-c
+   refuses an emoji in a request too), and keeps a multi-file torrent's folder by its bytes only
+   where those can be sent back — else through `d.directory.set`, which names the folder on
+   rtorrent's side (see the directory change under *Conventions*).
 
 13. **What the client calls itself is compile-time, in two places.** The HTTP `User-Agent`
    (`USER_AGENT`, patched into rtorrent's `set_user_agent(USER_AGENT)` call by
