@@ -423,13 +423,27 @@ def check_names_that_are_not_text(cascade):
         cascade.run('sh', '-c', 'rm -rf -- "$1"/*"$2"*', 'sh', directory, tag)
 
 
+def release(version):
+    """The numbers a version starts with, compared as the server compares them."""
+    numbers = []
+    for part in version.split('.'):
+        digits = re.match(r'\d*', part).group()
+        if not digits:
+            break
+        numbers.append(int(digits))
+        if digits != part:
+            break
+    return tuple(numbers)
+
+
 def check_directory_change(cascade):
     """A directory change takes the directory the data goes into, as an add
     does. d.directory is a multi-file torrent's own folder, and d.directory.set
     appends the torrent's name to what it is given, so the directory the UI
     offered back used to nest the torrent inside itself. The offer must change
-    nothing, and a new directory get the folder, by the name it has. Trailing
-    slashes, which d.directory.set keeps before the name it appends
+    nothing, and a new directory get the folder, by the name it has — a '?' in
+    it included, from 0.16.3, where a '?' no longer stands in for a byte.
+    Trailing slashes, which d.directory.set keeps before the name it appends
     ("e//multi"), must not turn the offer into a change, and Cascade sends a
     directory without them."""
     tag = uuid.uuid4().hex[:8]
@@ -463,6 +477,17 @@ def check_directory_change(cascade):
         cascade.rpc('d.directory_base.set', hashes[1], f'{root}/b/Other {tag}')
         move(f'{root}/c')
         assert directories() == [f'{root}/c', f'{root}/c/Other {tag}'], directories()
+        # Never opened, so no base path vouches for the name: before 0.16.3 its
+        # '?' may be a byte, and a folder not named after the torrent cannot
+        # be kept; from 0.16.3 it is the name's own.
+        cascade.rpc('d.directory_base.set', hashes[1], f'{root}/c/What? {tag}')
+        if release(cascade.api('/api/capabilities')['clientVersion']) >= (0, 16, 3):
+            move(f'{root}/d')
+            assert directories() == [f'{root}/d', f'{root}/d/What? {tag}'], directories()
+        else:
+            status, _, body = cascade.fetch(f'/api/torrents/{hashes[1]}', json.dumps({'directory': f'{root}/d'}).encode(),
+                                            'PATCH', {'content-type': 'application/json'})
+            assert status == 502 and directories()[1] == f'{root}/c/What? {tag}', (status, body, directories())
         # Typed as "e//", the multi-file torrent's root is "e//multi …": the
         # directory offered is "e", and changes nothing.
         for info_hash in hashes:

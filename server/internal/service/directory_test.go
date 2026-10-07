@@ -28,6 +28,12 @@ func placed(directory string, multi bool, extra ...string) *rtorrenttest.FakeCli
 	return client.Answer("d.is_multi_file", 0)
 }
 
+// placedOn is a multi-file torrent placed on a release of rtorrent, which
+// says whether a '?' may stand in for a byte: before 0.16.3 it may.
+func placedOn(version, directory string, extra ...string) *rtorrenttest.FakeClient {
+	return placed(directory, true, extra...).Answer("system.client_version", version)
+}
+
 // changes is what reached rtorrent besides reads.
 func changes(client *rtorrenttest.FakeClient) []rtorrent.Call {
 	mutations := []string{"d.stop", "d.close", "d.directory.set", "d.directory_base.set", "d.directory.base.set", "d.save_full_session"}
@@ -173,13 +179,14 @@ func TestAFolderReportedByAStandInIsKeptByItsBytes(t *testing.T) {
 
 	// A folder named after its torrent that cannot be sent back — not UTF-8,
 	// or an emoji, which xmlrpc-c refuses — is the one d.directory.set names,
-	// bytes and all; before 0.16.13 nothing carries the bytes at all.
+	// bytes and all; before 0.16.3 the '?' may be a byte, and nothing carries
+	// the bytes at all.
 	for _, client := range []*rtorrenttest.FakeClient{
 		placed("/downloads/Caf%E9 dir", true, exact...).
 			Answer("d.base_path.base64", b64("/downloads/Caf\xe9 dir")).Answer("d.name.base64", b64("Caf\xe9 dir")),
 		placed("/downloads/Song %F0%9F%8E%B5", true, exact...).
 			Answer("d.base_path.base64", b64("/downloads/Song \U0001F3B5")).Answer("d.name.base64", b64("Song \U0001F3B5")),
-		placed("/downloads/Caf? dir", true).Answer("d.name", "Caf? dir"),
+		placedOn("0.9.8", "/downloads/Caf? dir").Answer("d.name", "Caf? dir"),
 	} {
 		move(t, client, movedWith("d.directory.set", "/media"))
 	}
@@ -188,7 +195,7 @@ func TestAFolderReportedByAStandInIsKeptByItsBytes(t *testing.T) {
 	for _, client := range []*rtorrenttest.FakeClient{
 		placed("/downloads/Song %F0%9F%8E%B5", true, exact...).
 			Answer("d.base_path.base64", b64("/downloads/Song \U0001F3B5")).Answer("d.name.base64", b64("Album")),
-		placed("/downloads/Caf? dir", true).Answer("d.name", "Something else"),
+		placedOn("0.9.8", "/downloads/Caf? dir").Answer("d.name", "Something else"),
 	} {
 		if code := status(t, newService(t, client, nil).SetDirectory(ctx, hash, "/media")); code != 502 || len(changes(client)) != 0 {
 			t.Errorf("another name: %d %v", code, changes(client))
@@ -196,5 +203,41 @@ func TestAFolderReportedByAStandInIsKeptByItsBytes(t *testing.T) {
 	}
 
 	// A stand-in above a plain folder is no stand-in for the folder.
-	move(t, placed("/downloads/Caf?/Plain", true), movedWith("d.directory_base.set", "/media/Plain"))
+	move(t, placedOn("0.9.8", "/downloads/Caf?/Plain"), movedWith("d.directory_base.set", "/media/Plain"))
+}
+
+// A '?' stands in for a byte only before 0.16.3: from there rtorrent sends
+// %XX or no stand-in at all. So a folder another tool named with one is its
+// name exactly from 0.16.3, and kept by it where no base path can vouch for
+// it — a torrent never opened, a release before 0.16.13. Before, it cannot
+// be told from a byte, and only a folder named after the torrent is kept.
+func TestAQuestionMarkInAFolderIsItselfFrom0163(t *testing.T) {
+	for _, c := range []struct {
+		client *rtorrenttest.FakeClient
+		setter string
+	}{
+		// Never opened: d.base_path is empty.
+		{placedOn("0.16.25", "/downloads/What? other", "d.directory.base.set", "d.base_path.base64", "d.name.base64").
+			Answer("d.base_path.base64", "").Answer("d.name.base64", b64("Album X")), "d.directory.base.set"},
+		{placedOn("0.16.12", "/downloads/What? other").Answer("d.name", "Album X"), "d.directory_base.set"},
+		{placedOn("0.16.3", "/downloads/What? other").Answer("d.name", "Album X"), "d.directory_base.set"},
+	} {
+		if err := newService(t, c.client, nil).SetDirectory(ctx, hash, "/media"); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := changes(c.client), movedWith(c.setter, "/media/What? other"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%v", got)
+		}
+		// The folder's name is known, so the torrent's is not asked for.
+		if len(c.client.CallsTo("d.name")) != 0 || len(c.client.CallsTo("d.name.base64")) != 0 {
+			t.Errorf("the name was read: %v", c.client.Methods())
+		}
+	}
+	for _, version := range []string{"0.9.8", "0.16.2", "unknown"} {
+		client := placedOn(version, "/downloads/What? other").Answer("d.name", "Album X")
+		err := newService(t, client, nil).SetDirectory(ctx, hash, "/media")
+		if code := status(t, err); code != 502 || len(changes(client)) != 0 {
+			t.Errorf("%s: %d %v", version, code, changes(client))
+		}
+	}
 }

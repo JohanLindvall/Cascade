@@ -57,8 +57,6 @@ func TestAFolderIsKeptByItsBytesOrNotAtAll(t *testing.T) {
 		{"a base path of another folder", Row{"d.directory": "/downloads/Caf%E9",
 			"d.base_path.base64": b64("/downloads/Other")}, "", false},
 		{"never opened", Row{"d.directory": "/downloads/Caf%E9", "d.base_path.base64": ""}, "", false},
-		// Before 0.16.13 the base path is a stand-in too.
-		{"no bytes to read", Row{"d.directory": "/downloads/Caf?", "d.base_path": "/downloads/Caf?"}, "", false},
 		// Bytes rtorrent cannot be sent back: the encoder would make the first
 		// "Caf\uFFFD", and xmlrpc-c refuses the second.
 		{"not UTF-8", Row{"d.directory": "/downloads/Caf%E9",
@@ -66,8 +64,47 @@ func TestAFolderIsKeptByItsBytesOrNotAtAll(t *testing.T) {
 		{"an emoji", Row{"d.directory": "/downloads/Song %F0%9F%8E%B5",
 			"d.base_path.base64": b64("/downloads/Song \U0001F3B5")}, "", false},
 	} {
-		if folder, ok := Folder(c.row); folder != c.folder || ok != c.ok {
-			t.Errorf("%s: %q %v", c.name, folder, ok)
+		// The same whether a '?' may stand in for a byte or not.
+		for _, questionMarks := range []bool{true, false} {
+			if folder, ok := Folder(c.row, questionMarks); folder != c.folder || ok != c.ok {
+				t.Errorf("%s, question marks %v: %q %v", c.name, questionMarks, folder, ok)
+			}
+		}
+	}
+}
+
+// Before 0.16.3 a '?' may stand in for a byte; from there rtorrent sends %XX
+// or no stand-in at all, and a folder whose only mark is a '?' is its name.
+func TestAQuestionMarkStandsInOnlyBefore0163(t *testing.T) {
+	for version, want := range map[string]bool{
+		"0.9.8": true, "0.15.2": true, "0.16.2": true, "unknown": true, "": true,
+		"0.16.3": false, "0.16.12": false, "0.16.25": false, "0.17.0": false,
+	} {
+		if got := QuestionMarksStandIn(version); got != want {
+			t.Errorf("%q: %v", version, got)
+		}
+	}
+	for _, c := range []struct {
+		name          string
+		row           Row
+		before, after string // the folder kept before 0.16.3 and from it; "" for none
+	}{
+		// Never opened, no base path vouches for it; before 0.16.13 there are
+		// no bytes to read at all.
+		{"never opened", Row{"d.directory": "/downloads/What? X", "d.base_path.base64": ""}, "", "What? X"},
+		{"no bytes to read", Row{"d.directory": "/downloads/Caf?", "d.base_path": "/downloads/Caf?"}, "", "Caf?"},
+		{"vouched for", Row{"d.directory": "/downloads/What?", "d.base_path.base64": b64("/downloads/What?")}, "What?", "What?"},
+		// Any other mark stands in still.
+		{"and an escape", Row{"d.directory": "/downloads/What? Caf%E9"}, "", ""},
+		{"and a line feed", Row{"d.directory": "/downloads/What?\nX"}, "", ""},
+		{"and U+FFFD", Row{"d.directory": "/downloads/What? \uFFFD"}, "", ""},
+		{"and an escape the base path undoes", Row{"d.directory": "/downloads/Caf%E9/What? Caf%C3%A9",
+			"d.base_path.base64": b64("/downloads/Caf\xe9/What? Café")}, "What? Café", "What? Café"},
+	} {
+		for questionMarks, want := range map[bool]string{true: c.before, false: c.after} {
+			if folder, ok := Folder(c.row, questionMarks); folder != want || ok != (want != "") {
+				t.Errorf("%s, question marks %v: %q %v", c.name, questionMarks, folder, ok)
+			}
 		}
 	}
 }

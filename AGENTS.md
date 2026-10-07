@@ -803,7 +803,9 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   (not UTF-8, or an emoji — xmlrpc-c refuses a character outside the BMP in a request too, -503)
   fall back to `d.directory.set`, which appends the name on rtorrent's side, when the folder is
   named after the torrent, shortened or not (`NamedAfterTorrent`); anything else is refused before
-  anything changes. A change stops and
+  anything changes. A `?` is a stand-in only before 0.16.3 (`QuestionMarksStandIn`, by
+  `system.client_version`): from there it is the name's own, and a folder whose only mark is one
+  is kept by its text even where no base path can vouch for it. A change stops and
   closes the torrent before setting its path, and leaves it stopped for the owner to move the data
   and recheck it; `d.base_path` follows only at the next open. Keep those lifecycle commands
   separate and in the per-torrent mutation queue, as for recheck and throttle changes. The demo

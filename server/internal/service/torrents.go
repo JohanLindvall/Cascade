@@ -280,14 +280,15 @@ func (s *Service) SetDirectory(ctx context.Context, hash, directory string) erro
 		if !s.caps.Supports("perTorrentDirectory") {
 			return httperr.New(http.StatusNotImplemented, "this rtorrent build does not support changing a torrent directory")
 		}
-		where, err := s.placement(ctx, hash)
+		questionMarks := rtorrent.QuestionMarksStandIn(s.caps.Info().ClientVersion)
+		where, err := s.placement(ctx, hash, questionMarks)
 		if err != nil {
 			return err
 		}
 		if rtorrent.DataDirectory(where) == directory {
 			return nil
 		}
-		method, value, err := s.directoryCommand(where, directory)
+		method, value, err := s.directoryCommand(where, directory, questionMarks)
 		if err != nil {
 			return err
 		}
@@ -310,8 +311,9 @@ func (s *Service) SetDirectory(ctx context.Context, hash, directory string) erro
 // d.is_multi_file and d.directory, and where d.directory may be a stand-in,
 // the base path's bytes and the torrent's name. Each string is a request of
 // its own: rtorrent 0.16.3 to 0.16.6 crash on one xmlrpc-c refuses inside a
-// multicall's answer (see filesPresent).
-func (s *Service) placement(ctx context.Context, hash string) (rtorrent.Row, error) {
+// multicall's answer (see filesPresent). questionMarks is whether this
+// rtorrent's '?' may stand in for a byte (rtorrent.QuestionMarksStandIn).
+func (s *Service) placement(ctx context.Context, hash string, questionMarks bool) (rtorrent.Row, error) {
 	row := rtorrent.Row{}
 	read := func(field string) error {
 		value, err := s.client.Call(ctx, field, hash)
@@ -329,7 +331,7 @@ func (s *Service) placement(ctx context.Context, hash string) (rtorrent.Row, err
 			return nil, err
 		}
 	}
-	if _, ok := rtorrent.Folder(row); !ok && rtorrent.Number(row["d.is_multi_file"]) != 0 {
+	if _, ok := rtorrent.Folder(row, questionMarks); !ok && rtorrent.Number(row["d.is_multi_file"]) != 0 {
 		if name := s.caps.Resolve(rtorrent.ExactFields["d.name"], "d.name"); name != "" {
 			if err := read(name); err != nil {
 				return nil, err
@@ -346,12 +348,12 @@ func (s *Service) placement(ctx context.Context, hash string) (rtorrent.Row, err
 // Where the folder's bytes cannot pass through XML-RPC text either way,
 // d.directory.set still serves a folder named after the torrent, appending
 // the name on rtorrent's side; any other is refused before anything changes.
-func (s *Service) directoryCommand(where rtorrent.Row, directory string) (method, value string, err error) {
+func (s *Service) directoryCommand(where rtorrent.Row, directory string, questionMarks bool) (method, value string, err error) {
 	if rtorrent.Number(where["d.is_multi_file"]) == 0 {
 		return "d.directory.set", directory, nil
 	}
 	setter := s.caps.Resolve("d.directory.base.set", "d.directory_base.set")
-	switch folder, ok := rtorrent.Folder(where); {
+	switch folder, ok := rtorrent.Folder(where, questionMarks); {
 	case ok && folder != "" && setter != "":
 		return setter, rtorrent.JoinDirectory(directory, folder), nil
 	// A root with no folder of its own is given one named after the torrent,

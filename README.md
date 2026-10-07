@@ -747,9 +747,10 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
   is left alone, and any other is stopped and its saved path changed. Move already-downloaded
   files yourself, then use **Recheck & restart** before transferring at the new location — the
   details' *Base path* follows once the torrent opens there. A folder name rtorrent cannot report
-  exactly or be sent as text (see above: one that is not UTF-8, or holds an emoji) is kept as well
-  when it is the torrent's own name; any other such folder fails the change with a `502` before
-  anything is touched.
+  exactly or be sent as text (see above: one that is not UTF-8, or holds an emoji — and before
+  rtorrent 0.16.3 one with a `?`, which may stand for such a byte) is kept as well when it is the
+  torrent's own name; any other such folder fails the change with a `502` before anything is
+  touched.
 - Deleting torrent data is confined to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and any
   `CASCADE_DELETE_ROOTS`. Paths are checked before removing metadata, and deletion stays anchored
   to an open root directory even if symlinks change. A root itself cannot be deleted. A path

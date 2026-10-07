@@ -93,13 +93,15 @@ func TrimDirectory(directory string) string {
 // disk, to hand back to rtorrent. ok is false when rtorrent reports it by a
 // stand-in (standin.go) the row cannot undo, or when rtorrent could not be
 // sent it (Sendable); a root with no folder of its own, such as ".", has "",
-// ok.
-func Folder(row Row) (folder string, ok bool) {
+// ok. questionMarks says whether this rtorrent's '?' may stand in for a byte
+// (QuestionMarksStandIn): from 0.16.3 it never does, and a folder whose only
+// mark is a '?' is its name as it is.
+func Folder(row Row, questionMarks bool) (folder string, ok bool) {
 	reported := baseName(row.text("d.directory"))
 	switch {
 	case reported == "" || reported == "." || reported == "..":
 		return "", true
-	case !MayStandIn(reported):
+	case !mayStandIn(reported, questionMarks):
 		folder = reported
 	default:
 		// From 0.16.13 the base path carries the bytes. It is the root as of
