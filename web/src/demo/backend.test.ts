@@ -292,7 +292,7 @@ test('settings: every readable one reported, a bad value refused by name, a good
   assert.equal(settings.sessionDirectory, '/config/session/');
   assert.ok(!('portOpen' in settings), '0.16 has no network.port_open');
   assert.equal(settings.maxHttpOpen, 32);
-  refused('POST', 'settings', { maxPeers: 10, downloadRate: -5 }, 400, '"downloadRate" must be a whole number from 0 to 9007199254740991');
+  refused('POST', 'settings', { maxPeers: 10, downloadRate: -5 }, 400, '"downloadRate" must be a whole number from 0 to 4294966272');
   assert.equal(ok<Record<string, unknown>>('GET', 'settings').maxPeers, 200, 'a refused patch applied part of itself');
   const updated = ok<Record<string, unknown>>('POST', 'settings', { downloadRate: 1048576, pex: 'off', encryption: 'require, require_RC4', sessionDirectory: '/x' });
   assert.equal(updated.downloadRate, 1048576);
@@ -336,6 +336,30 @@ test('settings: the torrent-name switches of 0.16.22 and 0.16.25, on by default,
     code: -503, message: 'Wrong object type: expected: value actual: none',
   });
   assert.deepEqual(rpc('system.torrent_name.use_sanitized', ['']), { ok: true, result: 0 });
+});
+
+test('settings: a global rate is kept in whole KiB/s under 4 GiB/s and a DHT port in 16 bits, as 0.16.25 checks them', () => {
+  const { ok, refused } = setup();
+  const rpc = (method: string, params: unknown[]) => ok<{ ok: boolean; result?: unknown; fault?: { code: number; message: string } }>(
+    'POST', 'rpc', { method, params });
+  const setting = (key: string) => ok<Record<string, unknown>>('GET', 'settings')[key];
+  // Rounded up to whole KiB/s, where rtorrent would drop 800 B/s to 0: unlimited.
+  assert.equal(ok<Record<string, unknown>>('POST', 'settings', { downloadRate: 800 }).downloadRate, 1024);
+  assert.equal(ok<Record<string, unknown>>('POST', 'settings', { uploadRate: 1025 }).uploadRate, 2048);
+  assert.equal(ok<Record<string, unknown>>('POST', 'settings', { downloadRate: 4_294_966_272 }).downloadRate, 4_294_966_272);
+  refused('POST', 'settings', { downloadRate: 4_294_966_273 }, 400, '"downloadRate" must be a whole number from 0 to 4294966272');
+  refused('POST', 'settings', { dhtOverridePort: 65_536 }, 400, '"dhtOverridePort" must be a whole number from 0 to 65535');
+  // The console reaches rtorrent's own checks and its truncation to whole KiB/s.
+  assert.deepEqual(rpc('throttle.global_down.max_rate.set', ['', 4_294_967_295]).fault, {
+    code: -503, message: 'Throttle rate must be between 0 and 4294967294.',
+  });
+  assert.deepEqual(rpc('throttle.global_down.max_rate.set', ['', 4_294_967_294]), { ok: true, result: 0 });
+  assert.deepEqual(rpc('throttle.global_down.max_rate', ['']), { ok: true, result: 4_294_966_272 });
+  assert.deepEqual(rpc('throttle.global_up.max_rate.set', ['', 1000]), { ok: true, result: 0 });
+  assert.equal(setting('uploadRate'), 0, 'rtorrent drops a fraction of a KiB, down to unlimited');
+  assert.deepEqual(rpc('dht.override_port.set', ['', 65_536]).fault, { code: -503, message: 'Invalid DHT override port number.' });
+  assert.deepEqual(rpc('dht.override_port.set', ['', 6882]), { ok: true, result: 0 });
+  assert.equal(setting('dhtOverridePort'), 6882);
 });
 
 test('settings: what 0.16.25 refuses, in its words, and what it takes, as it reads it back', () => {

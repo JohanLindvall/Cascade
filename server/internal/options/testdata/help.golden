@@ -53,7 +53,7 @@ PATHS AND IDENTITY
   RT_SESSION_LOCK_KEEP       Set 1 to keep a leftover rtorrent.lock instead of clearing it [0]
 
 BANDWIDTH AND SLOTS
-  Rates are in KiB/s; 0 means unlimited.
+  Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
   RT_DOWNLOAD_RATE           Global download limit [rtorrent default]
   RT_UPLOAD_RATE             Global upload limit [rtorrent default]
   RT_MAX_UPLOADS             Upload slots per torrent [rtorrent default]

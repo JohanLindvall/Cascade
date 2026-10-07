@@ -529,6 +529,8 @@ export class Rpc {
           switch (setting.kind) {
             case 'uint':
             case 'int':
+            case 'rate':
+            case 'port':
               next = value(params);
               break;
             case 'bool':

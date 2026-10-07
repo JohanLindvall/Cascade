@@ -20,7 +20,7 @@
 
 ### Bandwidth and slots
 
-Rates are in KiB/s; 0 means unlimited.
+Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

@@ -131,6 +131,12 @@ def check_settings_and_throttles(cascade):
         actual = cascade.api('/api/settings', patch)
         for key, value in patch.items():
             assert actual[key] == value, (key, actual.get(key), value)
+        # rtorrent keeps a global rate in whole KiB/s and would drop 800 B/s
+        # to 0, unlimited; the server rounds it up instead, and refuses a rate
+        # past 4 GiB/s, which 0.16.25 refuses and older releases wrapped.
+        assert cascade.api('/api/settings', {'uploadRate': 800})['uploadRate'] == 1024
+        cascade.api('/api/settings', {'uploadRate': 4 * 1024 ** 3}, expected=400)
+        assert cascade.rpc('throttle.global_up.max_rate') == 1024
 
         # Global setters take bytes/s, but named group setters take KiB/s.
         # A nonzero global limit is required to observe group .max in rtorrent.

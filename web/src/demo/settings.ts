@@ -10,9 +10,11 @@
  * through it, so a value set in one reads back in the other.
  */
 import type { GlobalSettings } from '../contracts.ts';
+import { MAX_RATE, appliedRate } from '../settings.ts';
 import { bool, int, text } from './validate.ts';
 
-export type SettingKind = 'uint' | 'int' | 'bool' | 'string' | 'flags';
+/** As the server's kinds: 'rate' is a global rate rtorrent keeps in whole KiB/s, 'port' a 16-bit port. */
+export type SettingKind = 'uint' | 'int' | 'rate' | 'port' | 'bool' | 'string' | 'flags';
 export type SettingKey = keyof GlobalSettings;
 type SettingValue = number | boolean | string;
 
@@ -30,8 +32,8 @@ const both = (key: SettingKey, command: string, kind: SettingKind) => spec(key, 
 
 /** In the table's order, which is also the order a patch is checked and applied in. */
 export const SETTINGS: readonly SettingSpec[] = [
-  both('downloadRate', 'throttle.global_down.max_rate', 'uint'),
-  both('uploadRate', 'throttle.global_up.max_rate', 'uint'),
+  both('downloadRate', 'throttle.global_down.max_rate', 'rate'),
+  both('uploadRate', 'throttle.global_up.max_rate', 'rate'),
   both('maxUploads', 'throttle.max_uploads', 'uint'),
   both('minUploads', 'throttle.min_uploads', 'uint'),
   both('maxDownloads', 'throttle.max_downloads', 'uint'),
@@ -64,8 +66,8 @@ export const SETTINGS: readonly SettingSpec[] = [
   spec('portOpen', null, null, 'bool'),
   // Write-only, as on the server: rtorrent has no getter that round-trips them.
   spec('dhtMode', null, 'dht.mode.set', 'string'),
-  both('dhtPort', 'dht.port', 'uint'),
-  both('dhtOverridePort', 'dht.override_port', 'uint'),
+  both('dhtPort', 'dht.port', 'port'),
+  both('dhtOverridePort', 'dht.override_port', 'port'),
   both('pex', 'protocol.pex', 'bool'),
   both('udpTrackers', 'trackers.use_udp', 'bool'),
   both('trackersNumwant', 'trackers.numwant', 'int'),
@@ -168,6 +170,10 @@ export function coerce(kind: SettingKind, value: unknown, key: string): SettingV
       return int(value, key, 0, Number.MAX_SAFE_INTEGER);
     case 'int':
       return int(value, key, -1, Number.MAX_SAFE_INTEGER);
+    case 'rate':
+      return appliedRate(int(value, key, 0, MAX_RATE));
+    case 'port':
+      return int(value, key, 0, 65_535);
     case 'bool':
       return bool(value, key);
     case 'flags': {
@@ -376,6 +382,13 @@ export function refusal(key: SettingKey, value: SettingValue): string | null {
     case 'xmlrpcSizeLimit':
       if (n > 64 * MiB) return 'XMLRPC size limit cannot exceed the SCGI content size limit.';
       return n < 1024 ? 'XMLRPC size limit is too small to hold a request.' : null;
+    // 0.16.25's range checks, of what reaches them from the console: the
+    // settings route holds both inside them already.
+    case 'downloadRate':
+    case 'uploadRate':
+      return n < 0 || n > 4_294_967_294 ? 'Throttle rate must be between 0 and 4294967294.' : null;
+    case 'dhtOverridePort':
+      return n < 0 || n > 65_535 ? 'Invalid DHT override port number.' : null;
     case 'bindAddress':
     case 'bindAddressV4':
     case 'bindAddressV6':
@@ -401,6 +414,9 @@ export function applySetting(settings: GlobalSettings, key: SettingKey, value: S
   if (key === 'portRange') {
     const [first, last] = portRange(String(value)) as [number, number];
     settings.portRange = `${first}-${last}`;
+  } else if (key === 'downloadRate' || key === 'uploadRate') {
+    // Kept in whole KiB/s, the fraction dropped: the settings route rounds up first.
+    settings[key] = Math.floor(Number(value) / 1024) * 1024;
   } else if (key === 'proxyAddress' || key === 'proxyHttp') {
     // 0.16 made network.http.proxy_address an alias of network.proxy.http: one value.
     settings.proxyAddress = settings.proxyHttp = String(value);

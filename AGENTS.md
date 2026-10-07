@@ -261,6 +261,12 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    and re-applied once rtorrent has restarted (see *What a restarted rtorrent forgets* under
    Conventions). They also cannot be deleted at runtime — deleting sets them to unlimited.
 
+   The global setters take bytes/s but keep whole KiB/s in 32 bits too, measured on 0.9.8, 0.16.24
+   and 0.16.25: they drop the fraction, so 800 B/s became 0 — unlimited — and before 0.16.25 a rate
+   of 4 GiB/s wrapped to 0 as well, which 0.16.25 refuses instead ("Throttle rate must be between 0
+   and 4294967294."). Their settings are `KindRate`: rounded up to whole KiB/s like a group's, and
+   held to `MaxRate`, the last whole KiB/s under that bound.
+
 4. **A running download rejects a throttle change** ("Cannot set throttle on active download"), so
    `SetTorrentThrottle` stops it, sets, and restarts.
 

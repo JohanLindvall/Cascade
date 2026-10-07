@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
-import { bytes, formatRateInput, interval, parseRate, parseWholeNumber, rate } from '../format';
+import { bytes, formatRateInput, interval, parseWholeNumber, rate } from '../format';
 import { useMounted } from '../hooks';
 import { redactSecrets } from '../redact';
-import { settingsPatch } from '../settings';
+import { appliedRate, parseGlobalRate, settingsPatch } from '../settings';
 import type { BackendSummary, Settings } from '../types';
 import { IconRefresh } from './icons';
 import { Field, ParsedInput, Switch } from './form';
@@ -125,37 +125,44 @@ export function SettingsDialog({
    * number input turned a lone "-" into 0 (so -1 could not be typed), applied
    * 0 when cleared, and changed value under a scrolling mouse wheel.
    */
-  const numberField = (key: NumberKey, label: string, opts: { hint?: string; min?: number } = {}) => {
+  const numberField = (key: NumberKey, label: string, opts: { hint?: string; min?: number; max?: number } = {}) => {
     const min = opts.min ?? 0;
+    const max = opts.max ?? Number.MAX_SAFE_INTEGER;
     return (
       <Field
         label={label}
         hint={opts.hint}
-        error={invalid.has(key) ? `A whole number, ${min} or more` : undefined}
+        error={invalid.has(key) ? (opts.max === undefined ? `A whole number, ${min} or more` : `A whole number from ${min} to ${max}`) : undefined}
       >
         <ParsedInput
           inputMode="numeric"
           disabled={!supports(key)}
           initial={draft[key] === undefined ? '' : String(draft[key])}
-          parse={(text) => parseWholeNumber(text, min)}
+          parse={(text) => {
+            const value = parseWholeNumber(text, min);
+            return value !== null && value <= max ? value : null;
+          }}
           onValue={(value) => commit(key, value)}
         />
       </Field>
     );
   };
 
-  /** A global rate limit, typed the way the throttle dialog takes them. */
+  /**
+   * A global rate limit, typed the way the throttle dialog takes them. The
+   * hint is what rtorrent will hold: the rate rounded up to whole KiB/s.
+   */
   const rateField = (key: 'downloadRate' | 'uploadRate', label: string) => (
     <Field
       label={label}
-      hint={draft[key] ? rate(draft[key] ?? 0) : 'unlimited'}
-      error={invalid.has(key) ? 'Not a rate — try 500k, 2M or 800 B/s' : undefined}
+      hint={draft[key] ? rate(appliedRate(draft[key] ?? 0)) : 'unlimited'}
+      error={invalid.has(key) ? 'Not a rate under 4 GiB/s — try 500k, 2M or 800 B/s' : undefined}
     >
       <ParsedInput
         placeholder="unlimited — e.g. 500k, 2M"
         disabled={!supports(key)}
         initial={formatRateInput(settings?.[key] ?? 0)}
-        parse={parseRate}
+        parse={parseGlobalRate}
         onValue={(value) => commit(key, value)}
       />
     </Field>
@@ -328,10 +335,11 @@ export function SettingsDialog({
                 ))}
               </select>
             </Field>
-            {numberField('dhtPort', 'DHT port')}
+            {numberField('dhtPort', 'DHT port', { max: 65535 })}
             {supports('dhtOverridePort') &&
               numberField('dhtOverridePort', 'DHT announce port override', {
                 hint: '0 uses the listening port',
+                max: 65535,
               })}
             {textField('httpCapath', 'Trusted CA directory', { hint: 'for tracker TLS' })}
             {textField('httpCacert', 'Trusted CA bundle', { hint: 'for tracker TLS' })}

@@ -185,9 +185,18 @@ func TestQuotesAndBackslashesInStartupStringsSurviveJSON(t *testing.T) {
 }
 
 func TestInvalidStartupInputFailsByEnvironmentName(t *testing.T) {
-	for name, value := range map[string]string{"RT_DOWNLOAD_RATE": "fast", "RT_PEX": "perhaps", "RT_MAX_UPLOADS": "-1", "RT_ALLOW_LEGACY_UTF8": "2"} {
+	for name, value := range map[string]string{
+		"RT_DOWNLOAD_RATE": "fast", "RT_PEX": "perhaps", "RT_MAX_UPLOADS": "-1", "RT_ALLOW_LEGACY_UTF8": "2",
+		// Past what the settings table takes, which would refuse every
+		// startup setting along with it: 4 GiB/s, in KiB/s, and a 17-bit port.
+		"RT_UPLOAD_RATE": "4194304", "RT_DHT_OVERRIDE_PORT": "65536",
+	} {
 		if _, err := StartupSettings(env(map[string]string{name: value})); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("%s=%s: %v", name, value, err)
 		}
+	}
+	settings, err := StartupSettings(env(map[string]string{"RT_UPLOAD_RATE": "4194303", "RT_DHT_PORT": "65535"}))
+	if err != nil || settings["uploadRate"] != int64(4194303*1024) || settings["dhtPort"] != int64(65535) {
+		t.Errorf("the highest values: %v %v", settings, err)
 	}
 }

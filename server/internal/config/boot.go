@@ -36,20 +36,20 @@ func StartupSettings(getenv func(string) string) (map[string]any, error) {
 			return nil, fmt.Errorf("%s names %q, which is not a setting", option.Name, option.Setting)
 		}
 		var err error
-		switch spec.Kind {
-		case rtorrent.KindUint, rtorrent.KindInt:
+		switch {
+		case spec.Kind.Numeric():
 			factor := int64(1)
 			if option.KiB {
 				factor = 1024
 			}
-			min := int64(0)
-			if spec.Kind == rtorrent.KindInt {
-				min = -1
-			}
+			// The setting's own bounds, in the variable's unit: a value the
+			// settings table would refuse — and every startup setting with
+			// it — stops the start here, by name.
+			low, high := spec.Kind.Range()
 			var n int64
-			n, err = validate.Int(raw, option.Name, min, validate.MaxSafeInteger/factor)
+			n, err = validate.Int(raw, option.Name, low, high/factor)
 			values[option.Setting] = n * factor
-		case rtorrent.KindBool:
+		case spec.Kind == rtorrent.KindBool:
 			values[option.Setting], err = validate.Bool(raw, option.Name)
 		default:
 			values[option.Setting], err = validate.String(raw, option.Name, true)

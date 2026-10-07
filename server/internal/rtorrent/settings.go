@@ -37,7 +37,39 @@ const (
 	KindString SettingKind = "string"
 	// KindFlags is a comma-separated list, sent as one argument per flag.
 	KindFlags SettingKind = "flags"
+	// KindRate is a global rate in bytes/s, which every release keeps in
+	// whole KiB/s in 32 bits: the setter drops the fraction of a KiB — so a
+	// positive rate under 1 KiB/s became 0, unlimited — and 0.16.25 refuses a
+	// rate over 4294967294 that older releases wrapped around (4 GiB/s read
+	// back as 0). A positive rate is rounded up to the next KiB, as a throttle
+	// group's is (store.NormalizeThrottle), and held to MaxRate.
+	KindRate SettingKind = "rate"
+	// KindPort is a port number: 0.16.25 refuses one past 65535, which
+	// earlier releases cut to 16 bits (65536 became 0).
+	KindPort SettingKind = "port"
 )
+
+// MaxRate is the highest global rate every release keeps as given: the
+// largest whole KiB/s under 0.16.25's bound of 4294967294 bytes/s.
+const MaxRate = 4194303 * 1024
+
+// Range is the whole numbers a numeric kind takes.
+func (k SettingKind) Range() (low, high int64) {
+	switch k {
+	case KindInt:
+		return -1, validate.MaxSafeInteger
+	case KindRate:
+		return 0, MaxRate
+	case KindPort:
+		return 0, 65535
+	}
+	return 0, validate.MaxSafeInteger
+}
+
+// Numeric reports whether a kind is a whole number.
+func (k SettingKind) Numeric() bool {
+	return k == KindUint || k == KindInt || k == KindRate || k == KindPort
+}
 
 // SettingSpec describes one global setting.
 type SettingSpec struct {
@@ -54,8 +86,8 @@ var settingTable = []struct {
 	key  string
 	spec SettingSpec
 }{
-	{"downloadRate", SettingSpec{Get: one("throttle.global_down.max_rate"), Set: one("throttle.global_down.max_rate.set"), Kind: KindUint}},
-	{"uploadRate", SettingSpec{Get: one("throttle.global_up.max_rate"), Set: one("throttle.global_up.max_rate.set"), Kind: KindUint}},
+	{"downloadRate", SettingSpec{Get: one("throttle.global_down.max_rate"), Set: one("throttle.global_down.max_rate.set"), Kind: KindRate}},
+	{"uploadRate", SettingSpec{Get: one("throttle.global_up.max_rate"), Set: one("throttle.global_up.max_rate.set"), Kind: KindRate}},
 	{"maxUploads", SettingSpec{Get: one("throttle.max_uploads"), Set: one("throttle.max_uploads.set"), Kind: KindUint}},
 	{"minUploads", SettingSpec{Get: one("throttle.min_uploads"), Set: one("throttle.min_uploads.set"), Kind: KindUint}},
 	{"maxDownloads", SettingSpec{Get: one("throttle.max_downloads"), Set: one("throttle.max_downloads.set"), Kind: KindUint}},
@@ -104,8 +136,8 @@ var settingTable = []struct {
 	{"portOpen", SettingSpec{Get: one("network.port_open"), Set: one("network.port_open.set"), Kind: KindBool}},
 	// dht.mode has a setter but no getter, so its current value cannot be shown.
 	{"dhtMode", SettingSpec{Set: one("dht.mode.set"), Kind: KindString}},
-	{"dhtPort", SettingSpec{Get: one("dht.port"), Set: one("dht.port.set"), Kind: KindUint}},
-	{"dhtOverridePort", SettingSpec{Get: one("dht.override_port"), Set: one("dht.override_port.set"), Kind: KindUint}},
+	{"dhtPort", SettingSpec{Get: one("dht.port"), Set: one("dht.port.set"), Kind: KindPort}},
+	{"dhtOverridePort", SettingSpec{Get: one("dht.override_port"), Set: one("dht.override_port.set"), Kind: KindPort}},
 	{"pex", SettingSpec{Get: one("protocol.pex"), Set: one("protocol.pex.set"), Kind: KindBool}},
 	{"udpTrackers", SettingSpec{Get: one("trackers.use_udp"), Set: one("trackers.use_udp.set"), Kind: KindBool}},
 	{"trackersNumwant", SettingSpec{Get: one("trackers.numwant"), Set: one("trackers.numwant.set"), Kind: KindInt}},
@@ -223,7 +255,7 @@ func DecodeSettingValue(key string, value any) any {
 	case KindBool:
 		// Anything that does not read as zero is on, junk included.
 		return xmlrpc.ToNumber(value) != 0
-	case KindUint, KindInt:
+	case KindUint, KindInt, KindRate, KindPort:
 		if v, ok := value.(int64); ok {
 			return v
 		}
@@ -239,11 +271,12 @@ func DecodeSettingValue(key string, value any) any {
 // coerce validates one patch value and turns it into the setter's arguments.
 func coerce(kind SettingKind, value any, key string) ([]any, error) {
 	switch kind {
-	case KindUint:
-		n, err := validate.Int(value, key, 0, validate.MaxSafeInteger)
-		return []any{n}, err
-	case KindInt:
-		n, err := validate.Int(value, key, -1, validate.MaxSafeInteger)
+	case KindUint, KindInt, KindRate, KindPort:
+		low, high := kind.Range()
+		n, err := validate.Int(value, key, low, high)
+		if kind == KindRate {
+			n = (n + 1023) / 1024 * 1024
+		}
 		return []any{n}, err
 	case KindBool:
 		on, err := validate.Bool(value, key)

@@ -56,7 +56,7 @@ var Sections = []string{
 // SectionNotes are shown under a section's heading, where a whole group needs
 // one caveat.
 var SectionNotes = map[string]string{
-	"Bandwidth and slots": "Rates are in KiB/s; 0 means unlimited.",
+	"Bandwidth and slots": "Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.",
 	"Escape hatches": "Settings given as environment variables are applied over XML-RPC at startup rather than " +
 		"written into rtorrent.rc, so changes made in the UI last until the container restarts. The torrent-name " +
 		"switches go into rtorrent.rc as well, where the build has them, since rtorrent names its session's " +

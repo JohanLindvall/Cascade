@@ -231,6 +231,13 @@ it before adding torrents that carry both names, and keep it. Cascade's own uplo
 refuses a `/` in a torrent's name, as rtorrent did before 0.16.22; the watch directory, magnet
 links and URLs reach rtorrent's handling.
 
+0.16.25 refuses values it used to narrow without a word: a global rate over 4294967294 bytes/s,
+which earlier releases wrapped around in 32 bits (4 GiB/s read back as 0, unlimited), and a DHT
+override port past 65535, which they cut to 16 bits. Every release also keeps the global rates in
+whole KiB/s and drops the fraction, so a limit of 800 B/s became unlimited too. Cascade holds the
+global rates under 4 GiB/s and rounds them up to whole KiB/s, as it does a throttle group's, and
+the DHT ports to 65535, refusing anything past them by name on every release.
+
 ## Configuration
 
 Everything is an environment variable on `docker run`. Only what you set is applied — anything
@@ -277,7 +284,7 @@ random-port switch, the SCGI port — is ignored rather than checked.
 
 ### Bandwidth and slots
 
-Rates are in KiB/s; 0 means unlimited.
+Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

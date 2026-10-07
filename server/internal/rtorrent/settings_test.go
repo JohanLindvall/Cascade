@@ -84,6 +84,34 @@ func TestCoercionByKind(t *testing.T) {
 	}
 }
 
+// rtorrent keeps a global rate in whole KiB/s, in 32 bits, and a port in 16:
+// a rate is rounded up to the next KiB (rtorrent drops the fraction, so a
+// sub-KiB rate became 0, unlimited), and what 0.16.25 refuses — and an older
+// release wraps around — is a 400 naming the field before it is sent.
+func TestRatesAndPortsStayWithinWhatRtorrentKeeps(t *testing.T) {
+	for _, c := range []struct {
+		patch map[string]any
+		want  int64
+	}{
+		{map[string]any{"downloadRate": 1.0}, 1024},
+		{map[string]any{"downloadRate": 800.0}, 1024},
+		{map[string]any{"uploadRate": 1025.0}, 2048},
+		{map[string]any{"uploadRate": 0.0}, 0},
+		{map[string]any{"downloadRate": float64(MaxRate)}, MaxRate},
+		{map[string]any{"dhtOverridePort": 65535.0}, 65535},
+		{map[string]any{"dhtPort": 0.0}, 0},
+	} {
+		call, err := entry(t, c.patch)
+		if err != nil || !reflect.DeepEqual(call.Params, []any{"", c.want}) {
+			t.Errorf("%v: %#v %v", c.patch, call.Params, err)
+		}
+	}
+	for key, value := range map[string]float64{"downloadRate": MaxRate + 1, "uploadRate": 4294967296, "dhtOverridePort": 65536, "dhtPort": -1} {
+		_, err := SettingEntries(map[string]any{key: value}, resolveAll)
+		requireFieldError(t, err, key)
+	}
+}
+
 // The torrent-name switches (0.16.22 and 0.16.25) are booleans like the rest:
 // 0 or 1 after the empty target, read back as true or false.
 func TestTheTorrentNameSwitchesAreBooleans(t *testing.T) {
