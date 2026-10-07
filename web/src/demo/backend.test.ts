@@ -302,7 +302,7 @@ test('a magnet still fetching its metadata keeps the directory it was added with
   assert.deepEqual([named('open-movie.mkv').directory, named('open-movie.mkv').status], ['/media', 'stopped']);
 });
 
-test('an add refuses a directory or a link rtorrent cannot take, the whole batch before any of it', () => {
+test('an add refuses a directory rtorrent cannot take for the whole batch, a link for itself alone', () => {
   const { ok, call, refused, upload, torrents, named } = setup();
   const count = torrents().length;
   const file = { name: 'torrents', filename: 'held.torrent', data: torrentFile({ name: 'held.iso', length: 20_000 }) };
@@ -310,7 +310,6 @@ test('an add refuses a directory or a link rtorrent cannot take, the whole batch
   for (const [parts, error] of [
     [[file, { name: 'directory', value: `/downloads/${CLAPPER}` }], `"directory" ${BEYOND}`],
     [[file, { name: 'directory', value: '/' }], ROOT],
-    [[file, { name: 'urls', value: `https://example.org/a.torrent\n${magnet}&dn=${CLAPPER}` }], `"urls" ${BEYOND}`],
   ] as Array<[UploadPart[], string]>) {
     const answer = upload(parts);
     assert.deepEqual([answer.status, answer.body], [400, { error }]);
@@ -329,6 +328,16 @@ test('an add refuses a directory or a link rtorrent cannot take, the whole batch
   assert.equal(named('held.iso').directory, '/downloads');
   ok('POST', 'torrents/url', { url: `${magnet}&dn=quiet.iso`, directory: '  ', start: false });
   assert.equal(named('1123456789ABCDEF0123456789ABCDEF01234567.meta').directory, '/config/session');
+  // A link concerns itself alone: one rtorrent cannot be sent fails as its own item, and the rest are added.
+  const beside = { name: 'torrents', filename: 'beside.torrent', data: torrentFile({ name: 'beside.iso', length: 30_000 }) };
+  const clapped = `magnet:?xt=urn:btih:2123456789abcdef0123456789abcdef01234567&dn=films ${CLAPPER}`;
+  const fine = 'magnet:?xt=urn:btih:3123456789abcdef0123456789abcdef01234567&dn=fine.iso';
+  const mixed = upload([beside, { name: 'urls', value: `${clapped}\n\n${fine}` }, { name: 'start', value: '0' }]);
+  assert.deepEqual([mixed.status, mixed.body],
+    [200, { added: 2, errors: [`${clapped}: "urls" ${BEYOND}`], failedFiles: [], failedUrls: [0] }]);
+  assert.equal(named('beside.iso').status, 'stopped');
+  assert.equal(named('3123456789ABCDEF0123456789ABCDEF01234567.meta').isMeta, true);
+  assert.ok(!torrents().some((t) => t.hash === '2123456789ABCDEF0123456789ABCDEF01234567'), 'the link refused was added');
 });
 
 test('a setting\'s text rtorrent cannot take is refused by name, and the patch with it', () => {

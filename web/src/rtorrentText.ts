@@ -53,8 +53,8 @@ export function directoryProblem(text: string): string | null {
 
 /**
  * What is wrong with a list of links, one per line, or null: the first line
- * rtorrent cannot be sent, by its number in the field (the server's
- * uploadURLs refuses the whole list for it).
+ * rtorrent cannot be sent, by its number in the field (the server's upload
+ * would fail that link, on its own).
  */
 export function linesProblem(text: string): string | null {
   const lines = text.split(/\r\n|\r|\n/);

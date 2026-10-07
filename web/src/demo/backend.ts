@@ -214,11 +214,10 @@ function checkLoadOptions(options: AddOptions): void {
   }
 }
 
-/** The non-blank lines of the "urls" field, which may be absent or null; one rtorrent cannot be sent refuses them all. */
+/** The non-blank lines of the "urls" field, which may be absent or null; one rtorrent cannot be sent fails on its own (upload). */
 function uploadUrls(body: Record<string, unknown>): string[] {
   const value = body.urls ?? '';
-  const lines = text(value, 'urls', true).split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean);
-  return lines.map((line) => rtorrentText(line, 'urls'));
+  return text(value, 'urls', true).split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean);
 }
 
 /** A group as rtorrent can hold it: a name it takes, and whole KiB/s rounded up (quirk 3). */
@@ -638,7 +637,8 @@ export class DemoServer {
     });
     urls.forEach((link, index) => {
       try {
-        this.addLink(link, options);
+        // A link rtorrent cannot be sent concerns that link alone: it fails as its own item.
+        this.addLink(rtorrentText(link, 'urls'), options);
       } catch (error) {
         if (!(error instanceof HttpError)) throw error;
         result.failedUrls.push(index);

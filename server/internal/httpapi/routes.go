@@ -350,7 +350,15 @@ func (s *Server) upload(c *call) error {
 		}
 	}
 	for index, link := range urls {
-		if err := s.svc.AddTorrentURL(c.ctx, link, options); err != nil {
+		// A link rtorrent cannot be sent as text concerns that link alone: it
+		// fails as its own item, before rtorrent is asked, and the rest are
+		// added. Only the directory, which every item carries, refuses the
+		// batch (loadOptions).
+		err := validate.RtorrentText(link, "urls")
+		if err == nil {
+			err = s.svc.AddTorrentURL(c.ctx, link, options)
+		}
+		if err != nil {
 			result.FailedURLs = append(result.FailedURLs, index)
 			result.Errors = append(result.Errors, link+": "+err.Error())
 		}

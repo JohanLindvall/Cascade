@@ -242,8 +242,8 @@ func loadOptions(body map[string]any) (contracts.LoadOptions, error) {
 var lineBreaks = regexp.MustCompile(`[\r\n]+`)
 
 // uploadURLs is the non-blank lines of the upload's "urls" field, which may
-// be absent or null. Each reaches rtorrent as text: a line that cannot is
-// refused before any of the batch is added.
+// be absent or null. One rtorrent cannot be sent fails on its own, as an
+// item of the upload's answer (Server.upload), not here for the batch.
 func uploadURLs(body map[string]any) ([]string, error) {
 	value := body["urls"]
 	if value == nil {
@@ -256,9 +256,6 @@ func uploadURLs(body map[string]any) ([]string, error) {
 	urls := []string{}
 	for _, line := range lineBreaks.Split(text, -1) {
 		if line = validate.Trim(line); line != "" {
-			if err := validate.RtorrentText(line, "urls"); err != nil {
-				return nil, err
-			}
 			urls = append(urls, line)
 		}
 	}

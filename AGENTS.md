@@ -648,11 +648,14 @@ directory or label, or for magnets and URLs. Because the drop path has no dialog
   quotes and backslashes are escaped but a line break could end the command and start another,
   so a directory with a control character is refused (`checkLoadOptions`); the label goes in
   URL-encoded and cannot carry one.
-- The directory and every link reach rtorrent as XML-RPC text, so `loadOptions` and `uploadURLs`
-  refuse one it cannot be sent, and a directory of `/` (`validate.Directory`, see *Text rtorrent
-  cannot be sent* under Conventions), with a 400 for the whole batch before anything loads — each
-  file of the batch used to fail with xmlrpc-c's fault instead. An empty directory, or none, is
-  rtorrent's default: the Add dialog sends none when its field is empty.
+- The directory and every link reach rtorrent as XML-RPC text. The directory goes with every item,
+  so `loadOptions` refuses one it cannot be sent, and a directory of `/` (`validate.Directory`, see
+  *Text rtorrent cannot be sent* under Conventions), with a 400 for the whole batch before anything
+  loads — each file of the batch used to fail with xmlrpc-c's fault instead. A link concerns itself
+  alone: one rtorrent cannot be sent fails as its own item (`upload` in `routes.go`), named in
+  `errors` and `failedUrls`, and the rest of the batch is added — refusing the batch for it lost
+  every file and link beside it. An empty directory, or none, is rtorrent's default: the Add dialog
+  sends none when its field is empty.
 
 Failures come back per file in the upload response and are toasted by the UI.
 The response also identifies failed file and URL indices, so the Add dialog retains only failures
@@ -960,13 +963,15 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   stopped; a settings patch lost every setting with the one. The rule is `validate.Sendable` (also
   what `rtorrent.Folder` asks of a folder it would send back), and every field rtorrent is sent as
   text goes through `validate.RtorrentString`, `RtorrentText` or `Directory`: a directory, the
-  Add dialog's links, a tracker URL, the throttle group, a string setting (`coerce`), the listing's
+  Add dialog's links (each its own failure in an upload, not the batch's), a tracker URL, the
+  throttle group, a string setting (`coerce`), the listing's
   view. A label is exempt — it is sent URL-encoded — and so are the API console and `/RPC2`, where
   rtorrent's fault is the answer. A JSON body's unpaired surrogate escape is decoded to U+FFFD
   before any of this sees it, so the web UI refuses one itself. The UI holds each such field as
   typed (`web/src/rtorrentText.ts`, worded as the server words it: the prompt's `validate`, the
-  Add dialog, the settings dialog's text fields, the Trackers tab), and a dropped link it cannot
-  send is named rather than sent; the demo answers as the server does (`demo/validate.ts`).
+  Add dialog, the settings dialog's text fields, the Trackers tab); a dropped link, which no field
+  holds, comes back as its own failure and is toasted like any other. The demo answers as the
+  server does (`demo/validate.ts`).
 - **A change runs to its end once it is sent.** The `api` adapter (`request.go`) detaches every
   request but GET, HEAD and OPTIONS from its context (`context.WithoutCancel`), `/RPC2` does the
   same, and the service's mutations detach again (`detached`): a throttle change stops the torrent,

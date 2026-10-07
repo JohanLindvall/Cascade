@@ -31,9 +31,10 @@ export function AddDialog({ onClose, defaultDirectory, labels }: AddDialogProps)
   const inputRef = useRef<HTMLInputElement>(null);
   const labelListId = useId();
   const toast = useToast();
-  // What the server would refuse the whole batch for (validate.Directory,
-  // uploadURLs) is held here, as typed. An empty directory is rtorrent's
-  // default, and is not sent at all.
+  // What the server would refuse is held here, as typed, to be put right
+  // before anything is added: a directory, which refuses the whole batch
+  // (validate.Directory), and a link line, which would fail on its own. An
+  // empty directory is rtorrent's default, and is not sent at all.
   const directoryError = directoryProblem(directory);
   const urlsError = linesProblem(urls);
   const invalid = directoryError !== null || urlsError !== null;

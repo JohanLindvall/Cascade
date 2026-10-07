@@ -529,8 +529,9 @@ def check_what_rtorrent_cannot_take(cascade):
     touched, so a running torrent keeps running. Text its XML-RPC layer cannot
     carry — xmlrpc-c faults on a character beyond U+FFFF, and a directory
     change used to stop and close the torrent before the fault came back — is
-    a 400 naming the field, wherever it is typed; so is the root as a
-    directory, which rtorrent strips to nothing and reads as "."."""
+    a 400 naming the field, wherever it is typed, but for a link of an upload,
+    which fails as an item of its own while the rest are added; so is the root
+    as a directory, which rtorrent strips to nothing and reads as "."."""
     tag = uuid.uuid4().hex[:8]
     downloads = cascade.rpc('directory.default').rstrip('/') or '/'
     data = tag.encode() * 2048
@@ -539,6 +540,10 @@ def check_what_rtorrent_cannot_take(cascade):
     info_hash = hashlib.sha1(bencode(info)).hexdigest().upper()
     magnet_hash = hashlib.sha1(tag.encode()).hexdigest().upper()
     magnet = f'magnet:?xt=urn:btih:{magnet_hash}&dn=smoke-{tag}'
+    clapped_hash = hashlib.sha1(f'{tag} clapped'.encode()).hexdigest().upper()
+    clapped = f'magnet:?xt=urn:btih:{clapped_hash}&dn=smoke-{tag}&tr={EMOJI}'
+    other = {**info, 'name': f'held {tag}.bin'}
+    other_hash = hashlib.sha1(bencode(other)).hexdigest().upper()
 
     def refused(path, body, error, method='POST'):
         reply = cascade.api(path, body, method, expected=400)
@@ -557,24 +562,36 @@ def check_what_rtorrent_cannot_take(cascade):
         assert held(cascade, info_hash) == before, held(cascade, info_hash)
         assert cascade.rpc('d.priority', info_hash) != 0, 'a refused patch changed a field before the bad one'
 
-        # In an add the whole batch is refused, before any of it is loaded.
-        other = {**info, 'name': f'held {tag}.bin'}
+        # An add's directory, which every item of the batch carries, refuses the whole batch before
+        # any of it is loaded.
         again = bencode({'announce': 'http://tracker.invalid/announce', 'info': other})
         for fields, error in [({'directory': f'{downloads}/{EMOJI}'}, f'"directory" {BEYOND}'),
-                              ({'directory': '/'}, ROOT),
-                              ({'urls': f'{magnet}&tr={EMOJI}'}, f'"urls" {BEYOND}')]:
+                              ({'directory': '/'}, ROOT)]:
             assert upload_torrents(cascade, again, expected=400, **fields) == {'error': error}, fields
         refused('/api/torrents/url', {'url': f'{magnet}&tr={EMOJI}'}, f'"url" {BEYOND}')
         refused('/api/torrents/url', {'url': magnet, 'directory': '//'}, ROOT)
         loaded = listed(cascade)
-        assert hashlib.sha1(bencode(other)).hexdigest().upper() not in loaded and magnet_hash not in loaded, \
-            'a refused add loaded something'
+        assert other_hash not in loaded and magnet_hash not in loaded, 'a refused add loaded something'
         refused(f'/api/torrents/{info_hash}/trackers', {'url': f'udp://tracker.invalid:6969/{EMOJI}'}, f'"url" {BEYOND}')
         refused('/api/settings', {'directory': f'{downloads}/{EMOJI}'}, f'"directory" {BEYOND}')
         assert cascade.rpc('directory.default').rstrip('/') == downloads.rstrip('/')
         refused('/api/torrents?view=' + urllib.parse.quote(EMOJI), None, f'"view" {BEYOND}', 'GET')
+
+        # A link concerns itself alone: one rtorrent cannot be sent fails as its own item, named,
+        # and the file and the link beside it are added.
+        reply = upload_torrents(cascade, again, urls=f'{clapped}\n{magnet}', start='0')
+        assert reply == {'added': 2, 'errors': [f'{clapped}: "urls" {BEYOND}'], 'failedFiles': [],
+                         'failedUrls': [0]}, reply
+        for _ in range(20):
+            loaded = listed(cascade)
+            if other_hash in loaded and magnet_hash in loaded:
+                break
+            time.sleep(0.25)
+        assert other_hash in loaded and magnet_hash in loaded, 'the items beside the link refused were not added'
+        assert clapped_hash not in loaded, 'the link refused was added'
     finally:
-        remove_torrent(cascade, info_hash)
+        for added in (info_hash, other_hash, magnet_hash, clapped_hash):
+            remove_torrent(cascade, added)
 
 
 def check_fetching_metadata(cascade):
