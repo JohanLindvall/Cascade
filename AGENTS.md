@@ -714,9 +714,11 @@ widths are percentages so narrow windows squeeze rather than scroll; check with
 change height: a peer's Flags cell and a tracker's State cell (`.flags`) are one tag tall and show
 the tags that fit, whole, then an ellipsis. `flags.ts` lists what is wrong first, so that is what
 shows, and the cell's title and the expanded row name every flag (a touch screen has no title).
-Rows must not trade places either: `sortTorrents` breaks every tie by name and then hash, and
-names the collator calls equal ("Movie"/"movie", "Episode 07"/"Episode 7") share a rank, so the
-hash decides rather than the order rtorrent listed them in.
+A space drawn zero wide (`.flag-gap`) parts the tags, or the accessible name, `innerText` and a
+copy run them into one word ("bannedsnub"). Rows must not trade places either: `sortTorrents`
+breaks every tie by name and then hash, and names the collator calls equal ("Movie"/"movie",
+"Episode 07"/"Episode 7") share a rank, so the hash decides rather than the order rtorrent listed
+them in.
 
 **What the stream redraws must stay cheap.** The app renders on every delta, up to ten a second.
 The table's rows (`TorrentRow`, `TorrentCard`) and the fetched detail tabs (`FilesTab`, `PeersTab`,

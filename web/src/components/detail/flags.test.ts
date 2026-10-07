@@ -8,7 +8,8 @@
  * jumped with it. The cell shows the tags it has room for and an ellipsis
  * for the rest, so the order decides which are left out, and the title names
  * them all. The node runner has no layout to measure (that was done in
- * Firefox), so this checks the order, the title and the rules they rest on.
+ * Firefox), so this checks the order, the title, the space between the tags
+ * and the rules they rest on.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -18,6 +19,8 @@ import { flagsTitle, peerFlags, trackerFlags, type Flag } from './flags.ts';
 
 const css = fs.readFileSync(new URL('../../styles.css', import.meta.url), 'utf8');
 const source = (path: string) => fs.readFileSync(new URL(path, import.meta.url), 'utf8');
+/** The body of Flags in parts.tsx, which the runner cannot load: it is JSX. */
+const flagsBody = () => /export function Flags\([^)]*\)[^{]*\{([\s\S]*?)\n\}/.exec(source('./parts.tsx'))?.[1] ?? '';
 
 /** The declarations of the top-level rule with exactly this selector. */
 function rule(selector: string): string {
@@ -166,8 +169,27 @@ test('the cell is one line as tall as a tag, under a line of the table text', ()
 test('no flags at all is the dash in the same box', () => {
   // A cell holding a bare dash and one holding tags differed by a fraction of
   // a pixel, so a peer's first flag still nudged its row.
-  const body = /export function Flags\([^)]*\)[^{]*\{([\s\S]*?)\n\}/.exec(source('./parts.tsx'))?.[1] ?? '';
+  const body = flagsBody();
   assert.equal(body.match(/\breturn\b/g)?.length, 1, 'Flags renders one box for every case');
   assert.match(body, /return \(\s*<span className="flags"/);
   assert.match(body, /'—'/);
+});
+
+test('a space parts the tags, drawn zero wide', () => {
+  // Inline tags back to back have no text between them, so the accessible
+  // name, innerText and a copy read a peer's "banned" and "snub" as
+  // "bannedsnub". A space before every tag but the first makes them words.
+  assert.match(flagsBody(), /\{i > 0 && <span className="flag-gap">\{' '\}<\/span>\}\s*<span className=\{flag\.tone/);
+  // It draws nothing, so the cell looks as it did without it. Its
+  // letter-spacing goes too: retro sets 0.02em on the body, which every
+  // element inherits as 0.27px.
+  const gap = '.flags > .flag-gap';
+  assert.equal(value(gap, 'font-size', ''), 0);
+  assert.equal(value(gap, 'letter-spacing', ''), 0);
+  // On top, as the tags are: on the baseline its 16px line hung below the box.
+  assert.match(rule(gap), /vertical-align:\s*top/);
+  // The 4px between tags stays the next tag's margin, not the space's, so an
+  // ellipsis sits against the last tag shown rather than 4px after it.
+  assert.equal(value('.flags > .tag ~ .tag', 'margin-left'), 4);
+  assert.doesNotMatch(rule(gap), /margin/);
 });

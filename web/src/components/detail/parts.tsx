@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 /** Pieces the detail tabs share: flag tags, expandable rows and their key/value blocks. */
-import { useCallback, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useState, type ReactNode } from 'react';
 import { flagsTitle, type Flag } from './flags';
 
 /**
@@ -9,17 +9,20 @@ import { flagsTitle, type Flag } from './flags';
  * dash for none in the same box, so no flag a poll brings or takes changes
  * the row's height, not even the first. One title on the box names them all,
  * those the ellipsis hides too; a title on each tag would show in its place
- * wherever a tag is hovered.
+ * wherever a tag is hovered. A space parts the tags, drawn zero wide
+ * (.flag-gap): inline tags back to back are one word in the accessible name,
+ * in innerText and in a copy ("bannedsnub").
  */
 export function Flags({ flags }: { flags: Flag[] }) {
   return (
     <span className="flags" title={flagsTitle(flags)}>
       {flags.length === 0
         ? '—'
-        : flags.map((flag) => (
-            <span key={flag.label} className={flag.tone ? `tag ${flag.tone}` : 'tag'}>
-              {flag.label}
-            </span>
+        : flags.map((flag, i) => (
+            <Fragment key={flag.label}>
+              {i > 0 && <span className="flag-gap">{' '}</span>}
+              <span className={flag.tone ? `tag ${flag.tone}` : 'tag'}>{flag.label}</span>
+            </Fragment>
           ))}
     </span>
   );
