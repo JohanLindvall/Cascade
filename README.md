@@ -642,9 +642,13 @@ rtorrent takes a single SCGI listener, so the port replaces the unix socket rath
 it, and Cascade follows it there — over `127.0.0.1:5000` for a wildcard bind like this one, unless
 `CASCADE_SCGI` says otherwise. The bind defaults to `127.0.0.1`, the loopback, which a published
 port does not reach — it arrives on the container's own address — hence `0.0.0.0`, which also
-opens the port to the container's network. **SCGI is unauthenticated** — anyone who reaches it
-has full control of rtorrent and can run commands in the container, with its volumes, through
-`execute`. Keep it on a private network, or prefer `/RPC2`, which sits behind Basic auth.
+opens the port to the container's network. Even the loopback is shared by everything in the
+container's network namespace, whatever its user: the host's processes under `--network host`,
+and every container joined to it with `--network container:…`, such as a VPN sidecar; the unix
+socket, with the default umask, admits only `PUID` and root. **SCGI is unauthenticated** — anyone
+who reaches it has full control of rtorrent and can run commands in the container, with its
+volumes, through `execute`. Keep it on a private network, or prefer `/RPC2`, which sits behind
+Basic auth.
 
 ### The state stream
 
