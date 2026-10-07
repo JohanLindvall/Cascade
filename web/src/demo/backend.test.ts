@@ -369,6 +369,24 @@ test('settings: a patch is one multicall — every setter runs, and the first re
   assert.equal(ok<Record<string, unknown>>('GET', 'settings').pex, false);
 });
 
+test('dht.statistics: the shape 0.16 answers, and the routing table size the status reports from it', () => {
+  const { ok } = setup();
+  const statistics = () => ok<{ ok: boolean; result: Record<string, unknown> }>('POST', 'rpc', { method: 'dht.statistics' }).result;
+  const running = statistics();
+  assert.deepEqual(Object.keys(running).sort(), [
+    'active', 'buckets', 'bytes_read', 'bytes_written', 'cycle', 'dht', 'errors_caught', 'errors_received', 'nodes', 'peers',
+    'peers_max', 'queries_received', 'queries_sent', 'replies_received', 'throttle', 'torrents',
+  ]);
+  assert.equal(running.active, 1);
+  assert.ok(Number(running.nodes) > 0 && Number(running.nodes) <= 8 * Number(running.buckets));
+  assert.deepEqual([running.bytes_read, running.bytes_written], [0, 0], '0.16 no longer counts them');
+  assert.equal(ok<StateResponse>('GET', 'state').status.dhtNodes, running.nodes);
+  // Stopped, rtorrent leaves the counters out, and the status reads no nodes.
+  ok('POST', 'settings', { dhtMode: 'off' });
+  assert.deepEqual(statistics(), { active: 0, dht: 'off', throttle: '' });
+  assert.equal(ok<StateResponse>('GET', 'state').status.dhtNodes, 0);
+});
+
 test('throttle groups: names checked, rates rounded up to whole KiB/s, unknown ones a 404', () => {
   const { ok, refused, call } = setup();
   refused('POST', 'throttles', { name: 'bad name', up: 1, down: 1 }, 400, 'throttle name must be 1-32 chars of [A-Za-z0-9_.-] and cannot be NULL, . or ..');

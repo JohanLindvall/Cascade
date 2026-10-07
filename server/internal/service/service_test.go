@@ -318,11 +318,20 @@ func TestThePollIntervalPreferenceOverridesTheServerDefault(t *testing.T) {
 }
 
 func TestDHTStatisticsAreOnlyAskedForWhenTheBackendHasThem(t *testing.T) {
-	client := backend("dht.statistics").Answer("dht.statistics", map[string]any{"active_nodes": 42})
-	s := newService(t, client, nil)
-	result, err := s.status(ctx, []contracts.Torrent{})
-	if err != nil || result.DHTNodes != 42 || len(client.CallsTo("dht.statistics")) != 1 {
-		t.Fatalf("%d %v", result.DHTNodes, err)
+	for want, answer := range map[int64]map[string]any{
+		// What 0.16.25 answered with DHT running (0.9.8 has the same keys):
+		// the routing table's node count is "nodes".
+		73: {"active": 1, "buckets": 14, "bytes_read": 0, "bytes_written": 0, "cycle": 2, "dht": "on", "errors_caught": 2,
+			"errors_received": 6, "nodes": 73, "peers": 0, "peers_max": 0, "queries_received": 3, "queries_sent": 263,
+			"replies_received": 121, "throttle": "", "torrents": 0},
+		// With DHT off rtorrent leaves the counters out altogether.
+		0: {"active": 0, "dht": "off", "throttle": ""},
+	} {
+		client := backend("dht.statistics").Answer("dht.statistics", answer)
+		result, err := newService(t, client, nil).status(ctx, []contracts.Torrent{})
+		if err != nil || result.DHTNodes != want || len(client.CallsTo("dht.statistics")) != 1 {
+			t.Fatalf("%d, want %d: %v", result.DHTNodes, want, err)
+		}
 	}
 	bare := backend()
 	if _, err := newService(t, bare, nil).status(ctx, []contracts.Torrent{}); err != nil {

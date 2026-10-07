@@ -544,11 +544,19 @@ export class Session {
     return Math.round(262 + 31 * Math.sin(at / 300) + 12 * Math.sin(at / 47 + 1.3));
   }
 
+  /**
+   * dht.statistics as 0.16 answers it. While DHT runs: its counters, the
+   * routing table's size as "nodes" (what the status reads), a bucket for
+   * every eight nodes at most, cycle 1 until the first refreshes, and the
+   * byte counts 0.16 no longer keeps. While it does not: only the mode, the
+   * flag and the throttle name.
+   */
   dhtStatistics(): Record<string, number | string> {
     const nodes = this.dhtNodes();
+    if (nodes === 0) return { active: 0, dht: this.settings.dhtMode, throttle: '' };
     return {
-      active: nodes > 0 ? 1 : 0, buckets: nodes > 0 ? 24 : 0, bytes_read: Math.round(this.sessionDown / 9100),
-      bytes_written: Math.round(this.sessionUp / 15200), cycle: Math.floor((this.time / 1000 - this.startedAt) / 900),
+      active: 1, buckets: Math.ceil(nodes / 7), bytes_read: 0, bytes_written: 0,
+      cycle: Math.max(1, Math.floor((this.time / 1000 - this.startedAt) / 900)),
       dht: this.settings.dhtMode, errors_caught: 2, errors_received: 37, nodes, peers: nodes * 3 + 41, peers_max: 412,
       queries_received: 18_211, queries_sent: 25_904, replies_received: 21_337, throttle: '', torrents: this.all().filter((t) => !t.isPrivate).length,
     };
