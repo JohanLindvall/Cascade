@@ -122,14 +122,17 @@ RESOURCE LIMITS
   RT_SEND_BUFFER             Socket send buffer, bytes [rtorrent default]
 
 RPC
-  RT_SCGI_SOCKET             Unix socket rtorrent listens on [/run/rtorrent/rpc.socket]
-  RT_SCGI_PORT               Also listen for SCGI on this TCP port (unauthenticated — keep it
-                             private) [unset]
-  RT_SCGI_BIND               Interface for RT_SCGI_PORT [127.0.0.1]
+  RT_SCGI_SOCKET             Unix socket rtorrent listens on, unless RT_SCGI_PORT is set
+                             [/run/rtorrent/rpc.socket]
+  RT_SCGI_PORT               Listen for SCGI on this TCP port instead of the socket
+                             (unauthenticated — keep it private) [unset]
+  RT_SCGI_BIND               Address RT_SCGI_PORT listens on; 0.0.0.0 lets a published port
+                             reach it [127.0.0.1]
   RT_XMLRPC_SIZE_LIMIT       Max XML-RPC request size, bytes (raises the .torrent upload
                              ceiling) [16777216]
   CASCADE_SCGI               Endpoint the web server talks to — a path, or host:port for a
-                             remote rtorrent [RT_SCGI_SOCKET]
+                             remote rtorrent [RT_SCGI_SOCKET, or RT_SCGI_PORT (on 127.0.0.1 for
+                             a wildcard RT_SCGI_BIND)]
 
 WEB SERVER
   WEB_PORT                   HTTP port [8080]

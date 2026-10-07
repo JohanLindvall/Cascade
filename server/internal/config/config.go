@@ -161,6 +161,9 @@ func Load(getenv func(string) string) (cfg Config, err error) {
 		cfg.DeleteRoots = append(cfg.DeleteRoots, resolved)
 	}
 
+	// In the image the entrypoint always exports CASCADE_SCGI — the socket, or
+	// the RT_SCGI_PORT listener it had rtorrent open instead — so this
+	// fallback is for a server run on its own.
 	target, scgiErr := scgi.ParseTarget(str("CASCADE_SCGI", str("RT_SCGI_SOCKET")))
 	if scgiErr != nil {
 		fail(scgiErr)

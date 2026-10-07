@@ -47,10 +47,13 @@ vulnerability:
   including `execute.*`, which runs programs as the user rtorrent runs as (`PUID`) inside the
   container, with its volumes. It is on by default, because existing rtorrent tooling talks to
   `/RPC2`; set `CASCADE_ALLOW_RAW_RPC=0` if nothing needs it.
-- **rtorrent's own SCGI socket has no authentication at all.** It is a unix socket inside the
-  container (`RT_SCGI_SOCKET`); whoever reaches it has raw RPC without Cascade in the way. When
-  `CASCADE_SCGI` points Cascade at an rtorrent elsewhere, that link is unauthenticated SCGI over
-  the network.
+- **rtorrent's own SCGI interface has no authentication at all**: whoever reaches it has raw
+  RPC without Cascade in the way. By default it is a unix socket inside the container
+  (`RT_SCGI_SOCKET`). `RT_SCGI_PORT` replaces it with a TCP port on `RT_SCGI_BIND`: `127.0.0.1`
+  unless set, the loopback, which neither other containers nor a published port reach; bound
+  wider, such as `0.0.0.0`, the port is open to the container's network, and once published, to
+  whoever reaches it on the host. When `CASCADE_SCGI` points Cascade at an rtorrent elsewhere,
+  that link is unauthenticated SCGI over the network.
 - **Deleting data is confined** to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and
   `CASCADE_DELETE_ROOTS`, as set when the container starts (a default directory changed in the
   settings dialog is not added); `CASCADE_ALLOW_DATA_DELETE=0` forbids it altogether. That covers

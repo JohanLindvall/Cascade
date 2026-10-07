@@ -235,9 +235,12 @@ A value that does not parse stops the container at start, with a message naming 
 rather than quietly becoming a default. Every on/off option — the `Set 0`/`Set 1` switches and
 the rtorrent settings marked yes/no — takes `1`, `true`, `yes` or `on` and `0`, `false`, `no` or
 `off`, in any case. `RT_UMASK` is octal, as `umask` reads it (`22` means `0022`), and
-`RT_WATCH_INTERVAL` takes seconds or a time such as `00:00:10`. With your own `RT_CONFIG_FILE`
-kept, what only the generated `rtorrent.rc` would carry — the umask, the watch interval, the
-random-port switch, the SCGI port — is ignored rather than checked.
+`RT_WATCH_INTERVAL` takes seconds or a time such as `00:00:10`; `RT_SCGI_PORT` is a plain decimal
+port, since rtorrent would read `05000` as octal. With your own `RT_CONFIG_FILE` kept, what only
+the generated `rtorrent.rc` would carry — the umask, the watch interval, the random-port switch —
+is ignored rather than checked. The SCGI settings are not: your rc has to open the listener they
+describe, `RT_SCGI_SOCKET` or, with `RT_SCGI_PORT` set, that port on `RT_SCGI_BIND`, because that
+is what the container waits for and points Cascade at.
 
 <!-- generated: options -->
 ### Paths and identity
@@ -346,11 +349,11 @@ Rates are in KiB/s; 0 means unlimited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `RT_SCGI_SOCKET` | `/run/rtorrent/rpc.socket` | Unix socket rtorrent listens on |
-| `RT_SCGI_PORT` | unset | Also listen for SCGI on this TCP port (unauthenticated — keep it private) |
-| `RT_SCGI_BIND` | `127.0.0.1` | Interface for RT_SCGI_PORT |
+| `RT_SCGI_SOCKET` | `/run/rtorrent/rpc.socket` | Unix socket rtorrent listens on, unless RT_SCGI_PORT is set |
+| `RT_SCGI_PORT` | unset | Listen for SCGI on this TCP port instead of the socket (unauthenticated — keep it private) |
+| `RT_SCGI_BIND` | `127.0.0.1` | Address RT_SCGI_PORT listens on; 0.0.0.0 lets a published port reach it |
 | `RT_XMLRPC_SIZE_LIMIT` | `16777216` | Max XML-RPC request size, bytes (raises the .torrent upload ceiling) |
-| `CASCADE_SCGI` | RT_SCGI_SOCKET | Endpoint the web server talks to — a path, or host:port for a remote rtorrent |
+| `CASCADE_SCGI` | RT_SCGI_SOCKET, or RT_SCGI_PORT (on 127.0.0.1 for a wildcard RT_SCGI_BIND) | Endpoint the web server talks to — a path, or host:port for a remote rtorrent |
 
 ### Web server
 
@@ -633,9 +636,14 @@ answers in JSON). Either refuses a whole number outside the 64-bit range with a 
 rtorrent crashes on such an `<i8>` rather than faulting, and refuses `<double>` altogether, so
 there is nothing safe to send.
 
-To expose rtorrent's own SCGI socket instead, set `RT_SCGI_PORT=5000` and
-`RT_SCGI_BIND=0.0.0.0`, then publish the port. **SCGI is unauthenticated** — anyone who reaches
-it has full control of rtorrent and can run commands in the container, with its volumes, through
+To expose rtorrent's own SCGI interface instead, set `RT_SCGI_PORT=5000` and
+`RT_SCGI_BIND=0.0.0.0`, then publish the port (`-p 127.0.0.1:5000:5000` keeps it to the host).
+rtorrent takes a single SCGI listener, so the port replaces the unix socket rather than joining
+it, and Cascade follows it there — over `127.0.0.1:5000` for a wildcard bind like this one, unless
+`CASCADE_SCGI` says otherwise. The bind defaults to `127.0.0.1`, the loopback, which a published
+port does not reach — it arrives on the container's own address — hence `0.0.0.0`, which also
+opens the port to the container's network. **SCGI is unauthenticated** — anyone who reaches it
+has full control of rtorrent and can run commands in the container, with its volumes, through
 `execute`. Keep it on a private network, or prefer `/RPC2`, which sits behind Basic auth.
 
 ### The state stream

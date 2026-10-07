@@ -280,14 +280,28 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    Use the same trick for anything else that genuinely must be in the rc.
 
    The few values the rc carries as they are — `RT_PORT_RANGE`, `RT_UMASK`, `RT_WATCH_INTERVAL`,
-   `RT_SCGI_PORT` — are checked by `validate_options` before anything is written, so a bad one
-   stops the start by name rather than as a parse error thirty seconds later. The patterns follow
-   what rtorrent's rc parser takes (checked on 0.9.8 and 0.16.24), not a tidier subset, so nothing
-   that started rtorrent before is refused now. rtorrent reads a number the way C does: a bare
-   `22` was decimal (umask 0026), so `render_rc` writes the umask with a leading `0`, and
-   `RT_PORT_RANDOM` is written as `yes`/`no` because rtorrent refuses `on`/`off`. With a supplied
-   rc kept (`keeps_supplied_rc`), only `RT_PORT_RANGE` (which the port probe uses either way) and
-   the booleans are checked.
+   `RT_SCGI_PORT`, `RT_SCGI_BIND` — are checked by `validate_options` before anything is written,
+   so a bad one stops the start by name rather than as a parse error thirty seconds later. The
+   patterns follow what rtorrent's rc parser takes (checked on 0.9.8 and 0.16.24), not a tidier
+   subset, so nothing that started rtorrent before is refused now. rtorrent reads a number the way
+   C does: a bare `22` was decimal (umask 0026), so `render_rc` writes the umask with a leading
+   `0`, and `RT_PORT_RANDOM` is written as `yes`/`no` because rtorrent refuses `on`/`off`. The SCGI
+   pair is held tighter, since no `RT_SCGI_PORT` ever started rtorrent before (below) and the
+   server has to read them as rtorrent does: the port to plain decimal from 1 to 65535 (`05000`
+   is port 2560 to rtorrent's `%i`), the bind to addresses and names the two read alike. With a
+   supplied rc kept (`keeps_supplied_rc`), only `RT_PORT_RANGE` (which the port probe uses either
+   way), the SCGI port and bind (which say what to wait for and where the server connects) and the
+   booleans are checked.
+
+   rtorrent accepts one SCGI listener: a second `network.scgi.open_*` stops the rc with "SCGI
+   already enabled." (0.9.8 and 0.16 alike). The rc used to open the socket and then the port, so
+   `RT_SCGI_PORT` crash-looped rtorrent behind a healthy container; the port now *replaces* the
+   socket (`scgi_listener`), `CASCADE_SCGI` defaults to whichever was opened (`127.0.0.1` for a
+   wildcard bind), and `wait_for_socket` waits for that one — for a port, a LISTEN entry in
+   `/proc/net/tcp` or `tcp6` (`PROC_NET` in the tests) — and only while rtorrent still runs: one
+   that died at a later rc line leaves its socket file behind, which is how that crash loop passed
+   the wait. A supplied rc is not read for its listener; it has to open the one the variables
+   describe. The supervisor runs the same wait after a restart, without the exit.
 
 7. **A setter existing does not mean it works.** 0.16 registers
    `network.http.max_total_connections.set` but the value never changes, so `maxHttpOpen` maps only

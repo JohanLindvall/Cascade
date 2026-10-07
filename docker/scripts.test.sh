@@ -74,7 +74,14 @@ cat > "$entry/bin/cascade" <<'STUB'
 #!/bin/sh
 [ "$1" = log-scopes ] && echo "${STUB_SCOPES:-}"
 STUB
-chmod +x "$entry/bin/rtorrent" "$entry/bin/cascade"
+# pidof says whether an rtorrent runs (STUB_RUNNING), and sleep returns at
+# once, so the wait's 30 seconds pass in no time.
+cat > "$entry/bin/pidof" <<'STUB'
+#!/bin/sh
+[ "${STUB_RUNNING:-0}" = 1 ]
+STUB
+printf '#!/bin/sh\n' > "$entry/bin/sleep"
+chmod +x "$entry/bin/rtorrent" "$entry/bin/cascade" "$entry/bin/pidof" "$entry/bin/sleep"
 echo '{}' > "$entry/state.json"
 # with_entrypoint <shell code>: run it with the functions loaded. A shell of
 # its own rather than a subshell: under `if`, a subshell runs with set -e
@@ -99,6 +106,19 @@ expect_ok() {
 expect_refused() {
   if with_entrypoint "$2" >/dev/null 2>&1; then
     echo "accepted: $1" >&2
+    exit 1
+  fi
+}
+# refused_by <variable> <shell code>: a case the entrypoint must stop, naming
+# that variable.
+refused_by() {
+  if with_entrypoint "$2" >/dev/null 2>"$fixture/stderr"; then
+    echo "accepted: $2" >&2
+    exit 1
+  fi
+  if ! grep -q "FATAL: $1 must be" "$fixture/stderr"; then
+    cat "$fixture/stderr" >&2
+    echo "refused, but not for $1: $2" >&2
     exit 1
   fi
 }
@@ -178,6 +198,104 @@ if grep -q watch_directory "$rc"; then
 fi
 expect_ok 'RT_WATCH_ENABLE=Yes' 'RT_WATCH_ENABLE=Yes; apply_defaults; pick_port_commands; write_rc'
 grep -q watch_directory "$rc" || { echo 'RT_WATCH_ENABLE=Yes wrote no watch directory' >&2; exit 1; }
+
+# rtorrent takes one SCGI listener and stops its rc at a second, so
+# RT_SCGI_PORT replaces the unix socket, and the server follows it there: a
+# wildcard bind on the loopback, any other address as it is, unless
+# CASCADE_SCGI names an endpoint itself. scgi <assignments> prints the
+# CASCADE_SCGI the entrypoint exports, and renders rtorrent.rc on the way.
+scgi() {
+  with_entrypoint "$1
+    { apply_defaults; validate_options; pick_port_commands; write_rc; } >/dev/null
+    printf '%s\n' \"\$CASCADE_SCGI\"" 2>"$fixture/stderr" ||
+    { cat "$fixture/stderr" >&2; echo "failed: $1" >&2; exit 1; }
+}
+# check_scgi <assignments> <CASCADE_SCGI> <the one SCGI line of rtorrent.rc>
+check_scgi() {
+  got="$(scgi "$1")"
+  [ "$got" = "$2" ] || { echo "$1: CASCADE_SCGI is \"$got\", not \"$2\"" >&2; exit 1; }
+  [ "$(grep -c '^network\.scgi\.open' "$rc")" = 1 ] || { echo "$1: not one SCGI listener" >&2; cat "$rc" >&2; exit 1; }
+  grep -Fxq -- "$3" "$rc" || { echo "$1: rtorrent.rc lacks: $3" >&2; cat "$rc" >&2; exit 1; }
+}
+check_scgi : /run/rtorrent/rpc.socket 'network.scgi.open_local = "/run/rtorrent/rpc.socket"'
+check_scgi 'RT_SCGI_SOCKET=/srv/rt.sock' /srv/rt.sock 'network.scgi.open_local = "/srv/rt.sock"'
+check_scgi 'RT_SCGI_PORT=5000' 127.0.0.1:5000 'network.scgi.open_port = "127.0.0.1:5000"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=' 127.0.0.1:5000 'network.scgi.open_port = "127.0.0.1:5000"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=0.0.0.0' 127.0.0.1:5000 'network.scgi.open_port = "0.0.0.0:5000"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=::' 127.0.0.1:5000 'network.scgi.open_port = "[::]:5000"'
+check_scgi 'RT_SCGI_PORT=65535 RT_SCGI_BIND=[::]' 127.0.0.1:65535 'network.scgi.open_port = "[::]:65535"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=10.0.0.5' 10.0.0.5:5000 'network.scgi.open_port = "10.0.0.5:5000"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=::1' '[::1]:5000' 'network.scgi.open_port = "[::1]:5000"'
+check_scgi 'RT_SCGI_PORT=1 RT_SCGI_BIND=rtorrent.lan' rtorrent.lan:1 'network.scgi.open_port = "rtorrent.lan:1"'
+check_scgi 'RT_SCGI_PORT=5000 RT_SCGI_BIND=0.0.0.0 CASCADE_SCGI=rt.internal:6000' rt.internal:6000 \
+  'network.scgi.open_port = "0.0.0.0:5000"'
+check_scgi 'CASCADE_SCGI=unix:/elsewhere.sock' unix:/elsewhere.sock 'network.scgi.open_local = "/run/rtorrent/rpc.socket"'
+# A supplied rc is not read for its listener: it has to open the one these
+# describe, which the wait and the server follow all the same, so they are
+# checked with it too, unlike what only a generated rc carries.
+got="$(scgi "RT_CONFIG_FILE=\"$mine\" RT_CONFIG_KEEP=1 RT_SCGI_PORT=5000 RT_SCGI_BIND=0.0.0.0")"
+[ "$got" = 127.0.0.1:5000 ] || { echo "a kept rc with RT_SCGI_PORT: CASCADE_SCGI is \"$got\"" >&2; exit 1; }
+[ "$(cat "$mine")" = '# my own rtorrent.rc' ] || { echo 'RT_SCGI_PORT rewrote a kept rc' >&2; exit 1; }
+refused_by RT_SCGI_PORT "RT_CONFIG_FILE=\"$mine\" RT_CONFIG_KEEP=1 RT_SCGI_PORT=x; apply_defaults; validate_options"
+
+# A port is decimal and from 1 to 65535: rtorrent reads it as C does, so
+# 05000 would be port 2560 to it and 0x1388 port 5000, against the server's
+# reading. A bind address is an address or a name — not one with its port,
+# not a wildcard rtorrent cannot resolve, not an IPv4 spelling the two read
+# apart — and both are checked only once RT_SCGI_PORT asks for a port.
+for good in 1 5000 65535; do
+  expect_ok "RT_SCGI_PORT=$good" "RT_SCGI_PORT=$good; apply_defaults; validate_options"
+done
+for bad in x 0 65536 99999 05000 0x1388 -1 5000x ' 5000' "5000${nl}execute=x"; do
+  refused_by RT_SCGI_PORT "RT_SCGI_PORT='$bad'; apply_defaults; validate_options"
+done
+for good in 0.0.0.0 127.0.0.1 255.255.255.255 :: '[::]' ::1 '[::1]' 'fe80::1%eth0' ::ffff:10.0.0.1 localhost \
+            rtorrent.lan my_host; do
+  expect_ok "RT_SCGI_BIND=$good" "RT_SCGI_PORT=5000 RT_SCGI_BIND='$good'; apply_defaults; validate_options"
+done
+for bad in 0.0.0.0:5000 '[::]:5000' localhost:5000 '*' 'local host' 256.0.0.1 127.1 0 01.2.3.4 '[]' \
+           '[localhost]' '::1]' 'a;b' "::${nl}execute=x"; do
+  refused_by RT_SCGI_BIND "RT_SCGI_PORT=5000 RT_SCGI_BIND='$bad'; apply_defaults; validate_options"
+done
+expect_ok 'RT_SCGI_BIND without RT_SCGI_PORT' "RT_SCGI_BIND='not used'; apply_defaults; validate_options"
+
+# The wait wants a running rtorrent and, for a port, a listener on it in the
+# kernel's tables, IPv4 or IPv6. What a restart finds there must not pass for
+# one: the last rtorrent's connections on 5000 (1388) in TIME_WAIT, and the
+# server's to it, beside the web server listening on 8080 (1F90).
+net="$entry/net"
+mkdir -p "$net"
+header='  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode'
+stale='   0: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 101 1 0000000000000000 100 0 0 10 0
+   1: 0100007F:1388 0100007F:C350 06 00000000:00000000 03:000016A8 00000000     0        0 0 3 0000000000000000
+   2: 0100007F:C351 0100007F:1388 01 00000000:00000000 00:00000000 00000000  1000        0 102 1 0000000000000000 20 4 30 10 -1'
+listen4='   3: 00000000:1388 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 103 1 0000000000000000 100 0 0 10 0'
+listen6='   0: 00000000000000000000000000000000:1388 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 104 1 0000000000000000 100 0 0 10 0'
+echo 'the last line of the log' > "$entry/rtorrent.log"
+# wait_case <up|down> <tcp entries> <tcp6 entries> <shell code>
+wait_case() {
+  printf '%s\n%s\n' "$header" "$2" > "$net/tcp"
+  printf '%s\n%s\n' "$header" "$3" > "$net/tcp6"
+  if with_entrypoint "PROC_NET='$net' RT_LOG_FILE='$entry/rtorrent.log'; $4; apply_defaults; wait_for_socket" \
+       >"$fixture/out" 2>&1; then
+    came=up
+  else
+    came=down
+  fi
+  [ "$came" = "$1" ] || { cat "$fixture/out" >&2; echo "the wait came $came, not $1: $4" >&2; exit 1; }
+}
+wait_case up "$stale$nl$listen4" '' 'export STUB_RUNNING=1; RT_SCGI_PORT=5000'
+wait_case up "$stale" "$listen6" 'export STUB_RUNNING=1; RT_SCGI_PORT=5000 RT_SCGI_BIND=::'
+wait_case down "$stale" '' 'export STUB_RUNNING=1; RT_SCGI_PORT=5000 RT_SCGI_BIND=0.0.0.0'
+for said in 'rtorrent did not listen on 0.0.0.0:5000 within 30s' 'the last line of the log'; do
+  grep -Fq "$said" "$fixture/out" || { cat "$fixture/out" >&2; echo "a failed wait did not say: $said" >&2; exit 1; }
+done
+# Nor does anything count without a running rtorrent: one that stopped at a
+# later rc line leaves its socket file behind, which is how the rc with two
+# listeners passed for a start. The socket is waited for, and named, by path.
+wait_case down "$listen4" '' 'export STUB_RUNNING=0; RT_SCGI_PORT=5000'
+wait_case down '' '' "export STUB_RUNNING=1; RT_SCGI_SOCKET='$entry/no.socket'"
+grep -Fq "did not listen on $entry/no.socket" "$fixture/out" || { cat "$fixture/out" >&2; echo 'the wait named no socket' >&2; exit 1; }
 
 # A lock held by another host (or a dead process) is cleared; one held by a
 # live process here is not, and RT_SESSION_LOCK_KEEP keeps any.
