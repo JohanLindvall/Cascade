@@ -168,9 +168,15 @@ export interface SimTorrent {
   chunk: number;
   createdAt: number;
   label: string;
-  /** Where the torrent goes: its files' directory, or for a multi-file torrent its own directory's parent. */
+  /** Where the data goes: its file's directory, or the one holding a multi-file torrent's own folder. */
   parent: string;
-  /** parent as of the last open: libtorrent freezes the paths there, so d.base_path follows a move only once reopened. */
+  /**
+   * A multi-file torrent's own folder: its name, fitted as the image's
+   * libtorrent fits one too long for a path, unless d.directory_base.set
+   * named it otherwise. A directory change keeps it; d.directory.set does not.
+   */
+  folder: string;
+  /** d.directory as of the last open: libtorrent freezes the paths there, so d.base_path follows a move only once reopened. */
   frozen: string;
   throttle: string;
   priority: number;
@@ -231,18 +237,43 @@ function wantedLeft(t: SimTorrent): number {
   return left;
 }
 
+/** A name inside a directory, joined the way d.directory.set joins them. */
 function join(parent: string, name: string): string {
-  return parent.endsWith('/') ? `${parent}${name}` : `${parent}/${name}`;
+  return parent === '' || parent.endsWith('/') ? `${parent}${name}` : `${parent}/${name}`;
 }
 
-/** d.directory: a multi-file torrent's own directory, else the one its file is in. */
+/** A directory as rtorrent keeps one, without trailing slashes ("/" stays). */
+function trimDirectory(directory: string): string {
+  return directory.replace(/(.)\/+$/, '$1');
+}
+
+/** d.directory: a multi-file torrent's own folder, else the directory its file is in. */
 export function directoryOf(t: SimTorrent): string {
-  return t.multi ? join(t.parent, t.name) : t.parent;
+  return t.multi ? join(t.parent, t.folder) : t.parent;
 }
 
 /** d.base_path: where the torrent was last opened, and empty until it first is. */
 export function basePathOf(t: SimTorrent): string {
-  return t.everOpened ? join(t.frozen, t.name) : '';
+  if (!t.everOpened) return '';
+  return t.multi ? t.frozen : join(t.frozen, t.name);
+}
+
+/** d.directory.set: the directory the data goes into, a multi-file torrent's folder named after it inside. */
+export function directorySet(t: SimTorrent, directory: string): void {
+  t.parent = trimDirectory(directory);
+  t.folder = fitComponent(t.name);
+}
+
+/** d.directory_base.set: d.directory itself, a multi-file torrent's folder named as the path ends. */
+export function directoryBaseSet(t: SimTorrent, root: string): void {
+  const path = trimDirectory(root);
+  if (!t.multi) {
+    t.parent = path;
+    return;
+  }
+  const cut = path.lastIndexOf('/');
+  t.parent = cut > 0 ? path.slice(0, cut) : cut === 0 ? '/' : '';
+  t.folder = path.slice(cut + 1);
 }
 
 /**
@@ -902,15 +933,20 @@ export class Session {
   }
 
   /**
-   * Stopped and closed first, as SetDirectory does; the data itself is not
-   * moved. Only d.directory changes: d.base_path follows at the next open.
+   * SetDirectory: the directory the data goes into, as an add names it; a
+   * multi-file torrent's folder keeps its name inside it. A torrent already
+   * there is left alone; any other is stopped and closed first, and the data
+   * itself is not moved. Only d.directory changes: d.base_path follows at the
+   * next open.
    */
   setDirectory(hash: string, directory: string): void {
     const t = this.get(hash);
+    const parent = trimDirectory(directory);
+    if (parent === t.parent) return;
     const nowS = Math.floor(this.time / 1000);
     this.stop(t, nowS);
     this.close(t, nowS);
-    t.parent = directory.length > 1 ? directory.replace(/\/+$/, '') : directory;
+    t.parent = parent;
   }
 
   /**
@@ -1057,7 +1093,7 @@ export class Session {
     if (t.open) return;
     t.open = true;
     t.everOpened = true;
-    t.frozen = t.parent;
+    t.frozen = directoryOf(t);
     this.info(t, 'download_list: Opening download.', nowS);
     this.info(t, 'download: Opening torrent: flags:fffffffe.', nowS);
     this.info(t, 'file_list: Opening.', nowS);
@@ -1235,8 +1271,9 @@ export class Session {
     t.files = this.layout(files);
     t.size = t.files.reduce((sum, file) => sum + file.size, 0);
     t.chunk = pieceLengthFor(t.size);
-    t.parent = meta.directory || this.settings.directory;
-    t.frozen = t.parent;
+    // The torrent replays the load's d.directory.set, as rtorrent's does.
+    directorySet(t, meta.directory || this.settings.directory);
+    t.frozen = directoryOf(t);
     t.createdAt = nowS - rng.int(3, 2000) * DAY;
     t.everOpened = true;
     this.info(t, 'download_list: Inserting download.', nowS);
@@ -1538,9 +1575,11 @@ export class Session {
     const laid = this.layout(files);
     const size = laid.reduce((sum, file) => sum + file.size, 0);
     const swarmDown = rng.range(0.6, 3.2) * MiB;
+    const folder = fitComponent(name);
     return {
-      hash, name, files: laid, size, multi, isPrivate: false, chunk, createdAt: 0, label: '', parent: DOWNLOAD_DIR,
-      frozen: DOWNLOAD_DIR, throttle: '', priority: 2, maxUploads: this.settings.maxUploads, maxDownloads: this.settings.maxDownloads,
+      hash, name, files: laid, size, multi, isPrivate: false, chunk, createdAt: 0, label: '', parent: DOWNLOAD_DIR, folder,
+      frozen: multi ? join(DOWNLOAD_DIR, folder) : DOWNLOAD_DIR,
+      throttle: '', priority: 2, maxUploads: this.settings.maxUploads, maxDownloads: this.settings.maxDownloads,
       message: '', state: 0, complete: false, open: false, active: false, hashing: 0, check: null, unchecked: null, meta: null, everOpened: false,
       activeSince: 0, addedAt: 0, startedAt: 0, finishedAt: 0, downTotal: 0, upTotal: 0, downRate: 0, upRate: 0,
       peersConnected: 0,
@@ -1557,7 +1596,7 @@ export class Session {
   /** Into the session as a load does it: listed, its trackers added, started when asked. */
   private attach(t: SimTorrent, tiers: string[][], options: AddOptions): void {
     const nowS = Math.floor(this.time / 1000);
-    if (!t.meta) t.parent = options.directory || this.settings.directory;
+    if (!t.meta) directorySet(t, options.directory || this.settings.directory);
     t.label = options.label;
     t.addedAt = nowS;
     t.pool = this.peerPool(t, 0.6);

@@ -21,6 +21,7 @@ server/                   the Go module: main.go serves, and answers the entrypo
                           settings.go: every rtorrent global setting as one declarative table.
                           model.go: rtorrent fields -> Torrent/File/Peer/Tracker.
                           standin.go: what rtorrent sends for a name XML-RPC cannot carry
+                          directory.go: where a torrent's data goes, read the way it is set
   internal/rtorrent/rtorrenttest/  FakeClient, the scripted rtorrent the tests use
   internal/contracts/     the HTTP data shapes (web/src/contracts.ts mirrors them)
   internal/options/       every environment variable as one catalog; renders --help and the
@@ -113,7 +114,7 @@ The runner strips types but does not compile JSX, so a test reaches `.ts` module
 logic belongs where it can reach it. The stream's patching and reconnects (`stream.ts`,
 `streamConnection.ts`), sorting, filtering, the `.torrent` file check and drop parsing
 (`files.ts`), the selection rules, the value a selection shares for a field (`sharedValue.ts`),
-formatting and parsing, redaction, the preference shape and its syncing, the menu's placement and
+the directory a torrent's data goes into (`dataFolder.ts`), formatting and parsing, redaction, the preference shape and its syncing, the menu's placement and
 right-click rule (`components/menuRules.ts`), the toast hold (`components/toastHold.ts`) and where
 focus goes on selection or menu opening (`app/rowFocus.ts`) live apart from the components for exactly
 that reason. What cannot be split off is pinned by reading the source instead:
@@ -778,9 +779,23 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   faults become 502 with rtorrent's own message, prefixed with the command that failed when it
   came out of a multicall).
 - Anything that deletes data must stay inside `Config.DeleteRoots` (checked by `assertDeletable`).
-- A per-torrent directory change stops and closes the torrent before setting its path, and leaves
-  it stopped for the owner to move the data and recheck it. Keep those lifecycle commands separate
-  and in the per-torrent mutation queue, as for recheck and throttle changes.
+- **A directory change takes the directory the data goes into**, the one an add's
+  `d.directory.set` names — not what `d.directory` reports, which for a multi-file torrent is its
+  own folder: `d.directory.set` appends the torrent's name, so handing it `d.directory` back
+  nested the torrent inside itself (`/downloads/X/X`, on 0.9.8 as on 0.16.25). "Change directory"
+  offers `dataFolder` (`web/src/dataFolder.ts`); the server reads the listing the same way
+  (`DataDirectory`, `internal/rtorrent/directory.go`) and leaves a torrent already there alone,
+  running or not. A multi-file torrent keeps the folder it has, by its bytes, through
+  `d.directory_base.set` (`d.directory.base.set` from 0.16.22, the old name a redirect): a folder
+  set by another tool, or shortened by the libtorrent patch (quirk 12), is not named after the
+  torrent. Bytes that cannot be read exactly (a stand-in no base path vouches for) or sent back
+  (not UTF-8, or an emoji — xmlrpc-c refuses a character outside the BMP in a request too, -503)
+  fall back to `d.directory.set`, which appends the name on rtorrent's side, when the folder is
+  named after the torrent; anything else is refused before anything changes. A change stops and
+  closes the torrent before setting its path, and leaves it stopped for the owner to move the data
+  and recheck it; `d.base_path` follows only at the next open. Keep those lifecycle commands
+  separate and in the per-torrent mutation queue, as for recheck and throttle changes. The demo
+  mirrors it: `setDirectory`, and `d.directory.set` against `d.directory_base.set` in its console.
 - Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes `<epoch
   seconds> <level letter> <text>` for the severity scopes and `<epoch seconds> <text>` (no level)
   for the subsystem scopes such as `tracker_events` — the same two shapes on 0.9.8, 0.16.20 and

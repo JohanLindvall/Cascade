@@ -10,7 +10,8 @@
  * (0.16.24 answered alike, but for the value checks 0.16.25 added).
  */
 import {
-  type Session, type SimTorrent, SESSION_DIR, VIEWS, basePathOf, completedBytes, directoryOf, ratioPermille, viewsOf,
+  type Session, type SimTorrent, SESSION_DIR, VIEWS, basePathOf, completedBytes, directoryBaseSet, directoryOf, directorySet,
+  ratioPermille, viewsOf,
 } from './session.ts';
 import { SETTINGS, applySetting } from './settings.ts';
 import { HttpError } from './validate.ts';
@@ -93,7 +94,11 @@ function string(params: unknown[], at = 1): string {
 function torrentGetters(session: Session): Record<string, (t: SimTorrent) => Value> {
   const row = (t: SimTorrent) => session.row(t);
   return {
-    'd.base_filename': (t) => t.name,
+    // The base path's last component: a folder named otherwise is named so here, and nothing is until the first open.
+    'd.base_filename': (t) => {
+      const base = basePathOf(t);
+      return base.slice(base.lastIndexOf('/') + 1);
+    },
     'd.base_path': (t) => basePathOf(t),
     'd.bytes_done': (t) => completedBytes(t),
     'd.chunk_size': (t) => t.chunk,
@@ -104,6 +109,7 @@ function torrentGetters(session: Session): Record<string, (t: SimTorrent) => Val
     'd.creation_date': (t) => t.createdAt,
     'd.custom1': (t) => encodeURIComponent(t.label),
     'd.directory': (t) => directoryOf(t),
+    'd.directory_base': (t) => directoryOf(t),
     'd.down.rate': (t) => t.downRate,
     'd.down.total': (t) => Math.round(t.downTotal),
     'd.downloads_max': (t) => t.maxDownloads,
@@ -199,7 +205,7 @@ function fileGetters(session: Session): Record<string, (t: SimTorrent, index: nu
       if (!t.everOpened) return '';
       const name = row(t, i).onDisk || t.files[i].path.slice(t.files[i].path.lastIndexOf('/') + 1);
       const dirs = t.files[i].path.split('/').slice(0, -1);
-      return [t.multi ? basePathOf(t) : t.frozen, ...dirs, name].join('/');
+      return [t.frozen, ...dirs, name].join('/');
     },
     'f.is_created': (t, i) => flag(row(t, i).created),
     'f.is_open': () => 0,
@@ -385,12 +391,18 @@ export class Rpc {
       t.throttle = name;
       return 0;
     });
+    // The directory the data goes into: a multi-file torrent's folder is named after it again.
     this.on('d.directory.set', (params) => {
-      const t = this.torrent(params);
-      const directory = string(params);
-      t.parent = directory.length > 1 ? directory.replace(/\/+$/, '') : directory;
+      directorySet(this.torrent(params), string(params));
       return 0;
     });
+    // The root itself, d.directory as it reports it; 0.16.22 renamed it and kept the old name as a redirect.
+    for (const name of ['d.directory.base.set', 'd.directory_base.set']) {
+      this.on(name, (params) => {
+        directoryBaseSet(this.torrent(params), string(params));
+        return 0;
+      });
+    }
     this.on('d.message.set', (params) => {
       const t = this.torrent(params);
       t.message = string(params);
