@@ -44,7 +44,9 @@ export const SETTINGS: readonly SettingSpec[] = [
   both('minPeers', 'throttle.min_peers.normal', 'uint'),
   both('maxPeersSeed', 'throttle.max_peers.seed', 'int'),
   both('minPeersSeed', 'throttle.min_peers.seed', 'int'),
-  both('maxOpenFiles', 'network.max_open_files', 'uint'),
+  // The setter keeps its name, but from 0.16.15 it only warns (the console
+  // keeps it so) and the server's probe drops it, so the dialog greys this out.
+  spec('maxOpenFiles', 'network.max_open_files', null, 'uint'),
   both('maxOpenSockets', 'network.max_open_sockets', 'uint'),
   // 0.16 dropped network.http.max_open; the table reads its successor, whose
   // .set only warns (the console keeps it so), so the dialog greys this out.

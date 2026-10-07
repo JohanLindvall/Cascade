@@ -473,7 +473,7 @@ var Options = []Option{
 		Name:    "RT_MAX_OPEN_FILES",
 		Setting: "maxOpenFiles",
 		Section: "Resource limits",
-		Summary: "Open file handle cap",
+		Summary: "Open file handle cap (read-only on rtorrent 0.16.15+)",
 		Note:    rtorrentDefault,
 	},
 	{

@@ -12,11 +12,14 @@ package rtorrent
 // Rather than hard-coding a version matrix, the running instance is asked
 // what it supports via system.listMethods, and command names are picked from
 // what is actually there. Unsupported settings are reported to the UI so it
-// can disable them.
+// can disable them. The one thing the listing cannot tell — a command a
+// release still registers but ignores — is declared in inertFrom by release.
 
 import (
 	"context"
+	"maps"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -100,6 +103,22 @@ var featureMethods = map[string][]string{
 	"logScopes":              {"log.add_output"},
 }
 
+// inertFrom names commands a release still lists in system.listMethods but
+// ignores, with the first release that does: rtorrent answers 0 and the
+// getter reads the old value back (AGENTS.md quirk 7). From that release on
+// the probe treats the command as absent, and since everything resolves its
+// commands through the probe, a feature needing it is unsupported and a
+// setting it sets is read-only in the supports map, in SettingEntries and in
+// the boot-settings warning alike. Only the console's method list still
+// shows it, as rtorrent does. Measure on both sides of the release before
+// adding one.
+var inertFrom = map[string]string{
+	// 0.16.15 left it as a stub that only logs "network.max_open_files.set is
+	// deprecated, use system.sockets.files.min_alloc.set instead"; every
+	// release before it applies the value.
+	"network.max_open_files.set": "0.16.15",
+}
+
 // probeTTL is how long a probe is trusted before the command table is read
 // again.
 const probeTTL = 5 * time.Minute
@@ -111,8 +130,12 @@ type Capabilities struct {
 	fields FieldLists
 	now    func() time.Time
 
-	mu       sync.Mutex
+	mu sync.Mutex
+	// Every command the backend listed, for the console; usable leaves out
+	// the ones this release ignores (inertFrom), and every choice of command
+	// is made from it.
 	methods  map[string]bool
+	usable   map[string]bool
 	probedAt time.Time
 	probing  *inflight
 	dialect  Dialect
@@ -127,6 +150,7 @@ type Capabilities struct {
 // fails part way leaves the last good answers standing.
 type probed struct {
 	methods map[string]bool
+	usable  map[string]bool
 	dialect Dialect
 	info    BackendInfo
 }
@@ -144,6 +168,7 @@ func NewCapabilities(client Client, fields FieldLists) *Capabilities {
 		fields:  fields,
 		now:     time.Now,
 		methods: map[string]bool{},
+		usable:  map[string]bool{},
 		dialect: defaultDialect(),
 		info: BackendInfo{
 			ClientVersion:  "unknown",
@@ -155,24 +180,21 @@ func NewCapabilities(client Client, fields FieldLists) *Capabilities {
 	}
 }
 
-// Has reports whether the backend listed the command.
+// Has reports whether the backend listed the command and this release does
+// not ignore it (inertFrom).
 func (c *Capabilities) Has(method string) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.methods[method]
+	return c.usable[method]
 }
 
 // Resolve returns the first of the candidate commands this backend
-// implements, or "" when it implements none.
+// implements, or "" when it implements none; one the release lists but
+// ignores (inertFrom) counts as not implemented.
 func (c *Capabilities) Resolve(candidates ...string) string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, name := range candidates {
-		if c.methods[name] {
-			return name
-		}
-	}
-	return ""
+	return firstAvailable(c.usable, candidates, "")
 }
 
 // Supports reports a feature, or a settings key with a working setter.
@@ -210,7 +232,8 @@ func (c *Capabilities) Info() BackendInfo {
 	return info
 }
 
-// MethodNames lists the backend's commands, sorted, for the console.
+// MethodNames lists the backend's commands, sorted, for the console: all it
+// listed, the ones it ignores included.
 func (c *Capabilities) MethodNames() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -250,7 +273,7 @@ func (c *Capabilities) Ensure(ctx context.Context) error {
 			learned, err := c.probe(context.WithoutCancel(ctx))
 			c.mu.Lock()
 			if err == nil {
-				c.methods, c.dialect, c.info = learned.methods, learned.dialect, learned.info
+				c.methods, c.usable, c.dialect, c.info = learned.methods, learned.usable, learned.dialect, learned.info
 				c.probedAt = c.now()
 				c.ready = generation == c.generation
 			}
@@ -307,19 +330,20 @@ func (c *Capabilities) probe(ctx context.Context) (probed, error) {
 		}
 		return Text(versions[index].Value)
 	}
+	usable := withoutInert(methods, value(0))
 
 	dialect := Dialect{
 		DownloadMulticall: "d.multicall",
-		LoadRaw:           firstAvailable(methods, []string{"load.raw_verbose", "load.raw"}, "load.raw"),
-		LoadRawStart:      firstAvailable(methods, []string{"load.raw_start_verbose", "load.raw_start"}, "load.raw_start"),
-		LoadURL:           firstAvailable(methods, []string{"load.verbose", "load.normal"}, "load.normal"),
-		LoadURLStart:      firstAvailable(methods, []string{"load.start_verbose", "load.start"}, "load.start"),
-		TorrentFields:     pickAvailable(methods, c.fields.Torrent),
-		FileFields:        pickAvailable(methods, c.fields.File),
-		PeerFields:        pickAvailable(methods, c.fields.Peer),
-		TrackerFields:     pickAvailable(methods, c.fields.Tracker),
+		LoadRaw:           firstAvailable(usable, []string{"load.raw_verbose", "load.raw"}, "load.raw"),
+		LoadRawStart:      firstAvailable(usable, []string{"load.raw_start_verbose", "load.raw_start"}, "load.raw_start"),
+		LoadURL:           firstAvailable(usable, []string{"load.verbose", "load.normal"}, "load.normal"),
+		LoadURLStart:      firstAvailable(usable, []string{"load.start_verbose", "load.start"}, "load.start"),
+		TorrentFields:     pickAvailable(usable, c.fields.Torrent),
+		FileFields:        pickAvailable(usable, c.fields.File),
+		PeerFields:        pickAvailable(usable, c.fields.Peer),
+		TrackerFields:     pickAvailable(usable, c.fields.Tracker),
 	}
-	if methods["d.multicall2"] {
+	if usable["d.multicall2"] {
 		dialect.DownloadMulticall = "d.multicall2"
 	}
 	// A backend that answers listMethods but exposes none of our fields is
@@ -333,17 +357,15 @@ func (c *Capabilities) probe(ctx context.Context) (probed, error) {
 	for feature, needed := range featureMethods {
 		all := true
 		for _, name := range needed {
-			all = all && methods[name]
+			all = all && usable[name]
 		}
 		supports[feature] = all
 	}
+	// The same question SettingEntries and UnsupportedSettingKeys ask, of the
+	// same commands, so the UI never offers what a write would skip.
+	resolve := func(candidates ...string) string { return firstAvailable(usable, candidates, "") }
 	for _, key := range SettingKeys {
-		spec, _ := Spec(key)
-		found := false
-		for _, name := range spec.Set {
-			found = found || methods[name]
-		}
-		supports[key] = found
+		supports[key] = Setter(key, resolve) != ""
 	}
 
 	rpcFacility := ""
@@ -368,6 +390,7 @@ func (c *Capabilities) probe(ctx context.Context) (probed, error) {
 
 	return probed{
 		methods: methods,
+		usable:  usable,
 		dialect: dialect,
 		info: BackendInfo{
 			ClientVersion:  value(0),
@@ -379,6 +402,60 @@ func (c *Capabilities) probe(ctx context.Context) (probed, error) {
 			Supports:       supports,
 		},
 	}, nil
+}
+
+// withoutInert is methods less the commands the release named by version
+// ignores (inertFrom). A version that cannot be read keeps them all, since
+// nothing says which side of the release it is on.
+func withoutInert(methods map[string]bool, version string) map[string]bool {
+	usable := maps.Clone(methods)
+	for name, from := range inertFrom {
+		if releaseAtLeast(version, from) {
+			delete(usable, name)
+		}
+	}
+	return usable
+}
+
+// releaseAtLeast reports whether version is release or a later one, number
+// by number: 0.16.9 comes before 0.16.15, and a missing number counts as 0.
+// A suffix after the numbers ("0.9.8-rc1") is ignored, and a version that
+// does not start with one ("unknown") is at least nothing.
+func releaseAtLeast(version, release string) bool {
+	have, want := releaseNumbers(version), releaseNumbers(release)
+	if len(have) == 0 {
+		return false
+	}
+	for i := range max(len(have), len(want)) {
+		h, w := 0, 0
+		if i < len(have) {
+			h = have[i]
+		}
+		if i < len(want) {
+			w = want[i]
+		}
+		if h != w {
+			return h > w
+		}
+	}
+	return true
+}
+
+// releaseNumbers reads the dotted numbers a version starts with.
+func releaseNumbers(version string) []int {
+	var numbers []int
+	for part := range strings.SplitSeq(version, ".") {
+		digits := len(part) - len(strings.TrimLeft(part, "0123456789"))
+		n, err := strconv.Atoi(part[:digits])
+		if err != nil {
+			break
+		}
+		numbers = append(numbers, n)
+		if digits < len(part) {
+			break
+		}
+	}
+	return numbers
 }
 
 // pickAvailable filters candidate field commands down to those the backend

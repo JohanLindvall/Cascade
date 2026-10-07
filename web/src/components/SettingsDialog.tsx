@@ -384,7 +384,9 @@ export function SettingsDialog({
         <div className="section">
           <h3>Resource limits</h3>
           <div className="form-grid">
-            {numberField('maxOpenFiles', 'Max open files')}
+            {numberField('maxOpenFiles', 'Max open files', {
+              hint: supports('maxOpenFiles') ? undefined : 'read-only on rtorrent 0.16.15+',
+            })}
             {numberField('maxOpenSockets', 'Max open sockets')}
             {numberField('maxHttpOpen', 'Max concurrent HTTP requests', {
               hint: supports('maxHttpOpen') ? undefined : 'read-only on rtorrent 0.16+',

@@ -12,6 +12,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -439,6 +440,70 @@ func TestStartupSettingsAreAppliedThroughTheSameFilter(t *testing.T) {
 	_ = os.WriteFile(s.cfg.BootSettingsFile, []byte(`[1,2]`), 0o644)
 	if err := s.applyBootSettings(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// lockedBuffer is a log output a test can read while the logger writes.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// logged collects what the service logs until the test ends.
+func logged(t *testing.T) *lockedBuffer {
+	t.Helper()
+	out := &lockedBuffer{}
+	previous, flags := log.Writer(), log.Flags()
+	log.SetOutput(out)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previous)
+		log.SetFlags(flags)
+	})
+	return out
+}
+
+// 0.16.15 kept network.max_open_files.set as a stub that changes nothing:
+// from there a change through the API skips it, and a startup setting for it
+// is named in the warning rather than counted as applied.
+func TestASetterTheReleaseIgnoresIsSkippedAndNamedInTheStartupWarning(t *testing.T) {
+	for version, applies := range map[string]bool{"0.9.8": true, "0.16.25": false} {
+		t.Run(version, func(t *testing.T) {
+			client := backend("network.max_open_files", "network.max_open_files.set").Answer("system.client_version", version)
+			s := newService(t, client, nil)
+			if err := s.UpdateSettings(ctx, map[string]any{"maxOpenFiles": float64(1234), "downloadRate": float64(2048)}); err != nil {
+				t.Fatal(err)
+			}
+			sent := client.CallsTo("network.max_open_files.set")
+			if applies != (len(sent) == 1) || applies && !reflect.DeepEqual(sent[0].Params, []any{"", int64(1234)}) ||
+				len(client.CallsTo("throttle.global_down.max_rate.set")) != 1 {
+				t.Fatalf("%v", client.Calls())
+			}
+
+			if err := os.WriteFile(s.cfg.BootSettingsFile, []byte(`{"maxOpenFiles":1234}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out := logged(t)
+			if err := s.applyBootSettings(ctx); err != nil {
+				t.Fatal(err)
+			}
+			warning := "rtorrent " + version + " does not support: maxOpenFiles"
+			if applies != (len(client.CallsTo("network.max_open_files.set")) == 2) || applies == strings.Contains(out.String(), warning) {
+				t.Fatalf("%d sent, logged %q", len(client.CallsTo("network.max_open_files.set")), out.String())
+			}
+		})
 	}
 }
 

@@ -63,7 +63,7 @@ test('the state: the real contract, the demo policy, the release from the Docker
   assert.equal(state.status.backend.libraryVersion, '0.16.24');
   // What a real 0.16.24 has no working setter for, so the dialog greys out or hides the same controls.
   const { supports } = state.status.backend;
-  assert.deepEqual(Object.keys(supports).filter((key) => !supports[key]).sort(), ['maxHttpOpen', 'portOpen', 'sessionDirectory']);
+  assert.deepEqual(Object.keys(supports).filter((key) => !supports[key]).sort(), ['maxHttpOpen', 'maxOpenFiles', 'portOpen', 'sessionDirectory']);
   assert.equal(state.status.backend.methodCount, ok<{ methods: string[] }>('GET', 'rpc/methods').methods.length);
   assert.equal(state.status.downloadDir, '/downloads');
   assert.equal(state.game.enabled, true);
@@ -302,10 +302,12 @@ test('settings: every readable one reported, a bad value refused by name, a good
   // What rtorrent refuses itself is its fault, relayed with the command that raised it.
   refused('POST', 'settings', { encryption: 'bogus' }, 502, "protocol.encryption.set: Invalid encryption option: 'bogus'");
   refused('POST', 'settings', { portRange: '6881' }, 502, 'network.listen.port.range.set: Invalid port_range argument.');
-  // A key the release has no working setter for is skipped, as the server's table skips it.
-  ok('POST', 'settings', { maxHttpOpen: 40, portOpen: false });
+  // A key the release has no working setter for is skipped, as the server's table skips it —
+  // the open-file limit included, whose setter 0.16.15 still lists but ignores.
+  ok('POST', 'settings', { maxHttpOpen: 40, portOpen: false, maxOpenFiles: 1234 });
   const after = ok<Record<string, unknown>>('GET', 'settings');
   assert.equal(after.maxHttpOpen, 32);
+  assert.equal(after.maxOpenFiles, 128);
   assert.ok(!('portOpen' in after));
 });
 
@@ -459,11 +461,17 @@ test('the API console: commands that answer from the session, rtorrent\'s faults
   assert.equal(fault('log.add_output', ['', 'dht_debug', 'cascade']), "invalid option name : enum:11 name:'dht_debug'");
   assert.equal(fault('protocol.encryption.set', ['']), 'No encryption options specified.');
   assert.equal(fault('network.listen.port.range.set', ['', '70000-70001']), 'Port range out-of-bounds.');
-  // 0.16 keeps the old HTTP limit's setter as one that only warns, and has no port_open at all.
+  // 0.16 keeps the old HTTP limit's setter and the open-file limit's as ones that only warn,
+  // and has no port_open at all.
   assert.deepEqual(rpc('network.http.max_total_connections.set', ['', 40]), { ok: true, result: 0 });
   assert.equal(rpc('network.http.max_total_connections').result, 32);
   assert.ok(ok<{ lines: string[] }>('GET', 'log', undefined, 'lines=5').lines.some((line) =>
     / W network\.http\.max_total_connections\.set is deprecated, use system\.sockets\.http\.min_alloc\.set instead\.$/.test(line)));
+  assert.deepEqual(rpc('network.max_open_files.set', ['', 1234]), { ok: true, result: 0 });
+  assert.equal(rpc('network.max_open_files').result, 128);
+  assert.ok(ok<{ lines: string[] }>('GET', 'log', undefined, 'lines=5').lines.some((line) =>
+    / W network\.max_open_files\.set is deprecated, use system\.sockets\.files\.min_alloc\.set instead\.$/.test(line)));
+  assert.equal(fault('network.max_open_files.set', ['', 'abc']), 'Not a value.');
   assert.equal(rpc('network.port_open').fault?.code, -506);
   // rtorrent keeps a priority's low two bits.
   rpc('d.priority.set', [ubuntu.hash, 9]);

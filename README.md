@@ -206,6 +206,7 @@ older backends keep working:
 | Listening port | `network.port_range` | `network.listen.port.range` |
 | Scheduler | `schedule2` | `schedule` (the string form, which all versions accept) |
 | HTTP connections | `network.http.max_open` (writable) | `network.http.max_total_connections` (read-only) |
+| Open files | `network.max_open_files` (writable) | `network.max_open_files` (read-only from 0.16.15, whose setter only logs a warning) |
 | Proxy | `network.proxy_address` | `network.proxy.global` / `network.proxy.http` |
 
 0.16 also adds options Cascade now exposes when present: per-host HTTP connection limits, a global
@@ -334,7 +335,7 @@ Rates are in KiB/s; 0 means unlimited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `RT_MAX_OPEN_FILES` | rtorrent default | Open file handle cap |
+| `RT_MAX_OPEN_FILES` | rtorrent default | Open file handle cap (read-only on rtorrent 0.16.15+) |
 | `RT_MAX_OPEN_SOCKETS` | rtorrent default | Open socket cap |
 | `RT_MAX_HTTP_OPEN` | rtorrent default | Concurrent HTTP requests (read-only on rtorrent 0.16+) |
 | `RT_HTTP_MAX_HOST` | rtorrent default | HTTP connections per host (rtorrent 0.16+) |

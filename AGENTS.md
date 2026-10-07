@@ -289,10 +289,17 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    rc kept (`keeps_supplied_rc`), only `RT_PORT_RANGE` (which the port probe uses either way) and
    the booleans are checked.
 
-7. **A setter existing does not mean it works.** 0.16 registers
-   `network.http.max_total_connections.set` but the value never changes, so `maxHttpOpen` maps only
-   to the legacy command and the UI greys the field out there. When adding a setting, set it and
-   read it back before believing it.
+7. **A setter existing does not mean it works.** From 0.16.15
+   `network.http.max_total_connections.set` and `network.max_open_files.set` are stubs that answer
+   0, log a deprecation warning and change nothing. `maxHttpOpen` maps only to the legacy
+   `network.http.max_open.set`, which 0.16.14 stopped listing, so the UI greys the field out there.
+   The open-file limit's setter has the same name in every release, and 0.9.8 applies it, so
+   `inertFrom` in `internal/rtorrent/capabilities.go` names the command with the first release
+   that ignores it, and from that release on the probe treats it as absent: the `supports` map (the
+   dialog greys `maxOpenFiles` out), the settings writes and the boot-settings warning all go by
+   that, while the getter still reads and the console still lists the command. When adding a
+   setting, set it and read it back before believing it, on both sides of any release that might
+   differ.
 
 8. **rtorrent locks its session directory** and only releases the lock on a clean shutdown. A
    SIGKILLed container leaves `rtorrent.lock` behind and every later start dies with "Could not
@@ -370,6 +377,10 @@ Never call a command unconditionally.
   it.
 - **Anything else** (per-torrent commands, probes) goes in `featureMethods` in
   `internal/rtorrent/capabilities.go`, guarded with `caps.Supports("yourFeature")`.
+- **A command a release still lists but ignores** goes in `inertFrom` in the same file, with the
+  first release that ignores it (quirk 7). From that release on `Resolve`, `Has` and the
+  `supports` map leave it out, so a feature that needs it and a setting whose setter it is turn
+  off together; `MethodNames`, the console's list, keeps it, since rtorrent does.
 
 Field commands in `model.go` are filtered against `system.listMethods` automatically — a field the
 backend lacks simply maps to `0`/`''`.

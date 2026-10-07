@@ -547,14 +547,21 @@ export class Rpc {
         });
       }
     }
-    // 0.16 keeps the old name of the HTTP connection limit as a setter that
-    // only warns, which is why the settings table offers no setter for it.
-    this.on('network.http.max_total_connections.set', (params) => {
-      if (typeof params[0] !== 'string') throw new RpcFault(-503, 'invalid parameters: target must be a string');
-      value(params);
-      session.note('W', 'network.http.max_total_connections.set is deprecated, use system.sockets.http.min_alloc.set instead.');
-      return 0;
-    });
+    // From 0.16.15 these setters are stubs that check their value, warn and
+    // change nothing, which is why the settings table offers no setter for
+    // the HTTP connection limit or the open-file limit.
+    const stubs: Array<[command: string, successor: string]> = [
+      ['network.http.max_total_connections.set', 'system.sockets.http.min_alloc.set'],
+      ['network.max_open_files.set', 'system.sockets.files.min_alloc.set'],
+    ];
+    for (const [command, successor] of stubs) {
+      this.on(command, (params) => {
+        if (typeof params[0] !== 'string') throw new RpcFault(-503, 'invalid parameters: target must be a string');
+        value(params);
+        session.note('W', `${command} is deprecated, use ${successor} instead.`);
+        return 0;
+      });
+    }
     const rates = () => session.globalRates();
     this.on('throttle.global_down.rate', () => rates().down);
     this.on('throttle.global_up.rate', () => rates().up);

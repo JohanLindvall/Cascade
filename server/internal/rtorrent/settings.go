@@ -12,7 +12,9 @@ package rtorrent
 //
 // Command names are never called blindly: the capability probe resolves each
 // against system.listMethods first, so a setting this backend lacks simply
-// disappears instead of faulting.
+// disappears instead of faulting — and so does a setter the release lists but
+// ignores (inertFrom in capabilities.go), which would otherwise answer 0 and
+// change nothing.
 
 import (
 	"strings"
@@ -67,6 +69,9 @@ var settingTable = []struct {
 	// -1 disables the seeding peer range, so these must not be clamped to zero.
 	{"maxPeersSeed", SettingSpec{Get: one("throttle.max_peers.seed"), Set: one("throttle.max_peers.seed.set"), Kind: KindInt}},
 	{"minPeersSeed", SettingSpec{Get: one("throttle.min_peers.seed"), Set: one("throttle.min_peers.seed.set"), Kind: KindInt}},
+	// The setter's name is in every release, but from 0.16.15 it only logs a
+	// deprecation warning: inertFrom (capabilities.go) makes the value
+	// read-only there, while the getter still reads it.
 	{"maxOpenFiles", SettingSpec{Get: one("network.max_open_files"), Set: one("network.max_open_files.set"), Kind: KindUint}},
 	{"maxOpenSockets", SettingSpec{Get: one("network.max_open_sockets"), Set: one("network.max_open_sockets.set"), Kind: KindUint}},
 	// 0.16 dropped network.http.max_open; its max_total_connections successor
@@ -158,6 +163,20 @@ func Spec(key string) (SettingSpec, bool) {
 // ResolveMethod picks the first command name this backend implements, or ""
 // when there is none. (*Capabilities).Resolve is one.
 type ResolveMethod func(candidates ...string) string
+
+// Setter is the command that sets key on this backend: the first of its
+// setters resolve finds, or "" for a read-only setting, an unknown key or
+// one this backend has no working setter for. The supports map,
+// SettingEntries and UnsupportedSettingKeys all ask it, so what the UI
+// offers, what a write sends and what the boot-settings warning names
+// cannot disagree.
+func Setter(key string, resolve ResolveMethod) string {
+	spec, ok := settingSpecs[key]
+	if !ok || spec.Set == nil {
+		return ""
+	}
+	return resolve(spec.Set...)
+}
 
 // ReadableSetting is a setting this backend can report, with the getter
 // resolved for it.
@@ -256,10 +275,10 @@ func SettingEntries(patch any, resolve ResolveMethod) ([]Call, error) {
 	calls := []Call{}
 	for _, entry := range settingTable {
 		value, present := values[entry.key]
-		if !present || entry.spec.Set == nil {
+		if !present {
 			continue
 		}
-		method := resolve(entry.spec.Set...)
+		method := Setter(entry.key, resolve)
 		if method == "" {
 			continue
 		}
@@ -277,11 +296,7 @@ func SettingEntries(patch any, resolve ResolveMethod) ([]Call, error) {
 func UnsupportedSettingKeys(keys []string, resolve ResolveMethod) []string {
 	unsupported := []string{}
 	for _, key := range keys {
-		spec, ok := settingSpecs[key]
-		if !ok {
-			continue
-		}
-		if spec.Set == nil || resolve(spec.Set...) == "" {
+		if _, ok := settingSpecs[key]; ok && Setter(key, resolve) == "" {
 			unsupported = append(unsupported, key)
 		}
 	}

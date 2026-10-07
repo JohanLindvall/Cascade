@@ -112,7 +112,8 @@ STORAGE
   RT_PRELOAD_MIN_RATE        Only preload above this upload rate, bytes/s [rtorrent default]
 
 RESOURCE LIMITS
-  RT_MAX_OPEN_FILES          Open file handle cap [rtorrent default]
+  RT_MAX_OPEN_FILES          Open file handle cap (read-only on rtorrent 0.16.15+) [rtorrent
+                             default]
   RT_MAX_OPEN_SOCKETS        Open socket cap [rtorrent default]
   RT_MAX_HTTP_OPEN           Concurrent HTTP requests (read-only on rtorrent 0.16+) [rtorrent
                              default]

@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/JohanLindvall/Cascade/server/internal/rtorrent"
 	"github.com/JohanLindvall/Cascade/server/internal/rtorrent/rtorrenttest"
+	"github.com/JohanLindvall/Cascade/server/internal/xmlrpc"
 )
 
 var fields = rtorrent.FieldLists{
@@ -128,6 +130,61 @@ func TestSupportsCoversFeaturesAndEverySettingKey(t *testing.T) {
 		if _, ok := supports[key]; !ok {
 			t.Errorf("no supports entry for the setting %s", key)
 		}
+	}
+}
+
+// From 0.16.15 network.max_open_files.set is a stub that logs a deprecation
+// warning and changes nothing, under the name every release has: only the
+// version tells it apart, and everything that asks has to agree.
+func TestASetterTheReleaseIgnoresIsAbsentFromThatReleaseOnForEveryConsumer(t *testing.T) {
+	listed := []string{"d.multicall2", "network.max_open_files", "network.max_open_files.set", "throttle.global_up.max_rate.set"}
+	for version, settable := range map[string]bool{
+		"0.9.8":       true,
+		"0.15.2":      true,
+		"0.16":        true,
+		"0.16.9":      true,
+		"0.16.14":     true, // the last release that applies it
+		"0.16.15":     false,
+		"0.16.24":     false,
+		"0.16.25":     false,
+		"0.16.25-rc1": false,
+		"1.0":         false,
+		// A version probe that faults says nothing about which side it is on.
+		"(fault)": true,
+	} {
+		t.Run(version, func(t *testing.T) {
+			var answer rtorrenttest.Answer = version
+			if version == "(fault)" {
+				answer = &xmlrpc.Fault{Code: -506, Message: "Method 'system.client_version' not defined"}
+			}
+			caps := rtorrent.NewCapabilities(backend(listed, rtorrenttest.Answers{"system.client_version": answer}), fields)
+			ensure(t, caps)
+			setter, unsupported, calls := "", []string{"maxOpenFiles"}, []rtorrent.Call{}
+			if settable {
+				setter, unsupported = "network.max_open_files.set", []string{}
+				calls = []rtorrent.Call{{Method: setter, Params: []any{"", int64(1234)}}}
+			}
+			if caps.Supports("maxOpenFiles") != settable || !caps.Supports("uploadRate") {
+				t.Errorf("supports maxOpenFiles %v, uploadRate %v", caps.Supports("maxOpenFiles"), caps.Supports("uploadRate"))
+			}
+			if got := caps.Resolve("network.max_open_files.set"); got != setter || caps.Has("network.max_open_files.set") != settable {
+				t.Errorf("resolved %q", got)
+			}
+			if got, err := rtorrent.SettingEntries(map[string]any{"maxOpenFiles": 1234.0}, caps.Resolve); err != nil || !reflect.DeepEqual(got, calls) {
+				t.Errorf("entries %#v %v", got, err)
+			}
+			if got := rtorrent.UnsupportedSettingKeys([]string{"maxOpenFiles"}, caps.Resolve); !reflect.DeepEqual(got, unsupported) {
+				t.Errorf("unsupported %v", got)
+			}
+			// The value is still read, and the console still lists the setter,
+			// as rtorrent does.
+			if !slices.Contains(rtorrent.ReadableSettings(caps.Resolve), rtorrent.ReadableSetting{Key: "maxOpenFiles", Getter: "network.max_open_files"}) {
+				t.Error("the value is no longer read")
+			}
+			if !slices.Contains(caps.MethodNames(), "network.max_open_files.set") || caps.Info().MethodCount != len(listed) {
+				t.Errorf("methods %v", caps.MethodNames())
+			}
+		})
 	}
 }
 
