@@ -234,10 +234,12 @@ def upload_torrents(cascade, *torrents):
 
 def check_names_that_are_not_text(cascade):
     """A name that is not UTF-8 cannot travel as XML-RPC text, so rtorrent
-    reports a stand-in: "Caf%E9" from 0.16.3, "Caf?" before. Deleting with data
-    used to remove the path the stand-in spells, which is nothing — or another
-    file of that name. The data must go, and a file named like the stand-in
-    must stay unless the server cannot tell the two apart, when it refuses."""
+    reports a stand-in: "Caf%E9" from 0.16.7, "Caf?" before 0.16.3 (0.16.3 to
+    0.16.6 garble it into a fault, and crash on it in a list, the torrent list
+    included, so this check cannot pass there). Deleting with data used to
+    remove the path the stand-in spells, which is nothing — or another file of
+    that name. The data must go, and a file named like the stand-in must stay
+    unless the server cannot tell the two apart, when it refuses."""
     if not cascade.container:
         print('skipped deleting a name that is not UTF-8: it needs the container, to look at its disk')
         return

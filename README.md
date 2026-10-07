@@ -684,9 +684,12 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
 - Names are bytes to rtorrent, but XML-RPC text has to be UTF-8 — and through xmlrpc-c, the RPC
   layer the image builds with, UTF-8 within the Basic Multilingual Plane, which leaves out emoji.
   For a name that is not, such as a Latin-1 `Café.bin` from an old torrent, rtorrent sends a
-  stand-in: `Caf%E9.bin` from 0.16.3, `Caf?.bin` before. From rtorrent 0.16.13 Cascade asks for
-  the bytes instead and shows the name as it is, emoji included, with `�` for a byte that is not
-  UTF-8; on older releases the UI shows the stand-in.
+  stand-in: `Caf%E9.bin` from 0.16.7, `Caf?.bin` before 0.16.3. Releases 0.16.3 to 0.16.6 garble
+  that stand-in into text XML-RPC cannot carry either, so they cannot report such a name at all:
+  asked for it alone, rtorrent answers with an error, and asked for a list that holds it — the
+  torrent list among them — rtorrent crashes. From rtorrent 0.16.13 Cascade asks for the bytes
+  instead and shows the name as it is, emoji included, with `�` for a byte that is not UTF-8; on
+  older releases the UI shows the stand-in.
 - Global settings changed in the UI are not persisted to `rtorrent.rc`; the environment is the
   source of truth on restart.
 - "Change directory" stops the torrent and updates its saved path. Move already-downloaded files
@@ -697,8 +700,9 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
   rtorrent can only report by a stand-in (see above) is taken as bytes from rtorrent 0.16.13 on;
   on an older release it is matched against the disk, and when more than one path fits, or
   rtorrent cannot confirm that the one that fits holds the torrent's files, the delete is refused
-  with a `409` before anything is removed. A file that happens to be called `Caf%E9.bin` is never
-  taken for the torrent's `Café.bin`.
+  with a `409` before anything is removed. On 0.16.3 to 0.16.6, which cannot report such a path,
+  it fails with a `502`, also before anything is removed. A file that happens to be called
+  `Caf%E9.bin` is never taken for the torrent's `Café.bin`.
 - Completion moves use the actual on-disk filename, refuse existing destinations, and reopen
   the torrent at its new location. A failed move leaves the source data in place.
 - Throttle groups cannot be removed from a running rtorrent — deleting one sets it to unlimited

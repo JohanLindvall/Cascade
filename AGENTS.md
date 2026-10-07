@@ -351,11 +351,15 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    file by its legacy `name`, whatever `name.utf-8` says. xmlrpc-c, every image's RPC layer, takes a
    string only if it is UTF-8 inside the Basic Multilingual Plane, so an emoji fails as well (1.51,
    and the current release still); rtorrent then sends a stand-in for the whole string
-   (`internal/rtorrent/standin.go`): from 0.16.3 every byte outside printable ASCII as `%XX`,
-   upper-case (libtorrent's `string_with_escape_codes`), before that every non-ASCII byte as `?`.
+   (`internal/rtorrent/standin.go`): from 0.16.7 every byte outside printable ASCII as `%XX`,
+   upper-case (libtorrent's `string_with_escape_codes`), before 0.16.3 every non-ASCII byte as `?`.
    `%` is not escaped and `?` stands for itself, so neither can be undone from the text, and a
    delete that took `d.base_path` at its word removed nothing and answered 200 — or removed a file
-   that really is called `Caf%E9 …`. `dataPath` (`service/datapaths.go`) asks 0.16.13 and later for
+   that really is called `Caf%E9 …`. 0.16.3 to 0.16.6 send no stand-in at all: their
+   `string_with_escape_codes` adds `'%'` and the two hex digits up as numbers, one byte from 0x85
+   to 0xB1, which xmlrpc-c refuses again: a command answers fault -510 (so a delete is a 502
+   before anything is erased), and a string inside a list — a multicall's answer, the listing's
+   among them — crashes rtorrent. `dataPath` (`service/datapaths.go`) asks 0.16.13 and later for
    `d.base_path.base64`, the bytes exactly. On older releases it matches the stand-in against the
    disk, a component at a time, and refuses with a 409 before the erase when two paths fit, or when
    the one that fits is not confirmed by rtorrent: `f.is_created` stats the real bytes, and a

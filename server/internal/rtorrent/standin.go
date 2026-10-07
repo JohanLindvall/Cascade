@@ -12,12 +12,19 @@ package rtorrent
 // but also an emoji, a surrogate, U+FFFE or U+FFFF, fails its check. rtorrent
 // then sends a stand-in for the whole string instead:
 //
-//   - from 0.16.3, every byte outside printable ASCII as %XX in upper-case hex
+//   - from 0.16.7, every byte outside printable ASCII as %XX in upper-case hex
 //     (libtorrent's string_with_escape_codes). '%' itself is not escaped, so
 //     "%E9" may be the byte 0xE9 or the three characters it reads as;
-//   - before (0.9.x, 0.15.x, 0.16.0 to 0.16.2), every byte with its high bit
-//     set, and every control byte but tab, line feed and carriage return, as
-//     '?' — which also stands for itself.
+//   - before 0.16.3 (0.9.x, 0.15.x, 0.16.0 to 0.16.2), every byte with its
+//     high bit set, and every control byte but tab, line feed and carriage
+//     return, as '?' — which also stands for itself.
+//
+// 0.16.3 to 0.16.6 send neither. Their string_with_escape_codes adds '%' and
+// the two hex digits up as numbers, one byte from 0x85 to 0xB1 for each byte
+// escaped, so the stand-in is no more UTF-8 than the string it replaces:
+// xmlrpc-c refuses it as well, and rtorrent answers a command with fault -510
+// — or crashes, when the string is an item of a list such as a multicall's
+// answer.
 //
 // Text that passes is sent as it is, except that xmlrpc_string_new turns a
 // carriage return, alone or before a line feed, into a line feed. A build on
@@ -36,7 +43,7 @@ const upperHex = "0123456789ABCDEF"
 
 func printable(b byte) bool { return b >= 0x20 && b <= 0x7E }
 
-// EscapeCodes is the stand-in rtorrent 0.16.3 and later send.
+// EscapeCodes is the stand-in rtorrent 0.16.7 and later send.
 func EscapeCodes(raw string) string {
 	var out strings.Builder
 	for i := 0; i < len(raw); i++ {

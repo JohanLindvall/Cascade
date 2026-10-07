@@ -3,10 +3,11 @@
 package rtorrent
 
 // What rtorrent sends for text xmlrpc-c refuses, pinned to the C it comes
-// from: string_with_escape_codes (libtorrent 0.16.3+) and the '?' loop in
-// object_to_xmlrpc (rtorrent before 0.16.3). The property that matters most
-// is the last one: a stand-in never passes for the bytes themselves, or the
-// delete would act on a path that is not there.
+// from: string_with_escape_codes (libtorrent 0.16.7 and later; 0.16.3 to
+// 0.16.6 garble it into a fault) and the '?' loop in object_to_xmlrpc
+// (rtorrent before 0.16.3). The property that matters most is the last one: a
+// stand-in never passes for the bytes themselves, or the delete would act on
+// a path that is not there.
 
 import (
 	"math/rand"

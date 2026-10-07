@@ -29,7 +29,8 @@ import (
 // file really called that. From 0.16.13 rtorrent sends the bytes themselves
 // on request; on an older release the stand-in is matched against the disk
 // instead, and what cannot be told apart is refused before anything is
-// erased.
+// erased. (0.16.3 to 0.16.6 garble the stand-in and answer with a fault,
+// which ends the delete before the erase too.)
 func (s *Service) dataPath(ctx context.Context, hash string) (string, error) {
 	if s.caps.Has("d.base_path.base64") {
 		encoded, err := s.client.Call(ctx, "d.base_path.base64", hash)

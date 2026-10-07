@@ -2,11 +2,12 @@
 
 package service
 
-// Deleting data whose path rtorrent can only send as a stand-in: "%E9" (or
-// "?" before 0.16.3) where the byte 0xE9 is on disk. The fake answers the way
-// rtorrent does, over a temporary directory holding the real bytes, and what
-// these pin is that the delete reaches exactly the torrent's own data — and
-// that what cannot be told apart is refused before the erase.
+// Deleting data whose path rtorrent can only send as a stand-in: "%E9" from
+// 0.16.7, "?" before 0.16.3, where the byte 0xE9 is on disk (0.16.3 to 0.16.6
+// answer with a fault instead). The fake answers the way rtorrent does, over a
+// temporary directory holding the real bytes, and what these pin is that the
+// delete reaches exactly the torrent's own data — and that what cannot be told
+// apart is refused before the erase.
 
 import (
 	"encoding/base64"
