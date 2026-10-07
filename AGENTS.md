@@ -393,7 +393,10 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    name is a directory and never passes through `Path`, which is how the first cut of the patch
    still failed multi-file torrents). It is pattern-based rather than a diff per release, knows the
    spellings of 0.13.x/0.15.x/0.16.x, and fails the build if a spelling is missing; it also compiles
-   and runs `path_fit_test.cc` with the same toolchain first. What reports what: `d.name` and
+   and runs `path_fit_test.cc` with the same toolchain first. The rule has two ports, held to the
+   same values, which must move with it: the demo's `pathfit.ts` (the Files tab's "on disk as …")
+   and `fitComponent` in `internal/rtorrent/directory.go` (which folder a directory change may
+   leave to `d.directory.set`). What reports what: `d.name` and
    `f.path` keep the torrent's own names (rtorrent joins `f.path` from the components itself,
    deliberately left alone); `frozen_path`, `d.base_path` and `d.directory` are the on-disk truth,
    so delete-data is right — as bytes, which XML-RPC cannot always carry (below). Which of a
@@ -794,7 +797,8 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   torrent. Bytes that cannot be read exactly (a stand-in no base path vouches for) or sent back
   (not UTF-8, or an emoji — xmlrpc-c refuses a character outside the BMP in a request too, -503)
   fall back to `d.directory.set`, which appends the name on rtorrent's side, when the folder is
-  named after the torrent; anything else is refused before anything changes. A change stops and
+  named after the torrent, shortened or not (`NamedAfterTorrent`); anything else is refused before
+  anything changes. A change stops and
   closes the torrent before setting its path, and leaves it stopped for the owner to move the data
   and recheck it; `d.base_path` follows only at the next open. Keep those lifecycle commands
   separate and in the per-torrent mutation queue, as for recheck and throttle changes. The demo
