@@ -312,9 +312,12 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    `inertFrom` in `internal/rtorrent/capabilities.go` names the command with the first release
    that ignores it, and from that release on the probe treats it as absent: the `supports` map (the
    dialog greys `maxOpenFiles` out), the settings writes and the boot-settings warning all go by
-   that, while the getter still reads and the console still lists the command. When adding a
-   setting, set it and read it back before believing it, on both sides of any release that might
-   differ.
+   that, while the getter still reads and the console still lists the command. Two more are there
+   for the same reason: `dht.port.set` from 0.16.1, where `dht.port` became the port the running
+   DHT has (0 while it is off) and `dht.override_port.set` the way to choose one, and
+   `trackers.use_udp.set` from 0.16.12, where UDP trackers are always on — each measured on the
+   releases either side (0.16.0/0.16.1, 0.16.11/0.16.12). When adding a setting, set it and read it
+   back before believing it, on both sides of any release that might differ.
 
 8. **rtorrent locks its session directory** and only releases the lock on a clean shutdown. A
    SIGKILLed container leaves `rtorrent.lock` behind and every later start dies with "Could not

@@ -159,22 +159,30 @@ def check_settings_and_throttles(cascade):
         cascade.api('/api/settings', {key: original[key] for key in patch})
 
 
-def check_inert_setter(cascade):
-    """The open-file limit is offered only where its setter works (AGENTS.md
-    quirk 7): from 0.16.15 rtorrent keeps network.max_open_files.set as a stub
-    that changes nothing, so what the server decided by release has to match
+def check_inert_setters(cascade):
+    """Each setter a release keeps listing but may ignore is offered only where
+    it works (AGENTS.md quirk 7): network.max_open_files.set from 0.16.15,
+    dht.port.set from 0.16.1 and trackers.use_udp.set from 0.16.12 are stubs
+    that change nothing, so what the server decided by release has to match
     what the command does on this one."""
-    offered = cascade.api('/api/capabilities')['supports']['maxOpenFiles']
-    before = cascade.rpc('network.max_open_files')
-    try:
-        cascade.rpc('network.max_open_files.set', '', before + 1)
-        works = cascade.rpc('network.max_open_files') == before + 1
-        assert works == offered, f'the setter works: {works}, maxOpenFiles offered: {offered}'
-        after = cascade.api('/api/settings', {'maxOpenFiles': before + 2})['maxOpenFiles']
-        assert after == (before + 2 if offered else before), (offered, before, after)
-    finally:
-        if offered:
-            cascade.rpc('network.max_open_files.set', '', before)
+    supports = cascade.api('/api/capabilities')['supports']
+    for key, getter in (('maxOpenFiles', 'network.max_open_files'), ('dhtPort', 'dht.port'),
+                        ('udpTrackers', 'trackers.use_udp')):
+        offered = supports[key]
+        before = cascade.rpc(getter)
+        switch = key == 'udpTrackers'
+        first, second = (1 - before, bool(1 - before)) if switch else (before + 1, before + 2)
+        try:
+            cascade.rpc(getter + '.set', '', first)
+            works = cascade.rpc(getter) == first
+            assert works == offered, f'{getter}.set works: {works}, {key} offered: {offered}'
+            # Back again, so the change through the API is a change.
+            cascade.rpc(getter + '.set', '', before)
+            after = cascade.api('/api/settings', {key: second})[key]
+            assert after == (second if offered else (bool(before) if switch else before)), (key, offered, before, after)
+        finally:
+            if offered:
+                cascade.rpc(getter + '.set', '', before)
 
 
 def check_name_switches(cascade):
@@ -310,7 +318,7 @@ def main(base, container=None):
     check_refusals(cascade)
     check_page_and_headers(cascade)
     check_settings_and_throttles(cascade)
-    check_inert_setter(cascade)
+    check_inert_setters(cascade)
     check_name_switches(cascade)
     check_long_file_name(cascade)
     check_stream(cascade)

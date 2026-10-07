@@ -496,9 +496,11 @@ table.torrents th[tabindex]:focus-visible,
   gap: 6px;
 }
 
-/* Row of toggles under a form grid, in dialogs. */
+/* Row of toggles under a form grid, in dialogs. Top-aligned, so a switch
+   with a hint under it keeps its label level with its neighbours'. */
 .switch-row {
   display: flex;
+  align-items: flex-start;
   gap: 22px;
   margin-top: 14px;
   flex-wrap: wrap;

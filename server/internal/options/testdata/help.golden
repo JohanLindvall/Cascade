@@ -89,9 +89,11 @@ NETWORK
 
 TRACKERS AND DHT
   RT_DHT                     disable, off, auto or on [rtorrent default]
-  RT_DHT_PORT                DHT UDP port [rtorrent default]
+  RT_DHT_PORT                DHT UDP port (read-only on rtorrent 0.16.1+, which takes
+                             RT_DHT_OVERRIDE_PORT) [rtorrent default]
   RT_DHT_OVERRIDE_PORT       Announce a different DHT port (rtorrent 0.16+) [rtorrent default]
-  RT_UDP_TRACKERS            Allow UDP trackers, yes/no [rtorrent default]
+  RT_UDP_TRACKERS            Allow UDP trackers, yes/no (always on from rtorrent 0.16.12)
+                             [rtorrent default]
   RT_TRACKER_NUMWANT         Peers requested per announce (-1 leaves it to the tracker)
                              [rtorrent default]
   RT_HTTP_CAPATH             Directory of CA certificates for tracker TLS [unset]

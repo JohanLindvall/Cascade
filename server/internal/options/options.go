@@ -352,7 +352,7 @@ var Options = []Option{
 		Name:    "RT_DHT_PORT",
 		Setting: "dhtPort",
 		Section: "Trackers and DHT",
-		Summary: "DHT UDP port",
+		Summary: "DHT UDP port (read-only on rtorrent 0.16.1+, which takes RT_DHT_OVERRIDE_PORT)",
 		Note:    rtorrentDefault,
 	},
 	{
@@ -366,7 +366,7 @@ var Options = []Option{
 		Name:    "RT_UDP_TRACKERS",
 		Setting: "udpTrackers",
 		Section: "Trackers and DHT",
-		Summary: "Allow UDP trackers, yes/no",
+		Summary: "Allow UDP trackers, yes/no (always on from rtorrent 0.16.12)",
 		Note:    rtorrentDefault,
 	},
 	{

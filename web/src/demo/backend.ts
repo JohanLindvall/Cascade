@@ -605,7 +605,7 @@ export class DemoServer {
   /** Every global setting this backend can report. */
   private settings(): Record<string, unknown> {
     const values: Record<string, unknown> = {};
-    for (const setting of SETTINGS) if (setting.get !== null) values[setting.key] = this.session.settings[setting.key];
+    for (const setting of SETTINGS) if (setting.get !== null) values[setting.key] = this.session.readSetting(setting.key);
     return values;
   }
 

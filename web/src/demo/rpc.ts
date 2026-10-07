@@ -518,7 +518,7 @@ export class Rpc {
     for (const setting of SETTINGS) {
       if (setting.get) {
         this.on(setting.get, () => {
-          const current = session.settings[setting.key];
+          const current = session.readSetting(setting.key);
           return typeof current === 'boolean' ? flag(current) : current;
         });
       }
@@ -566,6 +566,18 @@ export class Rpc {
         return 0;
       });
     }
+    // Two more, with nothing to name in their place: the DHT port has
+    // followed the listening port (or the override) since 0.16.1, and UDP
+    // trackers have been on for good since 0.16.12. dht.port.set's line goes
+    // to the dht scope, which the default log does not carry.
+    const inert = (line: string | null) => (params: unknown[]) => {
+      if (typeof params[0] !== 'string') throw new RpcFault(-503, 'invalid parameters: target must be a string');
+      value(params);
+      if (line !== null) session.note('E', line);
+      return 0;
+    };
+    this.on('dht.port.set', inert(null));
+    this.on('trackers.use_udp.set', inert('trackers.use_udp.set is no longer supported'));
     const rates = () => session.globalRates();
     this.on('throttle.global_down.rate', () => rates().down);
     this.on('throttle.global_up.rate', () => rates().up);

@@ -69,10 +69,13 @@ export const SETTINGS: readonly SettingSpec[] = [
   spec('portOpen', null, null, 'bool'),
   // Write-only, as on the server: rtorrent has no getter that round-trips them.
   spec('dhtMode', null, 'dht.mode.set', 'string'),
-  both('dhtPort', 'dht.port', 'port'),
+  // From 0.16.1 dht.port.set is a stub (the console keeps it so) and dht.port
+  // the port the running DHT has, which the session reports (Session.dhtPort).
+  spec('dhtPort', 'dht.port', null, 'port'),
   both('dhtOverridePort', 'dht.override_port', 'port'),
   both('pex', 'protocol.pex', 'bool'),
-  both('udpTrackers', 'trackers.use_udp', 'bool'),
+  // Always on from 0.16.12, whose setter is a stub the console keeps.
+  spec('udpTrackers', 'trackers.use_udp', null, 'bool'),
   both('trackersNumwant', 'trackers.numwant', 'int'),
   spec('encryption', null, 'protocol.encryption.set', 'flags'),
   both('preallocate', 'system.file.allocate', 'bool'),
@@ -134,7 +137,8 @@ export function defaultSettings(): GlobalSettings {
     portRandom: false,
     portOpen: true,
     dhtMode: 'auto',
-    dhtPort: 6881,
+    // Not kept: dht.port reads the running DHT's (Session.readSetting).
+    dhtPort: 0,
     dhtOverridePort: 0,
     pex: true,
     udpTrackers: true,

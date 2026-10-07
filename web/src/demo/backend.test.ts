@@ -64,7 +64,9 @@ test('the state: the real contract, the demo policy, the release from the Docker
   assert.equal(state.status.backend.libraryVersion, '0.16.25');
   // What a real 0.16.25 has no working setter for, so the dialog greys out or hides the same controls.
   const { supports } = state.status.backend;
-  assert.deepEqual(Object.keys(supports).filter((key) => !supports[key]).sort(), ['maxHttpOpen', 'maxOpenFiles', 'portOpen', 'sessionDirectory']);
+  assert.deepEqual(Object.keys(supports).filter((key) => !supports[key]).sort(), [
+    'dhtPort', 'maxHttpOpen', 'maxOpenFiles', 'portOpen', 'sessionDirectory', 'udpTrackers',
+  ]);
   assert.equal(state.status.backend.methodCount, ok<{ methods: string[] }>('GET', 'rpc/methods').methods.length);
   assert.equal(state.status.downloadDir, '/downloads');
   assert.equal(state.game.enabled, true);
@@ -304,11 +306,14 @@ test('settings: every readable one reported, a bad value refused by name, a good
   refused('POST', 'settings', { encryption: 'bogus' }, 502, "protocol.encryption.set: Invalid encryption option: 'bogus'");
   refused('POST', 'settings', { portRange: '6881' }, 502, 'network.listen.port.range.set: Invalid port_range argument.');
   // A key the release has no working setter for is skipped, as the server's table skips it —
-  // the open-file limit included, whose setter 0.16.15 still lists but ignores.
-  ok('POST', 'settings', { maxHttpOpen: 40, portOpen: false, maxOpenFiles: 1234 });
+  // the open-file limit, the DHT port and the UDP tracker switch included, whose setters
+  // 0.16.15, 0.16.1 and 0.16.12 still list but ignore.
+  ok('POST', 'settings', { maxHttpOpen: 40, portOpen: false, maxOpenFiles: 1234, dhtPort: 7000, udpTrackers: false });
   const after = ok<Record<string, unknown>>('GET', 'settings');
   assert.equal(after.maxHttpOpen, 32);
   assert.equal(after.maxOpenFiles, 128);
+  assert.equal(after.dhtPort, 50_000, 'the running DHT has the listening port');
+  assert.equal(after.udpTrackers, true);
   assert.ok(!('portOpen' in after));
 });
 
@@ -531,6 +536,17 @@ test('the API console: commands that answer from the session, rtorrent\'s faults
     / W network\.max_open_files\.set is deprecated, use system\.sockets\.files\.min_alloc\.set instead\.$/.test(line)));
   assert.equal(fault('network.max_open_files.set', ['', 'abc']), 'Not a value.');
   assert.equal(rpc('network.port_open').fault?.code, -506);
+  // And the DHT port's and the UDP tracker switch's, which take a value and change nothing: dht.port
+  // is the running DHT's (the listening port, 0 while DHT is off), and UDP trackers stay on.
+  assert.deepEqual(rpc('dht.port.set', ['', 7000]), { ok: true, result: 0 });
+  assert.equal(rpc('dht.port').result, 50_000);
+  assert.equal(fault('dht.port.set', ['', 'abc']), 'Not a value.');
+  assert.deepEqual(rpc('trackers.use_udp.set', ['', 0]), { ok: true, result: 0 });
+  assert.equal(rpc('trackers.use_udp').result, 1);
+  assert.ok(ok<{ lines: string[] }>('GET', 'log', undefined, 'lines=5').lines.some((line) =>
+    / E trackers\.use_udp\.set is no longer supported$/.test(line)));
+  rpc('dht.mode.set', ['', 'off']);
+  assert.equal(rpc('dht.port').result, 0);
   // rtorrent keeps a priority's low two bits.
   rpc('d.priority.set', [ubuntu.hash, 9]);
   assert.equal(named('ubuntu').priority, 1);

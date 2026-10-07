@@ -337,7 +337,10 @@ export function SettingsDialog({
                 ))}
               </select>
             </Field>
-            {numberField('dhtPort', 'DHT port', { max: 65535 })}
+            {numberField('dhtPort', 'DHT port', {
+              max: 65535,
+              hint: supports('dhtPort') ? undefined : 'read-only on rtorrent 0.16.1+: the port DHT runs on, 0 while it is off',
+            })}
             {supports('dhtOverridePort') &&
               numberField('dhtOverridePort', 'DHT announce port override', {
                 hint: '0 uses the listening port',
@@ -347,7 +350,7 @@ export function SettingsDialog({
             {textField('httpCacert', 'Trusted CA bundle', { hint: 'for tracker TLS' })}
           </div>
           <div className="switch-row">
-            {switchField('udpTrackers', 'UDP trackers')}
+            {switchField('udpTrackers', 'UDP trackers', supports('udpTrackers') ? undefined : 'always on from rtorrent 0.16.12')}
             {supports('sslVerifyPeer') &&
               switchField('sslVerifyPeer', 'Verify tracker TLS certificates')}
             {supports('sslVerifyHost') &&

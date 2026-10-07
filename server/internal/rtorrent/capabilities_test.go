@@ -188,6 +188,45 @@ func TestASetterTheReleaseIgnoresIsAbsentFromThatReleaseOnForEveryConsumer(t *te
 	}
 }
 
+// dht.port.set (from 0.16.1) and trackers.use_udp.set (from 0.16.12) are two
+// more setters a release keeps listing but ignores: each is offered up to the
+// release before its own, and read-only from it on, where its getter still
+// reads (measured on 0.9.8, 0.16.0, 0.16.1, 0.16.11, 0.16.12 and 0.16.25).
+func TestTheDHTPortAndUDPTrackerSettersAreInertFromTheirReleases(t *testing.T) {
+	listed := []string{"d.multicall2", "dht.port", "dht.port.set", "trackers.use_udp", "trackers.use_udp.set"}
+	for version, settable := range map[string][2]bool{
+		"0.9.8":   {true, true},
+		"0.16.0":  {true, true},
+		"0.16.1":  {false, true},
+		"0.16.11": {false, true},
+		"0.16.12": {false, false},
+		"0.16.25": {false, false},
+	} {
+		t.Run(version, func(t *testing.T) {
+			caps := rtorrent.NewCapabilities(backend(listed, rtorrenttest.Answers{"system.client_version": version}), fields)
+			ensure(t, caps)
+			unsupported := []string{}
+			for i, key := range []string{"dhtPort", "udpTrackers"} {
+				if caps.Supports(key) != settable[i] {
+					t.Errorf("supports %s: %v", key, caps.Supports(key))
+				}
+				if !settable[i] {
+					unsupported = append(unsupported, key)
+				}
+			}
+			if got := rtorrent.UnsupportedSettingKeys([]string{"dhtPort", "udpTrackers"}, caps.Resolve); !reflect.DeepEqual(got, unsupported) {
+				t.Errorf("unsupported %v", got)
+			}
+			readable := rtorrent.ReadableSettings(caps.Resolve)
+			for _, setting := range []rtorrent.ReadableSetting{{Key: "dhtPort", Getter: "dht.port"}, {Key: "udpTrackers", Getter: "trackers.use_udp"}} {
+				if !slices.Contains(readable, setting) {
+					t.Errorf("%s is no longer read", setting.Key)
+				}
+			}
+		})
+	}
+}
+
 // 0.16.22 added system.torrent_name.use_sanitized and 0.16.25
 // system.file_name.allow_legacy_utf8 (the two commands 0.16.25 lists and
 // 0.16.24 does not). Each switch is offered and read where its release lists

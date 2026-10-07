@@ -207,6 +207,8 @@ older backends keep working:
 | Scheduler | `schedule2` | `schedule` (the string form, which all versions accept) |
 | HTTP connections | `network.http.max_open` (writable) | `network.http.max_total_connections` (read-only) |
 | Open files | `network.max_open_files` (writable) | `network.max_open_files` (read-only from 0.16.15, whose setter only logs a warning) |
+| DHT port | `dht.port` (writable) | `dht.port` (from 0.16.1 the port the running DHT has, read-only; `dht.override_port` sets it) |
+| UDP trackers | `trackers.use_udp` (writable) | `trackers.use_udp` (always on from 0.16.12, whose setter only logs an error) |
 | Proxy | `network.proxy_address` | `network.proxy.global` / `network.proxy.http` |
 
 0.16 also adds options Cascade now exposes when present: per-host HTTP connection limits, a global
@@ -334,9 +336,9 @@ Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `RT_DHT` | rtorrent default | disable, off, auto or on |
-| `RT_DHT_PORT` | rtorrent default | DHT UDP port |
+| `RT_DHT_PORT` | rtorrent default | DHT UDP port (read-only on rtorrent 0.16.1+, which takes RT_DHT_OVERRIDE_PORT) |
 | `RT_DHT_OVERRIDE_PORT` | rtorrent default | Announce a different DHT port (rtorrent 0.16+) |
-| `RT_UDP_TRACKERS` | rtorrent default | Allow UDP trackers, yes/no |
+| `RT_UDP_TRACKERS` | rtorrent default | Allow UDP trackers, yes/no (always on from rtorrent 0.16.12) |
 | `RT_TRACKER_NUMWANT` | rtorrent default | Peers requested per announce (-1 leaves it to the tracker) |
 | `RT_HTTP_CAPATH` | unset | Directory of CA certificates for tracker TLS |
 | `RT_HTTP_CACERT` | unset | CA bundle file for tracker TLS |

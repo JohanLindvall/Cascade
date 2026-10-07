@@ -65,9 +65,9 @@ Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `RT_DHT` | rtorrent default | disable, off, auto or on |
-| `RT_DHT_PORT` | rtorrent default | DHT UDP port |
+| `RT_DHT_PORT` | rtorrent default | DHT UDP port (read-only on rtorrent 0.16.1+, which takes RT_DHT_OVERRIDE_PORT) |
 | `RT_DHT_OVERRIDE_PORT` | rtorrent default | Announce a different DHT port (rtorrent 0.16+) |
-| `RT_UDP_TRACKERS` | rtorrent default | Allow UDP trackers, yes/no |
+| `RT_UDP_TRACKERS` | rtorrent default | Allow UDP trackers, yes/no (always on from rtorrent 0.16.12) |
 | `RT_TRACKER_NUMWANT` | rtorrent default | Peers requested per announce (-1 leaves it to the tracker) |
 | `RT_HTTP_CAPATH` | unset | Directory of CA certificates for tracker TLS |
 | `RT_HTTP_CACERT` | unset | CA bundle file for tracker TLS |

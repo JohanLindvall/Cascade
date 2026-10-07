@@ -117,6 +117,17 @@ var inertFrom = map[string]string{
 	// deprecated, use system.sockets.files.min_alloc.set instead"; every
 	// release before it applies the value.
 	"network.max_open_files.set": "0.16.15",
+	// 0.16.1 (rtorrent 677f8f45) took the DHT port from the listening port,
+	// or dht.override_port: dht.port.set only logs "dht.port.set is no longer
+	// supported, use dht.override_port.set" to the dht scope, and dht.port
+	// reports the port the running DHT has (0 while it is off). 0.9.8 and
+	// 0.16.0 read back what they were given.
+	"dht.port.set": "0.16.1",
+	// 0.16.12 dropped the switch (rtorrent 840a5791): trackers.use_udp.set
+	// only logs "trackers.use_udp.set is no longer supported" and
+	// trackers.use_udp reads 1 whatever it was given. 0.9.8, 0.16.0, 0.16.1
+	// and 0.16.11 apply it.
+	"trackers.use_udp.set": "0.16.12",
 }
 
 // probeTTL is how long a probe is trusted before the command table is read

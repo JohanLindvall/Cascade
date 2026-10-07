@@ -173,9 +173,12 @@ var settingTable = []struct {
 	{"portOpen", SettingSpec{Get: one("network.port_open"), Set: one("network.port_open.set"), Kind: KindBool}},
 	// dht.mode has a setter but no getter, so its current value cannot be shown.
 	{"dhtMode", SettingSpec{Set: one("dht.mode.set"), Kind: KindString}},
+	// From 0.16.1 the setter is a stub (inertFrom) and dht.port reports the
+	// port the running DHT has; dhtOverridePort is what sets one there.
 	{"dhtPort", SettingSpec{Get: one("dht.port"), Set: one("dht.port.set"), Kind: KindPort}},
 	{"dhtOverridePort", SettingSpec{Get: one("dht.override_port"), Set: one("dht.override_port.set"), Kind: KindPort}},
 	{"pex", SettingSpec{Get: one("protocol.pex"), Set: one("protocol.pex.set"), Kind: KindBool}},
+	// Always on from 0.16.12, whose setter is a stub (inertFrom).
 	{"udpTrackers", SettingSpec{Get: one("trackers.use_udp"), Set: one("trackers.use_udp.set"), Kind: KindBool}},
 	{"trackersNumwant", SettingSpec{Get: one("trackers.numwant"), Set: one("trackers.numwant.set"), Kind: KindInt}},
 	// Write-only on purpose: 0.16 grew a getter, but it reports internal flag

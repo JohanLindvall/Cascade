@@ -538,6 +538,21 @@ export class Session {
     return 50_000;
   }
 
+  /**
+   * dht.port as 0.16.1 and later report it: no longer a setting, but the port
+   * the running DHT has — the listening port, or dht.override_port — and 0
+   * while it is off.
+   */
+  dhtPort(): number {
+    if (this.dhtNodes() === 0) return 0;
+    return this.settings.dhtOverridePort || this.listenPort();
+  }
+
+  /** A setting as its getter reads it: as kept, but for dht.port. */
+  readSetting(key: keyof GlobalSettings): number | boolean | string {
+    return key === 'dhtPort' ? this.dhtPort() : this.settings[key];
+  }
+
   dhtNodes(): number {
     if (this.settings.dhtMode === 'disable' || this.settings.dhtMode === 'off') return 0;
     const at = this.time / 1000 - this.origin;
