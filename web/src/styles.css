@@ -1698,10 +1698,32 @@ table.grid tr.detail-row > td {
   text-align: left;
 }
 
+/* A peer's or tracker's flags hold one line, whatever they are. Wrapped in
+   their fixed column, they grew a row from 29px to 49px when a poll marked
+   the peer snubbed (69px and more with every flag, 109px in retro on a
+   phone), and every row below jumped with it. The tags that fit show whole,
+   in flags.ts's order, what is wrong first, and an ellipsis stands for the
+   rest, which the cell's title and the expanded row name: text-overflow
+   hides an atomic inline (the tags are inline-flex) that does not fit. The
+   box is one tag tall, under a line of the table's text (17.7px), and holds
+   the dash for no flags too, so neither a flag nor the lack of one sets the
+   row's height. */
 .flags {
-  display: inline-flex;
-  gap: 4px;
-  flex-wrap: wrap;
+  display: block;
+  height: 16px;
+  line-height: 16px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+}
+
+.flags > .tag {
+  vertical-align: top;
+}
+
+.flags > .tag + .tag {
+  margin-left: 4px;
 }
 
 .tag.good {
