@@ -140,13 +140,15 @@ image's build stage copies those files in for the same reason.
 The shell has its suite too, `docker/scripts.test.sh`, run in the image build and in CI. It
 sources the entrypoint with `ENTRYPOINT_LIBRARY=1`, which defines its functions without running
 `main` (a name outside the option families, so the options check does not take it for a
-setting), and drives the rc rendering, the value checks (`validate_options`, `enabled`) and the
-session-lock handling against stub `rtorrent` and `cascade` binaries. Each case runs in a shell of
-its own (`with_entrypoint` uses `sh -c`, not a subshell: under `if`, a subshell runs with `set -e`
-suspended and a failed step would not end the case), through `expect_ok` or `expect_refused`,
-which show a case's stderr only when it fails. New entrypoint behaviour belongs in a function, and
-in a case there. Run it under `dash` as well as BusyBox: dash's `echo` reads backslashes, which is
-why rc lines go through `printf`.
+setting), and drives the rc rendering, the value checks (`validate_options`, `enabled`), the
+session-lock handling and rtorrent's start, wait and restart against stub `rtorrent`, `cascade`,
+`screen`, `su-exec` and `pidof` binaries, kernel tables staged under `PROC_NET`, and a `kill`
+function in place of the builtin (a function of that name overrides it). Each case runs in a
+shell of its own (`with_entrypoint` uses `sh -c`, not a subshell: under `if`, a subshell runs with
+`set -e` suspended and a failed step would not end the case), through `expect_ok` or
+`expect_refused`, which show a case's stderr only when it fails. New entrypoint behaviour belongs
+in a function, and in a case there. Run it under `dash` as well as BusyBox: dash's `echo` reads
+backslashes, which is why rc lines go through `printf`.
 
 The server suite reaches everything above the socket without one: `rtorrent.NewClient` takes an
 optional `Transport`, and `service.Service` and `Capabilities` depend on the `rtorrent.Client`
@@ -285,23 +287,34 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    patterns follow what rtorrent's rc parser takes (checked on 0.9.8 and 0.16.24), not a tidier
    subset, so nothing that started rtorrent before is refused now. rtorrent reads a number the way
    C does: a bare `22` was decimal (umask 0026), so `render_rc` writes the umask with a leading
-   `0`, and `RT_PORT_RANDOM` is written as `yes`/`no` because rtorrent refuses `on`/`off`. The SCGI
-   pair is held tighter, since no `RT_SCGI_PORT` ever started rtorrent before (below) and the
-   server has to read them as rtorrent does: the port to plain decimal from 1 to 65535 (`05000`
-   is port 2560 to rtorrent's `%i`), the bind to addresses and names the two read alike. With a
-   supplied rc kept (`keeps_supplied_rc`), only `RT_PORT_RANGE` (which the port probe uses either
-   way), the SCGI port and bind (which say what to wait for and where the server connects) and the
-   booleans are checked.
+   `0`, the SCGI port goes in without its leading zeros (`05000` is port 2560 to rtorrent's `%i`
+   and 5000 to the server), and `RT_PORT_RANDOM` is written as `yes`/`no` because rtorrent refuses
+   `on`/`off`. The SCGI port is held to decimal 1–65535 and the bind to addresses and names, which
+   the server reads as rtorrent does. With a supplied rc kept (`keeps_supplied_rc`), only
+   `RT_PORT_RANGE` (which the port probe uses either way), the SCGI port and bind (which say what
+   to wait for and where the server connects) and the booleans are checked. Those two are the one
+   place where a value that started rtorrent before is refused now: earlier releases ignored them
+   with a kept rc, so a malformed leftover stops the start, and the README tells upgraders so.
 
    rtorrent accepts one SCGI listener: a second `network.scgi.open_*` stops the rc with "SCGI
    already enabled." (0.9.8 and 0.16 alike). The rc used to open the socket and then the port, so
    `RT_SCGI_PORT` crash-looped rtorrent behind a healthy container; the port now *replaces* the
-   socket (`scgi_listener`), `CASCADE_SCGI` defaults to whichever was opened (`127.0.0.1` for a
-   wildcard bind), and `wait_for_socket` waits for that one — for a port, a LISTEN entry in
-   `/proc/net/tcp` or `tcp6` (`PROC_NET` in the tests) — and only while rtorrent still runs: one
-   that died at a later rc line leaves its socket file behind, which is how that crash loop passed
-   the wait. A supplied rc is not read for its listener; it has to open the one the variables
-   describe. The supervisor runs the same wait after a restart, without the exit.
+   socket (`scgi_listener`). `wait_for_socket` looks for the listener in the kernel's tables — a
+   LISTEN entry in `/proc/net/tcp` or `tcp6` for the port, a listening entry at the path in
+   `/proc/net/unix` for the socket (`PROC_NET` stands in for both in the tests) — and only while
+   rtorrent still runs: one that died at a later rc line, or was killed, leaves its socket file
+   behind, which is how that crash loop passed the wait. A supplied rc is not read. It had to open
+   the socket while that was all the wait knew, and with `RT_SCGI_PORT` set it may open that port
+   instead, so either passes for it — settled in `apply_defaults`, since once `write_rc` has
+   created a missing `RT_CONFIG_FILE` a generated rc looks supplied. `CASCADE_SCGI`, unless given,
+   is exported once rtorrent is up, naming the listener that answered (`127.0.0.1` for a wildcard
+   bind).
+
+   The first start (`launch_rtorrent`) ends the container when the wait fails, but stops an
+   rtorrent that still runs first (`stop_rtorrent`, quirk 8): the exit takes the container down,
+   and a killed rtorrent leaves its lock behind, while a stopped one has flushed the log the
+   failure goes on to show. The supervisor's restart (`restart_rtorrent`) waits the same way,
+   without the exit.
 
 7. **A setter existing does not mean it works.** 0.16 registers
    `network.http.max_total_connections.set` but the value never changes, so `maxHttpOpen` maps only
@@ -317,12 +330,13 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    A clean shutdown is slower than it looks: on SIGINT rtorrent announces "stopped" to every tracker
    and only drops the unanswered requests after about ten seconds (`handle_shutdown` in its
    control.cc, in rounds), so 100 torrents behind a hung tracker took 12–21s, measured. The
-   entrypoint's `stop_all` gives it 30s, then SIGTERM (quick shutdown) and 10s more, and must never
-   exit while rtorrent still runs: the container goes with the script and the kernel kills what is
-   left. It used to allow 10s and exit, so every `docker stop` left the lock behind and a stale peer
-   in the trackers' tables ("Got multiple targets in peer table!"). Docker's own timeout has to
-   outlast that, hence `--stop-timeout 60` in every `docker run` the docs show and `-t 60` in `make
-   stop` — a plain `docker stop` otherwise kills at Docker's default ten seconds.
+   entrypoint's `stop_rtorrent`, which `stop_all` and a failed first start both go through, gives
+   it 30s, then SIGTERM (quick shutdown) and 10s more, and the script must never exit while
+   rtorrent still runs: the container goes with the script and the kernel kills what is left. It
+   used to allow 10s and exit, so every `docker stop` left the lock behind and a stale peer in the
+   trackers' tables ("Got multiple targets in peer table!"). Docker's own timeout has to outlast
+   that, hence `--stop-timeout 60` in every `docker run` the docs show and `-t 60` in `make stop` —
+   a plain `docker stop` otherwise kills at Docker's default ten seconds.
 
 9. **rtorrent needs a pty**, so it runs inside a detached `screen` session. `SCREENDIR` must be
    mode 0700 or screen refuses to start. screen also serves a session only to the user who

@@ -234,13 +234,15 @@ actually reads.
 A value that does not parse stops the container at start, with a message naming the variable,
 rather than quietly becoming a default. Every on/off option — the `Set 0`/`Set 1` switches and
 the rtorrent settings marked yes/no — takes `1`, `true`, `yes` or `on` and `0`, `false`, `no` or
-`off`, in any case. `RT_UMASK` is octal, as `umask` reads it (`22` means `0022`), and
-`RT_WATCH_INTERVAL` takes seconds or a time such as `00:00:10`; `RT_SCGI_PORT` is a plain decimal
-port, since rtorrent would read `05000` as octal. With your own `RT_CONFIG_FILE` kept, what only
-the generated `rtorrent.rc` would carry — the umask, the watch interval, the random-port switch —
-is ignored rather than checked. The SCGI settings are not: your rc has to open the listener they
-describe, `RT_SCGI_SOCKET` or, with `RT_SCGI_PORT` set, that port on `RT_SCGI_BIND`, because that
-is what the container waits for and points Cascade at.
+`off`, in any case. `RT_UMASK` is octal, as `umask` reads it (`22` means `0022`),
+`RT_WATCH_INTERVAL` takes seconds or a time such as `00:00:10`, and `RT_SCGI_PORT` is decimal
+(`05000` is port 5000). With your own `RT_CONFIG_FILE` kept, what only the generated `rtorrent.rc`
+would carry — the umask, the watch interval, the random-port switch — is ignored rather than
+checked. The SCGI settings are not: Cascade waits for your rc to open the socket at
+`RT_SCGI_SOCKET` or, when `RT_SCGI_PORT` is set, that port on `RT_SCGI_BIND`, and connects to the
+one it opened. Earlier releases ignored `RT_SCGI_PORT` and `RT_SCGI_BIND` with a kept rc; now that
+they are read, a leftover `RT_SCGI_PORT` that is not a port, or a bind beside it that is not an
+address, stops the start until it is corrected or unset.
 
 <!-- generated: options -->
 ### Paths and identity
