@@ -826,33 +826,6 @@ func TestASymlinkAliasOfARootCannotDeleteTheRootButFilesWithinWork(t *testing.T)
 	}
 }
 
-func TestChangingADirectoryClosesFirstAndLeavesItStopped(t *testing.T) {
-	client := backend("d.directory.set", "d.save_full_session")
-	s := newService(t, client, nil)
-	if err := s.SetDirectory(ctx, hash, "/downloads/moved"); err != nil {
-		t.Fatal(err)
-	}
-	var got []rtorrent.Call
-	for _, c := range client.Calls() {
-		if strings.HasPrefix(c.Method, "d.") {
-			got = append(got, c)
-		}
-	}
-	want := []rtorrent.Call{
-		{Method: "d.stop", Params: []any{hash}},
-		{Method: "d.close", Params: []any{hash}},
-		{Method: "d.directory.set", Params: []any{hash, "/downloads/moved"}},
-		{Method: "d.save_full_session", Params: []any{hash}},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("%v", got)
-	}
-	unsupported := backend()
-	if code := status(t, newService(t, unsupported, nil).SetDirectory(ctx, hash, "/downloads/moved")); code != 501 || len(unsupported.CallsTo("d.stop")) != 0 {
-		t.Fatalf("%d", code)
-	}
-}
-
 /* ------------------------------- throttles ------------------------------- */
 
 func TestAThrottleGroupIsCreatedAndRememberedAndDeletingUnlimitsIt(t *testing.T) {

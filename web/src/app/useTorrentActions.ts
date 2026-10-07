@@ -5,6 +5,7 @@ import { api, type BulkResult } from '../api';
 import { useDialogs } from '../components/dialogs';
 import { useToast } from '../components/toast';
 import type { MenuActions } from '../components/TorrentMenu';
+import { sharedDataFolder } from '../dataFolder';
 import { magnetLink, nameErrors } from '../format';
 import { sharedValue } from '../sharedValue';
 import type { Policy, Torrent } from '../types';
@@ -157,11 +158,14 @@ export function useTorrentActions({ targets, byHash, labels, policy, downloadDir
       if (hashes.length === 0) return;
       const directory = await dialogs.prompt({
         title: 'Change directory',
-        label: 'Directory',
+        label: 'Destination directory',
+        hint: 'As when adding: a multi-file torrent’s own folder goes inside it.',
         message:
-          'The torrent will be stopped and its download path changed. Move any downloaded files yourself, then use Recheck & restart.',
+          'A torrent that moves is stopped and its saved path changed; its data is not moved. Move the files yourself, then use Recheck & restart.',
         items: names(hashes),
-        initial: sharedValue(byHash, hashes, (torrent) => torrent.directory) ?? '',
+        // The directory the data goes into, never d.directory itself: sent
+        // back unchanged, that moved a multi-file torrent into "X/X".
+        initial: sharedDataFolder(byHash, hashes),
         placeholder: downloadDir || '/downloads',
         confirmLabel: 'Change directory',
       });

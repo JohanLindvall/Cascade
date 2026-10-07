@@ -315,17 +315,6 @@ func MapTorrent(row Row, addedAt int64) contracts.Torrent {
 	message := row.text("d.message")
 	name, exactName := row.bytes("d.name")
 	base, exactBase := row.bytes("d.base_path")
-	isMulti := row.flag("d.is_multi_file")
-	directory := row.text("d.directory")
-	// d.directory has no exact variant, but it is the base path of a
-	// multi-file torrent and the directory above a single file's, unless it
-	// was changed since the torrent last opened: where its stand-in fits the
-	// base path's bytes, they are the same path.
-	if exactBase && base != "" && MayStandIn(directory) {
-		if same := parentUnlessMulti(base, isMulti); Reports(same, directory) {
-			directory = shown(same, true)
-		}
-	}
 
 	var status contracts.TorrentStatus
 	switch {
@@ -378,13 +367,13 @@ func MapTorrent(row Row, addedAt int64) contracts.Torrent {
 		Priority:          row.integer("d.priority"),
 		Label:             decodeLabel(row.text("d.custom1")),
 		Message:           message,
-		Directory:         directory,
+		Directory:         shownDirectory(row),
 		BasePath:          shown(base, exactBase),
 		Throttle:          row.text("d.throttle_name"),
 		IsOpen:            isOpen,
 		IsActive:          isActive,
 		IsPrivate:         row.flag("d.is_private"),
-		IsMultiFile:       isMulti,
+		IsMultiFile:       row.flag("d.is_multi_file"),
 		Hashing:           hashing,
 		ChunkSize:         row.integer("d.chunk_size"),
 		ChunksDone:        row.integer("d.completed_chunks"),
@@ -402,18 +391,6 @@ func MapTorrent(row Row, addedAt int64) contracts.Torrent {
 
 func baseName(path string) string {
 	return path[strings.LastIndexByte(path, '/')+1:]
-}
-
-// parentUnlessMulti is the directory a torrent's base path is in, or the
-// base path itself for a multi-file torrent: what d.directory names.
-func parentUnlessMulti(base string, multi bool) string {
-	if multi {
-		return base
-	}
-	if cut := strings.LastIndexByte(base, '/'); cut > 0 {
-		return base[:cut]
-	}
-	return "/"
 }
 
 // MapFile turns an f.multicall row into a TorrentFile.

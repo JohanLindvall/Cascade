@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LogScopeChange, StateResponse, Torrent, TorrentFile, Tracker, UploadResult } from '../contracts.ts';
+import { dataFolder, sharedDataFolder } from '../dataFolder.ts';
 import { DEFAULT_PREFERENCES } from '../preferences.ts';
 import { DEFAULT_POLL_MS, DemoServer, type DemoRequest, type DemoResponse, type UploadPart } from './backend.ts';
 import { ManualClock, torrentFile } from './fixtures.ts';
@@ -192,6 +193,71 @@ test('a torrent\'s fields: priority, label, throttle group, directory, slots, fi
   assert.equal(after[1].extra, true);
   clock.advance(1000);
   assert.equal(named('Sintel').trackerCount, count + 1);
+});
+
+test('a directory change takes the directory the data goes into, as an add does', () => {
+  const { ok, named, torrents } = setup();
+  const rpc = (method: string, ...params: unknown[]) => ok('POST', 'rpc', { method, params });
+  const bunny = named('Big Buck Bunny');
+  const ubuntu = named('ubuntu');
+  const byHash = new Map(torrents().map((t) => [t.hash, t]));
+  // A multi-file torrent's folder is inside it, so the two share one.
+  assert.equal(bunny.directory, '/downloads/Big Buck Bunny');
+  assert.equal(sharedDataFolder(byHash, [bunny.hash, ubuntu.hash]), '/downloads');
+
+  // What the prompt offers, sent back as it is: nothing changes, nothing even stops.
+  for (const before of [bunny, ubuntu]) {
+    ok('PATCH', `torrents/${before.hash}`, { directory: dataFolder(before) });
+    const after = named(before.name);
+    assert.deepEqual([after.directory, after.status], [before.directory, before.status]);
+  }
+
+  // A new one: the file goes into it, the multi-file torrent's folder inside it.
+  for (const t of [bunny, ubuntu]) ok('PATCH', `torrents/${t.hash}`, { directory: '/media/new/' });
+  assert.equal(named('ubuntu').directory, '/media/new');
+  const moved = named('Big Buck Bunny');
+  assert.deepEqual([moved.directory, moved.status], ['/media/new/Big Buck Bunny', 'stopped']);
+  // libtorrent froze the paths when it last opened the torrent; they move with the next open.
+  assert.equal(moved.basePath, '/downloads/Big Buck Bunny');
+  ok('POST', `torrents/${bunny.hash}/action/start`);
+  assert.equal(named('Big Buck Bunny').basePath, '/media/new/Big Buck Bunny');
+
+  // A folder named otherwise, as d.directory_base.set leaves one, keeps its name.
+  const cosmos = named('Cosmos');
+  rpc('d.directory_base.set', cosmos.hash, '/downloads/Cosmos/');
+  assert.equal(named('Cosmos').directory, '/downloads/Cosmos');
+  ok('PATCH', `torrents/${cosmos.hash}`, { directory: dataFolder(named('Cosmos')) });
+  assert.equal(named('Cosmos').directory, '/downloads/Cosmos');
+  ok('PATCH', `torrents/${cosmos.hash}`, { directory: '/media/films' });
+  assert.equal(named('Cosmos').directory, '/media/films/Cosmos');
+  ok('POST', `torrents/${cosmos.hash}/action/start`);
+  assert.deepEqual(rpc('d.base_filename', cosmos.hash), { ok: true, result: 'Cosmos' });
+  ok('POST', `torrents/${cosmos.hash}/action/stop`);
+  // d.directory.set names it after the torrent again, inside what it is given:
+  // given d.directory, the torrent's own folder, it nests.
+  rpc('d.directory.set', cosmos.hash, named('Cosmos').directory);
+  assert.equal(named('Cosmos').directory, '/media/films/Cosmos/Cosmos Laundromat (2015)');
+});
+
+test('a directory change reads the directory above a folder without trailing slashes, as the server does', () => {
+  const { ok, named } = setup();
+  const rpc = (method: string, ...params: unknown[]) => ok('POST', 'rpc', { method, params });
+  // Typed with a doubled trailing slash, the directory is sent without it.
+  const bunny = named('Big Buck Bunny');
+  ok('PATCH', `torrents/${bunny.hash}`, { directory: '/media/new//' });
+  assert.equal(named('Big Buck Bunny').directory, '/media/new/Big Buck Bunny');
+  // A root set with one leaves its folder in the directory without it: what
+  // the prompt offers changes nothing, and a running torrent keeps running.
+  const cosmos = named('Cosmos');
+  ok('POST', `torrents/${cosmos.hash}/action/stop`);
+  rpc('d.directory_base.set', cosmos.hash, '/downloads//Cosmos');
+  ok('POST', `torrents/${cosmos.hash}/action/start`);
+  const before = named('Cosmos');
+  assert.notEqual(before.status, 'stopped');
+  assert.equal(dataFolder(before), '/downloads');
+  ok('PATCH', `torrents/${cosmos.hash}`, { directory: dataFolder(before) });
+  const after = named('Cosmos');
+  assert.deepEqual([after.directory, after.status], [before.directory, before.status]);
 });
 
 test('removing: the data goes only from inside the data roots, refused before the torrent is erased', () => {

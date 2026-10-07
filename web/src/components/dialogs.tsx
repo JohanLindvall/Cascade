@@ -36,6 +36,8 @@ export interface ConfirmOptions extends DialogOptions {
 
 export interface PromptOptions extends DialogOptions {
   label?: string;
+  /** Beneath the input, as its description. */
+  hint?: ReactNode;
   initial?: string;
   placeholder?: string;
   /** Offered as a datalist under the input. */
@@ -223,7 +225,7 @@ function PromptDialog({
       >
         {options.message && <p className="confirm-message">{options.message}</p>}
         <ItemList items={options.items} />
-        <Field label={options.label ?? options.title}>
+        <Field label={options.label ?? options.title} hint={options.hint}>
           <input
             ref={input}
             className="input"

@@ -641,7 +641,9 @@ the last two are zero-based indices into the submitted files and non-empty URL l
 dialog keeps failed items for retry and removes successful ones. Uploaded v1 and hybrid torrents
 are structurally validated before loading; v2-only torrents are rejected with an explanation. A
 `directory` with a control character in it (a line break, say) is refused: it would reach
-rtorrent inside a command.
+rtorrent inside a command. A torrent's `directory` in a `PATCH` names the same thing as an
+upload's: the directory its data goes into, a multi-file torrent's own folder inside it (see
+*Notes and limitations*).
 
 A change, once sent, is carried through even if the client goes away, `/RPC2` included: a closed
 tab does not leave a torrent stopped halfway through a throttle change.
@@ -739,8 +741,16 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
   older releases the UI shows the stand-in.
 - Global settings changed in the UI are not persisted to `rtorrent.rc`; the environment is the
   source of truth on restart.
-- "Change directory" stops the torrent and updates its saved path. Move already-downloaded files
-  yourself, then use **Recheck & restart** before transferring at the new location.
+- "Change directory" takes the directory the data goes into, as the Add dialog does: a single
+  file goes into it, and a multi-file torrent's own folder inside it, under the name that folder
+  already has. It offers the directory the selected torrents' data shares; a torrent already there
+  is left alone, and any other is stopped and its saved path changed. Move already-downloaded
+  files yourself, then use **Recheck & restart** before transferring at the new location — the
+  details' *Base path* follows once the torrent opens there. A folder name rtorrent cannot report
+  exactly or be sent as text (see above: one that is not UTF-8, or holds an emoji — and before
+  rtorrent 0.16.3 one with a `?`, which may stand for such a byte) is kept as well when it is the
+  torrent's own name; any other such folder fails the change with a `502` before anything is
+  touched.
 - Deleting torrent data is confined to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and any
   `CASCADE_DELETE_ROOTS`. Paths are checked before removing metadata, and deletion stays anchored
   to an open root directory even if symlinks change. A root itself cannot be deleted. A path

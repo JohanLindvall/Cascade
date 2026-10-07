@@ -67,6 +67,23 @@ func TestAnUploadIsLoadedWithItsOptionsAndConfirmedByItsHash(t *testing.T) {
 	}
 }
 
+// d.directory.set keeps the trailing slashes it is given before the name it
+// appends for a multi-file torrent ("/downloads/a//X"), so a load names its
+// directory without them, as a directory change does.
+func TestALoadNamesItsDirectoryWithoutTrailingSlashes(t *testing.T) {
+	data, infoHash := singleFile(t)
+	for directory, want := range map[string]string{"/downloads/a//": "/downloads/a", "/downloads/a/": "/downloads/a", "/": "/", "//": "/"} {
+		client := loadedBy(backend(), "load.raw_start", infoHash)
+		if err := newService(t, client, nil).AddTorrentFile(ctx, data, contracts.LoadOptions{Start: true, Directory: directory}); err != nil {
+			t.Fatal(err)
+		}
+		load := params(client.CallsTo("load.raw_start"), 0)
+		if got := load[min(2, len(load)):]; !reflect.DeepEqual(got, []any{`d.directory.set="` + want + `"`}) {
+			t.Errorf("%q: %#v", directory, got)
+		}
+	}
+}
+
 func TestATorrentTheSessionHoldsIsA409NamingItAndIsNotLoadedAgain(t *testing.T) {
 	data, infoHash := singleFile(t)
 	for name, add := range map[string]func(s subject) error{

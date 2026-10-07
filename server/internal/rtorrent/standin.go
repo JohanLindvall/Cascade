@@ -90,11 +90,21 @@ func Reports(raw, reported string) bool {
 }
 
 // MayStandIn reports whether reported could stand for bytes other than its
-// own. When it cannot, it is exactly what is on disk: every stand-in marks
-// what it replaced — with U+FFFD, a line feed, '?' or the escape of a byte
-// outside printable ASCII — and the last two are ASCII through and through,
-// so text that is not cannot be one.
-func MayStandIn(reported string) bool {
+// own, on any build. When it cannot, it is exactly what is on disk: every
+// stand-in marks what it replaced — with U+FFFD, a line feed, '?' or the
+// escape of a byte outside printable ASCII — and the last two are ASCII
+// through and through, so text that is not cannot be one.
+func MayStandIn(reported string) bool { return mayStandIn(reported, true) }
+
+// QuestionMarksStandIn reports whether a '?' rtorrent version sends may stand
+// in for a byte: it may before 0.16.3, and a version that cannot be read may
+// be one of those. From 0.16.3 rtorrent sends %XX or no stand-in at all, and
+// a '?' is always itself.
+func QuestionMarksStandIn(version string) bool { return !releaseAtLeast(version, "0.16.3") }
+
+// mayStandIn is MayStandIn on a build whose '?' may stand in for a byte, or,
+// questionMarks false, on one whose '?' is always itself.
+func mayStandIn(reported string, questionMarks bool) bool {
 	if strings.ContainsAny(reported, "\n\uFFFD") {
 		return true
 	}
@@ -103,7 +113,7 @@ func MayStandIn(reported string) bool {
 			return false
 		}
 	}
-	if strings.Contains(reported, "?") {
+	if questionMarks && strings.Contains(reported, "?") {
 		return true
 	}
 	for i := 0; i+2 < len(reported); i++ {

@@ -21,6 +21,7 @@ server/                   the Go module: main.go serves, and answers the entrypo
                           settings.go: every rtorrent global setting as one declarative table.
                           model.go: rtorrent fields -> Torrent/File/Peer/Tracker.
                           standin.go: what rtorrent sends for a name XML-RPC cannot carry
+                          directory.go: where a torrent's data goes, read the way it is set
   internal/rtorrent/rtorrenttest/  FakeClient, the scripted rtorrent the tests use
   internal/contracts/     the HTTP data shapes (web/src/contracts.ts mirrors them)
   internal/options/       every environment variable as one catalog; renders --help and the
@@ -113,17 +114,18 @@ The runner strips types but does not compile JSX, so a test reaches `.ts` module
 logic belongs where it can reach it. The stream's patching and reconnects (`stream.ts`,
 `streamConnection.ts`), sorting, filtering, the `.torrent` file check and drop parsing
 (`files.ts`), the selection rules, the value a selection shares for a field (`sharedValue.ts`),
-formatting and parsing, redaction, the preference shape and its syncing, the menu's placement and
+the directory a torrent's data goes into (`dataFolder.ts`), formatting and parsing, redaction, the preference shape and its syncing, the menu's placement and
 right-click rule (`components/menuRules.ts`), the toast hold (`components/toastHold.ts`) and where
 focus goes on selection or menu opening (`app/rowFocus.ts`) live apart from the components for exactly
 that reason. What cannot be split off is pinned by reading the source instead:
-`components/detail/tabs.test.ts` checks the detail tabs stay memoized. A pure module
-that imports another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`): the
-runner resolves specifiers literally, and Vite and tsc accept either. A module that touches
-`window` or `document` at load time cannot be imported statically: `api.test.ts` stubs
-`document.baseURI` and then imports `api.ts` dynamically, and `preferences.ts` (the shape and its
-repair) is kept apart from `prefs.ts` (the fetch, the cache, the `pagehide` flush) so its tests
-need no stub at all.
+`components/detail/tabs.test.ts` checks the detail tabs stay memoized, and
+`app/useTorrentActions.test.ts` that "Change directory" is pre-filled from `sharedDataFolder`.
+A pure module that imports another spells the specifier with `.ts` (`preferences.ts` →
+`'./sort.ts'`): the runner resolves specifiers literally, and Vite and tsc accept either. A module
+that touches `window` or `document` at load time cannot be imported statically: `api.test.ts`
+stubs `document.baseURI` and then imports `api.ts` dynamically, and `preferences.ts` (the shape and
+its repair) is kept apart from `prefs.ts` (the fetch, the cache, the `pagehide` flush) so its
+tests need no stub at all.
 
 Go runs in Docker too, as uid 1000 so the files it writes keep their owner:
 
@@ -392,7 +394,10 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    name is a directory and never passes through `Path`, which is how the first cut of the patch
    still failed multi-file torrents). It is pattern-based rather than a diff per release, knows the
    spellings of 0.13.x/0.15.x/0.16.x, and fails the build if a spelling is missing; it also compiles
-   and runs `path_fit_test.cc` with the same toolchain first. What reports what: `d.name` and
+   and runs `path_fit_test.cc` with the same toolchain first. The rule has two ports, held to the
+   same values, which must move with it: the demo's `pathfit.ts` (the Files tab's "on disk as …")
+   and `fitComponent` in `internal/rtorrent/directory.go` (which folder a directory change may
+   leave to `d.directory.set`). What reports what: `d.name` and
    `f.path` keep the torrent's own names (rtorrent joins `f.path` from the components itself,
    deliberately left alone); `frozen_path`, `d.base_path` and `d.directory` are the on-disk truth,
    so delete-data is right — as bytes, which XML-RPC cannot always carry (below). Which of a
@@ -441,7 +446,10 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    directory arrives escaped in `f.frozen_path` and as itself in `f.path`: `MapFile` does not take
    that for a shortened name (it used to say "on disk as Caf%C3%A9.txt"). The completion move gets
    the path from rtorrent as an argument, bytes and all, and never sees a stand-in; a directory
-   change takes a path from the user and can only set one that is UTF-8.
+   change takes a path from the user and can only set one that is UTF-8 within the BMP (xmlrpc-c
+   refuses an emoji in a request too), and keeps a multi-file torrent's folder by its bytes only
+   where those can be sent back — else through `d.directory.set`, which names the folder on
+   rtorrent's side (see the directory change under *Conventions*).
 
 13. **What the client calls itself is compile-time, in two places.** The HTTP `User-Agent`
    (`USER_AGENT`, patched into rtorrent's `set_user_agent(USER_AGENT)` call by
@@ -778,9 +786,30 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   faults become 502 with rtorrent's own message, prefixed with the command that failed when it
   came out of a multicall).
 - Anything that deletes data must stay inside `Config.DeleteRoots` (checked by `assertDeletable`).
-- A per-torrent directory change stops and closes the torrent before setting its path, and leaves
-  it stopped for the owner to move the data and recheck it. Keep those lifecycle commands separate
-  and in the per-torrent mutation queue, as for recheck and throttle changes.
+- **A directory change takes the directory the data goes into**, the one an add's
+  `d.directory.set` names — not what `d.directory` reports, which for a multi-file torrent is its
+  own folder: `d.directory.set` appends the torrent's name, so handing it `d.directory` back
+  nested the torrent inside itself (`/downloads/X/X`, on 0.9.8 as on 0.16.25). "Change directory"
+  offers `dataFolder` (`web/src/dataFolder.ts`); the server reads the listing the same way
+  (`DataDirectory`, `internal/rtorrent/directory.go`) and leaves a torrent already there alone,
+  running or not. Both sides of that comparison are read without trailing slashes
+  (`TrimDirectory`), and a change or an add sends its directory without them: `d.directory.set`
+  keeps the slashes it is given before the name it appends (`/downloads//X`, on 0.9.8 as on
+  0.16.25), and a parent read as `/downloads/` matched no offer, so confirming one stopped the
+  torrent. A multi-file torrent keeps the folder it has, by its bytes, through
+  `d.directory_base.set` (`d.directory.base.set` from 0.16.22, the old name a redirect): a folder
+  set by another tool, or shortened by the libtorrent patch (quirk 12), is not named after the
+  torrent. Bytes that cannot be read exactly (a stand-in no base path vouches for) or sent back
+  (not UTF-8, or an emoji — xmlrpc-c refuses a character outside the BMP in a request too, -503)
+  fall back to `d.directory.set`, which appends the name on rtorrent's side, when the folder is
+  named after the torrent, shortened or not (`NamedAfterTorrent`); anything else is refused before
+  anything changes. A `?` is a stand-in only before 0.16.3 (`QuestionMarksStandIn`, by
+  `system.client_version`): from there it is the name's own, and a folder whose only mark is one
+  is kept by its text even where no base path can vouch for it. A change stops and
+  closes the torrent before setting its path, and leaves it stopped for the owner to move the data
+  and recheck it; `d.base_path` follows only at the next open. Keep those lifecycle commands
+  separate and in the per-torrent mutation queue, as for recheck and throttle changes. The demo
+  mirrors it: `setDirectory`, and `d.directory.set` against `d.directory_base.set` in its console.
 - Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes `<epoch
   seconds> <level letter> <text>` for the severity scopes and `<epoch seconds> <text>` (no level)
   for the subsystem scopes such as `tracker_events` — the same two shapes on 0.9.8, 0.16.20 and
