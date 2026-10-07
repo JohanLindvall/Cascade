@@ -964,7 +964,8 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   what `rtorrent.Folder` asks of a folder it would send back), and every field rtorrent is sent as
   text goes through `validate.RtorrentString`, `RtorrentText` or `Directory`: a directory, the
   Add dialog's links (each its own failure in an upload, not the batch's), a tracker URL, the
-  throttle group, a string setting (`coerce`), the listing's
+  throttle group, a string setting (`coerce`, and `StartupSettings`, which stops the start by the
+  variable's name rather than lose every startup setting to the table's refusal), the listing's
   view. A label is exempt — it is sent URL-encoded — and so are the API console and `/RPC2`, where
   rtorrent's fault is the answer. A JSON body's unpaired surrogate escape is decoded to U+FFFD
   before any of this sees it, so the web UI refuses one itself. The UI holds each such field as

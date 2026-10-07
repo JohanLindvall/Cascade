@@ -52,8 +52,11 @@ func StartupSettings(getenv func(string) string) (map[string]any, error) {
 		case spec.Kind == rtorrent.KindBool:
 			values[option.Setting], err = validate.Bool(raw, option.Name)
 		default:
+			// Text rtorrent cannot be sent, an emoji say, the settings table
+			// refuses (coerce), and every startup setting with it: it stops
+			// the start here, by name, as a number out of range does.
 			var text string
-			text, err = validate.String(raw, option.Name, true)
+			text, err = validate.RtorrentString(raw, option.Name, true)
 			if err == nil && spec.Kind == rtorrent.KindProxy {
 				// Applied at every start, a proxy rtorrent dies on would
 				// kill it again after each restart.

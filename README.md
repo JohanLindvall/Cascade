@@ -642,8 +642,9 @@ U+FFFE, U+FFFF, a carriage return (it would arrive as a line feed) or bytes that
 Such a value used to reach rtorrent and fail with a `502` — after a directory change had already
 stopped the torrent; now nothing is asked of rtorrent. In an upload, such a `directory` refuses the
 whole batch, while such a link in `urls` fails on its own, named in `errors` and counted in
-`failedUrls`, and the rest are added. A `label` takes anything: it is stored URL-encoded. The API
-console and `/RPC2` pass text through as given, and answer with rtorrent's fault.
+`failedUrls`, and the rest are added. As an `RT_*` setting it stops the start, by the variable's
+name. A `label` takes anything: it is stored URL-encoded. The API console and `/RPC2` pass text
+through as given, and answer with rtorrent's fault.
 
 Uploads accept up to 50 files and URLs combined. `CASCADE_MAX_UPLOAD_MB` bounds the combined
 file bytes in a batch. The response contains `added`, `errors`, `failedFiles` and `failedUrls`;
