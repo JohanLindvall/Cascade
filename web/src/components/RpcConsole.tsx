@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { redactSecrets } from '../redact';

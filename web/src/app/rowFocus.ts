@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import type { SelectMods } from '../selection.ts';
 
 /**

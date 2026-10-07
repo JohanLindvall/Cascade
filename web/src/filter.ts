@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * Which torrents the list shows: the sidebar's status/label/tracker filter
  * and the search box, plus the counts the sidebar prints beside each status.

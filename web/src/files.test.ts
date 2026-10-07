@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * Both ways files arrive — a drop on the window and the Add dialog's picker —
  * decide what is a torrent with this, and tell the user about the rest with

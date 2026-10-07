@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package service is all of Cascade's application behaviour, expressed in
 // terms of rtorrent commands chosen through the capability probe.
 package service

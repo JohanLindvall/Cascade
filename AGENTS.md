@@ -63,6 +63,8 @@ web/src/                  React UI. App.tsx composes it from app/ (Toolbar.tsx,
                           cache), one styles.css of design tokens, theme.ts (themes +
                           effect flavors), grim.ts (black metal copy), assets/ (the retro
                           and black metal wordmarks)
+web/src/demo/             the live demo: a simulated rtorrent and Cascade server that run in
+                          the browser, which the app is booted over in demo mode only
 docker/entrypoint.sh      checks the options, renders rtorrent.rc, supervises rtorrent + the
                           server; functions plus main, so the shell tests can source it
 docker/attach.sh          cascade-attach (make attach): rtorrent's curses UI, as the user
@@ -74,6 +76,7 @@ docker/bump-rtorrent.sh   moves the default rtorrent to a newer upstream release
 .github/workflows/ci.yml  Go and web tests, options check, Docker build + API smoke
 .github/workflows/release.yml  multi-arch GHCR publish, tags every main push
 .github/workflows/rtorrent-update.yml  daily: a pull request per new rtorrent
+.github/workflows/pages.yml  publishes the live demo to GitHub Pages on main pushes
 .github/dependabot.yml    Go modules, npm packages and Actions (rtorrent is the workflow's)
 ```
 
@@ -198,6 +201,43 @@ anything that needs interaction or measurement (an open drawer, a dialog, whethe
 between updates) drive the same browser remotely — Chrome's DevTools protocol
 (`--remote-debugging-port`), or Firefox's Marionette where there is no Chrome — and assert on
 `getBoundingClientRect()` rather than on how it looks.
+
+## Live demo
+
+`web/src/demo/` is a public demo of the real UI — https://johanlindvall.github.io/Cascade/ — that
+needs nothing installed: the unmodified app over a simulated rtorrent and Cascade server running in
+the visitor's browser. In `vite --mode demo` a plugin in `vite.config.ts` swaps index.html's
+`/src/main.tsx` for `src/demo/entry.ts`, which installs `install.ts` (fetch and EventSource
+stand-ins for the API's URLs, `transport.ts`) before it imports the app. `backend.ts` answers every
+route the UI calls as the Go server does — the shapes typed with `contracts.ts`, the same checks
+and messages, rtorrent's faults as 502s, the settings and `supports` of the release it presents —
+over `session.ts`, the simulation (seeded from `catalog.ts` and stepped every 250 ms from its
+start, which every clock-driven swing is measured from, so one seed is one session whenever it
+runs); `hub.ts` and `diff.ts` speak the stream's protocol and `rpc.ts` is the console's rtorrent.
+The session starts at the first request, not at load: a tab opened in the background asks for
+nothing until it is shown, and the finish a minute in must not have passed unseen by then — so
+nothing may ask the demo for anything before the page is first shown. It presents the Dockerfile's
+`RTORRENT_VERSION`, read at build time, so the daily bump keeps it current. Its catalogue stays
+legally redistributable — distribution images, open movies, public-domain and Creative Commons
+works, open datasets — with trackers on RFC 2606 example domains and peers on documentation
+addresses.
+
+`npm run dev:demo` serves it and `npm run build:demo` writes `web/dist-demo/`, which
+`.github/workflows/pages.yml` publishes from main; CI builds it on every pull request. Nothing
+outside `src/demo/` imports it and the production config adds nothing, so `npm run build` never
+bundles it. The demo build also gives the page its own title, a description, a canonical URL and
+the Open Graph and Twitter tags a shared link unfurls with — absolute URLs, so they name the
+published site (`CASCADE_DEMO_URL` for a fork's) — and emits `docs/social-preview.png` as the
+preview image: the 1280×640 picture that is also the one to upload as the repository's social
+preview.
+
+**It has to keep up with the API**: a changed route, contract or stream rule needs the same change
+in `src/demo/`. The typecheck catches contract drift; `diff.test.ts` holds the differ to
+`patches.json`, `hub.test.ts` folds the simulated stream through the real `reduce()`,
+`transport.test.ts` drives the real `api.ts` and `StreamConnection` over the stand-ins,
+`install.test.ts` holds the session's start to the first request, `backend.test.ts` pins each
+route's answers and refusals (worded as a running 0.16.24 words them), and `game.test.ts` holds
+the ported badge table to `game-catalog.json`.
 
 ## rtorrent quirks that cost time to discover
 
@@ -578,6 +618,44 @@ Two other things are easy to get wrong here:
   `overflow-x: hidden`; wide content scrolls inside its own container instead. Check new layout
   work at 360px before calling it done.
 
+## The project's public face
+
+What a visitor sees decides whether the code gets read, so it is held to the code's standard:
+
+- **The README's first screen** is the five-second pitch: the badges (CI on main, the newest git
+  tag — which the release pushes last, so it always names a published image — the license, the
+  live demo), one paragraph of specific claims — each one checkable — the demo link, a `docker
+  run` that works as written (named volumes, the UI bound to 127.0.0.1, credentials, because
+  without them any page the visitor opens can reach Cascade through DNS rebinding; `--stop-timeout
+  60`; checked against the published image), then `docs/screenshot-main.png`, taken from the demo.
+  Keep every claim true when behaviour changes. The pitch names no rtorrent release but the
+  oldest it supports and "the release the image ships", so no bump can make it stale, not even
+  one into a new series; the release number itself lives in the two phrases `bump-rtorrent.sh`
+  rewrites, in the highlights and under *Choosing the rtorrent version*.
+- **Licensing is MIT** (`LICENSE`), and every source file says so in its first line — `//`, `#`,
+  `/* */` or `<!-- -->` around `SPDX-License-Identifier: MIT`, after a shebang, the Dockerfile's
+  `# syntax=` directive or the HTML doctype, which must stay first, and followed by a blank line in
+  Go, where a comment touching `package` would become the package's documentation. CI's *License
+  identifiers* step fails on a tracked source file without it, so give a new file the line when
+  you create it. The image also ships rtorrent and libtorrent (GPL-2.0-or-later), the Go modules
+  compiled into the server and the packages bundled into the UI, and the README's License section
+  names them all. Their texts go with them: the Dockerfile installs rtorrent's and libtorrent's
+  `COPYING`, Cascade's `LICENSE` and every compiled-in Go module's license under
+  `/usr/local/share/licenses/` (a module without one stops the build), and Vite's `build.license`
+  writes the UI's as `licenses.txt` beside it, in the demo too. The release's labels and index
+  annotations say `MIT AND GPL-2.0-or-later`, which is what the image contains.
+- **`SECURITY.md`** is the private disclosure path (GitHub's private vulnerability reporting must
+  stay enabled for its link to work) and the security model: what is a vulnerability and what is
+  Cascade working as designed. A new trust boundary, default or switch belongs there too.
+- **`CITATION.cff`** has no version or release date on purpose: every push to main is a release,
+  so either would be stale within the day. `cffconvert --validate` checks it.
+- **Outside the repository**: the GitHub description and topics, private vulnerability reporting,
+  Pages (source: GitHub Actions) and the website field (the demo, once Pages has deployed it) are
+  settings, changed with `gh repo edit` or the API; the social preview has no API and is uploaded
+  by hand under *Settings → General* (`docs/social-preview.png`). GHCR's package page reads the
+  description and license from the annotations `release.yml` writes on the image index. When the
+  pitch changes, change those too.
+
 ## Conventions
 
 - Comments explain *why*, especially where the code works around one of the quirks above. Do not
@@ -812,6 +890,7 @@ Two other things are easy to get wrong here:
   jobs read the release's `<default>-linux-amd64` build cache: the smoke job reuses main's
   compiled rtorrent from it, the compat job the server and web stages, which do not depend on the
   rtorrent version. The release pushes each platform's image **by digest** and joins them into a
-  tagged manifest only after both passed. The tag it pushes does not re-trigger it (GitHub does
-  not run workflows for refs created with `GITHUB_TOKEN`), which is why tagging lives in that
-  workflow rather than a separate one.
+  tagged manifest only after both passed, and pushes the git tag last, in a job of its own: the
+  README's image badge reads git tags, so a tag must never name a release that did not publish.
+  The tag it pushes does not re-trigger it (GitHub does not run workflows for refs created with
+  `GITHUB_TOKEN`), which is why tagging lives in that workflow rather than a separate one.

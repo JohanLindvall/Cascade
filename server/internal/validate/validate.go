@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package validate checks request input at the API edge, answering a 400 that
 // names the field. JSON bodies are decoded into plain maps, so every checker
 // takes the decoded value as it came: float64 for a number, string, bool, nil

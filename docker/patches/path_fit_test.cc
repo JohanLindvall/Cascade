@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Self-test for path_fit.h, compiled and run by apply-libtorrent.sh with the
 // same toolchain that then builds libtorrent — so a build with a broken rule
 // fails before rtorrent is ever linked, the same contract as the unit tests

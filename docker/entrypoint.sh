@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
 # Cascade container entrypoint: render rtorrent's config from the environment,
 # supervise rtorrent and the web server, and forward shutdown signals.
 #

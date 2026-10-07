@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The formatting helpers draw every number in the UI, and two of them parse
  * user input back (rate limits). Wrong answers here are not cosmetic: a rate

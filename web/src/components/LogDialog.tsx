@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { logDay, logTime, parseLogLine } from '../format';

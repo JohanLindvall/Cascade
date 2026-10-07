@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
 """Exercise a disposable Cascade container against the rtorrent inside it.
 
 usage: python3 docker/api-smoke.py <base-url>[/base-path] [container]

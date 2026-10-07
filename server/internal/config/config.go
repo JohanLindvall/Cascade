@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package config reads the server's configuration out of the environment.
 package config
 

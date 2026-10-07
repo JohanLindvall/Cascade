@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import type { Torrent } from './types';
 
 /**

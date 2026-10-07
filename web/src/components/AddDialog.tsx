@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useId, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api';
 import { acceptTorrents, dropText, droppedFiles, linksFromDrop } from '../files';

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /** The server's HTTP shapes (contracts.ts), under the names the components use. */
 export type {
   TorrentStatus, Torrent, TorrentFile, Peer, Tracker,

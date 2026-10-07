@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package scgi is the transport to rtorrent's XML-RPC endpoint.
 //
 // rtorrent listens either on a unix socket (network.scgi.open_local) or a TCP

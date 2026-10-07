@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * Small presentational pieces shared across the UI. The stateful primitives
  * live beside them: modal.tsx, form.tsx, menu.tsx and toast.tsx.

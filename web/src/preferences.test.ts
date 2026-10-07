@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The cached preferences come out of localStorage, which anything — an older
  * build, a hand edit, another app on the same origin — may have written. A

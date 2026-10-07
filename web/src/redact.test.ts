@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * Passkeys must not reach the screen, and nothing else may be mangled on the
  * way: rtorrent's log is read for info hashes and tracker hosts, so the

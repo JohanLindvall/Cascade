@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * Theme selection. "system" follows the OS preference; the rest are explicit.
  * The resolved value is written to <html data-theme> and drives the CSS tokens.

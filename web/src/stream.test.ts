@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The stream's patches are written by the Go server and applied here, so the
  * two sides are held to the same golden cases: the Go tests check that diff

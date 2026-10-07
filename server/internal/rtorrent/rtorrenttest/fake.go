@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package rtorrenttest provides a scripted stand-in for rtorrent, so the
 // layers above the socket can be tested without one.
 package rtorrenttest

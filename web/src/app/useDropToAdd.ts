@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react';
 import { api } from '../api';
 import { useToast } from '../components/toast';

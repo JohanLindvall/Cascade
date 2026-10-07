@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useCallback, useMemo } from 'react';
 import { api, type BulkResult } from '../api';
 import { useDialogs } from '../components/dialogs';

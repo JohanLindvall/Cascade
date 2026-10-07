@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package rtorrent
 
 // The rtorrent global-settings surface, as one declarative table.

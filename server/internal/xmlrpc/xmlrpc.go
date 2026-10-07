@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package xmlrpc is a minimal, dependency-free XML-RPC codec.
 //
 // rtorrent speaks XML-RPC over SCGI. Its dialect adds <i8> and returns 8-bit

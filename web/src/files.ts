@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * What counts as a .torrent when files arrive by drop or by the file picker.
  * Both paths accept the same thing and say the same thing about the rest.

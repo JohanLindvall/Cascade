@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /** What the toast stack is asked when a toast's time is up. */
 export interface StackAtExpiry {
   /** Whether the stack matches :hover. */

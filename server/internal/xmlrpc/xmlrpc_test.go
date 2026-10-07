@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package xmlrpc
 
 // The codec is hand-written and everything rides on it: every value the UI

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package httpapi
 
 // The cross-site rule has to refuse exactly the requests a hostile page can

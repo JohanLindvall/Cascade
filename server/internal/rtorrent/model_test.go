@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package rtorrent
 
 // MapTorrent turns raw multicall rows into what the whole UI shows. The

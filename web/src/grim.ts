@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The black metal theme's text skin for the gamification layer.
  *

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * When the stream opens, gives up and tries again is where a live page goes
  * quietly stale, so it is pinned here with a fake link and a fake clock: a

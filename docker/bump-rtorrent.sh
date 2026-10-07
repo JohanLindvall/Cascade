@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
 # Move the default rtorrent build to a newer upstream release.
 #
 #   docker/bump-rtorrent.sh            # the newest release both projects tagged

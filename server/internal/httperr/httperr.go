@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package httperr gives an error the HTTP status it should reach the client
 // with, so a refusal deep in the service surfaces as a status that means
 // something rather than a bare 500.

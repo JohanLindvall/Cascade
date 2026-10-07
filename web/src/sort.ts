@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * How the torrent list is ordered. Lifted out of TorrentTable so the node
  * test runner can reach it — the component pulls in React, which the runner

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package utf8text decodes external text the way a browser does, replacing
 // each maximal ill-formed UTF-8 sequence once.
 package utf8text

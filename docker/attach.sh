@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
 # Attach to rtorrent's curses UI in its screen session (detach with ctrl-a d):
 #
 #   docker exec -it cascade cascade-attach

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package contracts holds the JSON shapes the HTTP API speaks. The browser
 // declares the same shapes in web/src/contracts.ts; keep the two in step.
 //

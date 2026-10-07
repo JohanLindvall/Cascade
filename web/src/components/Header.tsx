@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { bytes, rate } from '../format';
 import type { GameState, GlobalStatus } from '../types';
 import { LevelChip } from './Achievements';

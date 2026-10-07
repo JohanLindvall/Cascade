@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The selection rules the list is operated by. The one that matters most is
  * the last: an action never reaches a row the current filter hides, so a

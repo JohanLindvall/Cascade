@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package rtorrent
 
 // The client sits between every service call and the socket: it queues

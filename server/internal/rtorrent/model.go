@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package rtorrent
 
 // The field model: which commands each multicall asks for, and how a row of

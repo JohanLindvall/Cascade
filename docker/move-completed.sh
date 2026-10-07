@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
 # Called by rtorrent with separate argv entries, never through a shell string.
 set -eu
 mode="$1"

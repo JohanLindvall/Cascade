@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package rtorrent knows rtorrent's command set: the RPC client every call
 // goes through, the capability probe that picks command names from what the
 // running build implements, the table of global settings, and the field model

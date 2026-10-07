@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
 # Pure shell regressions; network calls are replaced with a tiny git stub.
 # shellcheck disable=SC2016 # single-quoted snippets are code, expanded where they run
 set -eu

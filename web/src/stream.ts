@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The client half of the state stream (GET api/stream, server-sent events).
  *

@@ -1,8 +1,32 @@
 # Cascade
 
-A modern web UI for [rtorrent](https://github.com/rakshasa/rtorrent), packaged as a single
-Docker image with rtorrent baked in. React on the front; behind it a small Go server that speaks
-rtorrent's XML-RPC over SCGI and streams every open page only what changed.
+[![CI](https://github.com/JohanLindvall/Cascade/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/JohanLindvall/Cascade/actions/workflows/ci.yml?query=branch%3Amain)
+[![Image](https://img.shields.io/github/v/tag/JohanLindvall/Cascade?label=image)](https://github.com/JohanLindvall/Cascade/pkgs/container/cascade)
+[![License](https://img.shields.io/github/license/JohanLindvall/Cascade)](LICENSE)
+[![Live demo](https://img.shields.io/badge/demo-live-7c9bff)](https://johanlindvall.github.io/Cascade/)
+
+**Cascade** is a web UI for [rtorrent](https://github.com/rakshasa/rtorrent), shipped as one
+Docker image for linux/amd64 and linux/arm64 with rtorrent compiled from its upstream release tag
+inside. A small Go server speaks rtorrent's XML-RPC over SCGI and streams every open page a
+snapshot and then only what changed, as server-sent events; the same server and React UI drive
+every rtorrent from 0.9.8 to the release the image ships, because they ask the running one which
+commands it has. Everything is configured with environment variables on `docker run`.
+
+**[Try the live demo](https://johanlindvall.github.io/Cascade/)** — the real UI against a
+simulated rtorrent, in your browser — or run it:
+
+```bash
+docker run -d --name cascade --stop-timeout 60 \
+  -e WEB_USER=admin -e WEB_PASS=change-me \
+  -p 127.0.0.1:8080:8080 -p 50000:50000 -p 50000:50000/udp \
+  -v cascade-config:/config -v cascade-downloads:/downloads \
+  ghcr.io/johanlindvall/cascade
+```
+
+and open <http://localhost:8080>. Choose your own password, and keep one even on your own machine:
+without it, any web page you visit could reach Cascade
+([SECURITY.md](SECURITY.md#what-cascade-protects-and-what-it-does-not)). The
+[quick start](#quick-start) has the full command: your own folders, the time zone.
 
 ![Main view](docs/screenshot-main.png)
 
@@ -19,6 +43,9 @@ rtorrent's XML-RPC over SCGI and streams every open page only what changed.
 - **Works across backend versions** — the server probes `system.listMethods` on connect and picks
   command names from what the running rtorrent actually implements, hiding unsupported controls
   in the UI instead of failing.
+- **Private-tracker aware** — a release newer than 0.16.20 announces itself as 0.16.20, User-Agent
+  and peer id together, because private trackers refuse client versions they have not whitelisted
+  yet; two build arguments [choose another identity](#the-version-presented-to-trackers).
 - **Everything rtorrent exposes** — upload `.torrent` files, magnet links and URLs, global and
   per-torrent throttling, file priorities, tracker management, peers, labels, plus a raw API
   console and an XML-RPC passthrough for anything the UI does not wrap. The settings dialog
@@ -608,8 +635,8 @@ there is nothing safe to send.
 
 To expose rtorrent's own SCGI socket instead, set `RT_SCGI_PORT=5000` and
 `RT_SCGI_BIND=0.0.0.0`, then publish the port. **SCGI is unauthenticated** — anyone who reaches
-it has full control of rtorrent and can run commands on the host through `execute`. Keep it on a
-private network, or prefer `/RPC2`, which sits behind Basic auth.
+it has full control of rtorrent and can run commands in the container, with its volumes, through
+`execute`. Keep it on a private network, or prefer `/RPC2`, which sits behind Basic auth.
 
 ### The state stream
 
@@ -680,7 +707,8 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
 
 ## Development
 
-The whole toolchain lives in the image; no local Go or Node is required (bar `make dev`, below).
+The whole toolchain lives in the image; no local Go or Node is required (bar `make dev` and
+`make demo`, below).
 The Makefile wraps the usual work — `make` on its own lists every target.
 
 ```bash
@@ -731,31 +759,38 @@ workflow → full-matrix**). Dependencies are kept up by two bots: Dependabot fo
 the npm packages and the Actions, and the daily rtorrent workflow described under
 [Choosing the rtorrent version](#choosing-the-rtorrent-version).
 
-Pushing to `main` releases. The release workflow tags the commit `v0.1.<run number>`, builds the
-image for amd64 and arm64 on native runners, boots each one and probes its API, and only then
-joins them into the tagged manifests described under [Image tags](#image-tags) — so a build that
-does not run never claims a tag. Pushing a `vX.Y.Z` tag yourself publishes under that name
-instead of an auto-generated one.
+Pushing to `main` releases. The release workflow builds the image for amd64 and arm64 on native
+runners, boots each one and probes its API, joins them into the tagged manifests described under
+[Image tags](#image-tags), and only then tags the commit `v0.1.<run number>` — so a build that does
+not run never claims a tag, in the registry or in git. Pushing a `vX.Y.Z` tag yourself publishes under that name
+instead of an auto-generated one. A push that touches the web UI also republishes the
+[live demo](https://johanlindvall.github.io/Cascade/) to GitHub Pages (`pages.yml`), after running
+the web's tests.
 
 `make run` waits for `/healthz` before launching the browser, so it opens on a working page rather
 than a connection error. The launcher is `xdg-open` (`BROWSER=` overrides it, `open` is used as a
 fallback on macOS); with no display detected it just prints the URL.
 
-Working on the frontend with live reload, against a running container — the one target that needs
-a local Node:
+Working on the frontend with live reload, against a running container — one of the two targets
+that need a local Node:
 
 ```bash
 make dev                                 # cd web && npm ci && npm run dev
                                          # proxies /api to localhost:8080
 CASCADE_DEV_TARGET=http://nas:8080 make dev   # ...or to a container elsewhere
+make demo                                # the live demo instead: no container at all
 ```
+
+The demo (`web/src/demo`) is the same app over a simulated rtorrent that runs in the browser; it
+answers every route the UI calls as the server does, so it has to follow API changes (AGENTS.md,
+*Live demo*).
 
 Layout:
 
 ```
 Makefile       build/run/test wrappers around Docker
 server/        the Go server: XML-RPC codec, SCGI transport, capability probe, REST API, state stream
-web/src/       React UI (app/, components/, styles.css)
+web/src/       React UI (app/, components/, styles.css), and demo/: the live demo's simulated server
 docker/        entrypoint that renders rtorrent.rc and supervises both processes,
                cascade-attach and the completion-move helper, the libtorrent/rtorrent
                patches, and the smoke and shell tests
@@ -763,3 +798,36 @@ docker/        entrypoint that renders rtorrent.rc and supervises both processes
 
 See [AGENTS.md](AGENTS.md) for the architecture details and the rtorrent quirks worth knowing
 before changing the backend.
+
+## Security
+
+Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes. It also sets out what
+Cascade protects and what it leaves to you: authentication, raw RPC access, an exposed SCGI port.
+
+## License
+
+Cascade is released under the [MIT License](LICENSE); every source file carries its SPDX
+identifier. The image also contains:
+
+- rtorrent and libtorrent, under the GNU GPL (version 2 or later), compiled from their upstream
+  release tags with the patches in [`docker/patches`](docker/patches);
+- the Go modules compiled into the server — klauspost/compress (BSD-3-Clause, its `gzhttp`
+  package Apache-2.0), golang.org/x/sys and the Go standard library (BSD-3-Clause), lightning and
+  arena (MIT);
+- React, React DOM and scheduler in the web UI (MIT);
+- Alpine Linux packages, under their own licenses.
+
+Their license texts travel with them: in the image under `/usr/local/share/licenses/`, and for the
+web UI's packages in `licenses.txt` beside it (`/app/web/licenses.txt`, and in the live demo).
+
+Citing Cascade in a paper or a course? GitHub's **Cite this repository** button, fed by
+[CITATION.cff](CITATION.cff), gives the reference in APA and BibTeX.
+
+## Star history
+
+<a href="https://star-history.com/#johanlindvall/cascade&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=johanlindvall/cascade&type=Date&theme=dark" />
+    <img alt="Cascade's GitHub stars over time" src="https://api.star-history.com/svg?repos=johanlindvall/cascade&type=Date" />
+  </picture>
+</a>

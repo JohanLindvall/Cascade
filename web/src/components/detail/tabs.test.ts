@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The fetched detail tabs are memoized, and the panel hands them props that
  * keep their identity. The app redraws on every stream delta — at least once

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useState, type ReactNode } from 'react';
 import { TORRENT_PRIORITIES, bytes, duration, percent, priorityLabel, rate, timestamp } from '../../format';
 import { redactSecrets } from '../../redact';

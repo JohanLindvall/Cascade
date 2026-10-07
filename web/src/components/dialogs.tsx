@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * In-app confirm and prompt dialogs, promise-shaped like the window.* ones
  * they replace: `await confirm(...)` answers true/false, `await prompt(...)`

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
 import { usePolling } from '../hooks';

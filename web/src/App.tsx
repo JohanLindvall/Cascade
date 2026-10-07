@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { rowOf } from './app/dom';
 import { focusOnMenu, focusOnSelection } from './app/rowFocus';

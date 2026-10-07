@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package httpapi is the HTTP face of Cascade: the JSON API, the state
 // stream, the XML-RPC passthrough and the static web UI, behind the
 // cross-site guard and optional Basic auth, with every failure answered as

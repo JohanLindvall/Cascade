@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { TORRENT_PRIORITIES } from '../format';
 import type { Policy, ThrottleGroup } from '../types';
 import { ContextMenu, MenuGroup, MenuItem } from './menu';

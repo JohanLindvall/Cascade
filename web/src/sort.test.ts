@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 /**
  * The list order is state the whole table hangs off. Status sorts by
  * lifecycle rather than alphabet, and a missing ETA must sink to the end

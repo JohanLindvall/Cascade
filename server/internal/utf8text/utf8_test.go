@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package utf8text
 
 import "testing"

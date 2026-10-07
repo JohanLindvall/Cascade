@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 // Package options is every environment variable Cascade understands, in one
 // place.
 //

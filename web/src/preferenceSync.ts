@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 import { normalizePreferences, type Preferences } from './preferences.ts';
 
 /** Orders writes and protects edits made while the initial server copy is loading. */

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MIT
+
 package options
 
 // The catalog is load-bearing: internal/config trusts Default to panic on an
