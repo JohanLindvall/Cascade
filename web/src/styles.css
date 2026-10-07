@@ -1530,11 +1530,15 @@ table.grid tbody tr:hover {
 
 /* A label longer than its fixed column ends in an ellipsis inside it rather
    than running into the next: a peer's IPv6 address with its port is up to
-   47 characters, over twice the column. The cell's title holds the whole. */
+   47 characters, over twice the column. The cell's title holds the whole.
+   The label may use the cell's right padding too (table.grid td's 9px), as
+   an unclipped one always could: at the table's 1000px minimum the content
+   box alone is about 4px short of an IPv4 address on a five-digit port, a
+   common shape (185.199.108.153:51413), and would cut two digits off the port. */
 td.clip .row-toggle {
   display: flex;
   align-items: baseline;
-  max-width: 100%;
+  max-width: calc(100% + 9px);
 }
 
 td.clip .caret {
@@ -1627,9 +1631,12 @@ table.grid tr.detail-row > td {
 }
 
 /* A value read or copied whole takes a line of its own, and on a narrow
-   screen wraps rather than losing its end to the ellipsis. */
+   screen wraps rather than losing its end to the ellipsis. The value follows
+   its key: the line is as wide as the table, 1000px at least, and its far end
+   is off-screen wherever the pane is narrower than that. */
 .mini-kv > .wide {
   grid-column: 1 / -1;
+  justify-content: flex-start;
 }
 
 .mini-kv > .wide b {
@@ -2430,6 +2437,12 @@ body {
     grid-template-columns: 1fr;
     /* Expanded details remain readable beside the left edge of a wide table. */
     max-width: calc(100vw - 60px);
+  }
+
+  /* The block is one column here, and capped to the screen, so the address's
+     value can end at the right edge as every other row's does. */
+  .mini-kv > .wide {
+    justify-content: space-between;
   }
 
   /* Dialogs take the whole screen. */
