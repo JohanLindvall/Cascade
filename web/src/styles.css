@@ -1528,6 +1528,25 @@ table.grid tbody tr:hover {
   cursor: pointer;
 }
 
+/* A label longer than its fixed column ends in an ellipsis inside it rather
+   than running into the next: a peer's IPv6 address with its port is up to
+   47 characters, over twice the column. The cell's title holds the whole. */
+td.clip .row-toggle {
+  display: flex;
+  align-items: baseline;
+  max-width: 100%;
+}
+
+td.clip .caret {
+  flex: none;
+}
+
+td.clip .row-toggle-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 table.grid tr.expandable {
   cursor: pointer;
 }
@@ -1605,6 +1624,17 @@ table.grid tr.detail-row > td {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A value read or copied whole takes a line of its own, and on a narrow
+   screen wraps rather than losing its end to the ellipsis. */
+.mini-kv > .wide {
+  grid-column: 1 / -1;
+}
+
+.mini-kv > .wide b {
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .flags {

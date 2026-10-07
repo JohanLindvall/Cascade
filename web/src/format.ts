@@ -184,6 +184,18 @@ export function fileName(path: string): string {
 }
 
 /**
+ * An address and its port, written the standard way (RFC 3986, Go's
+ * net.JoinHostPort): an IPv6 address in brackets, or nothing says which of
+ * its colons starts the port — 2001:db8::1:51413. rtorrent's p.address
+ * brackets IPv6 itself (command_peer.cc, 0.9.8 through 0.16), so an address
+ * that has them already keeps them as they are.
+ */
+export function hostPort(address: string, port: number): string {
+  const host = address.includes(':') && !address.startsWith('[') ? `[${address}]` : address;
+  return `${host}:${port}`;
+}
+
+/**
  * A magnet link that reproduces the torrent from its info hash. Trackers are
  * left out on purpose: a private tracker's announce URL carries the owner's
  * passkey, and a copied magnet gets pasted to other people.

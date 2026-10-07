@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Torrent } from '../contracts.ts';
 import { parseLogLine } from '../format.ts';
+import { DEFAULT_PREFERENCES } from '../preferences.ts';
+import { sortTorrents } from '../sort.ts';
 import { CATALOG, LONG_NAME } from './catalog.ts';
 import { HISTORY_LENGTH, Session } from './session.ts';
 import type { TorrentInfo } from './torrentfile.ts';
@@ -342,7 +344,8 @@ test('throttle groups and the global limit hold the rates', () => {
 test('peers, trackers and files hang together with the listing', () => {
   const session = new Session({ seed: SEED, now: START });
   session.advance(START + 20_000);
-  const documentation = /^(192\.0\.2|198\.51\.100|203\.0\.113)\.\d+$|^2001:db8:/;
+  // IPv6 in brackets, as p.address answers.
+  const documentation = /^(192\.0\.2|198\.51\.100|203\.0\.113)\.\d+$|^\[2001:db8:[0-9a-f:]+\]$/;
   for (const t of session.list()) {
     const peers = session.peers(t.hash);
     assert.equal(peers.length, t.peersConnected, t.name);
@@ -364,6 +367,23 @@ test('peers, trackers and files hang together with the listing', () => {
   const long = session.files(aozora?.hash ?? '').find((file) => file.path === LONG_NAME);
   assert.ok(long?.onDisk && long.onDisk !== LONG_NAME && new TextEncoder().encode(long.onDisk).length <= 255);
   assert.ok(new TextEncoder().encode(LONG_NAME).length > 255);
+});
+
+test('the first torrents with peers in the list keep a full-length IPv6 one while they run', () => {
+  const session = new Session({ seed: SEED, now: START });
+  // Eight groups, none folded into a "::": an address at its full length.
+  const full = /^\[2001:db8(:[0-9a-f]{1,4}){6}\]$/;
+  const sort = { key: DEFAULT_PREFERENCES.sortKey, dir: DEFAULT_PREFERENCES.sortDir };
+  const first = sortTorrents(session.list(), sort).filter((t) => t.peersConnected > 0).slice(0, 2);
+  assert.equal(first.length, 2);
+  // Through the first finish, inside a minute, and an hour of peers coming and going.
+  for (let s = 0; s <= 3600; s += 15) {
+    session.advance(START + s * 1000);
+    for (const { hash, name } of first) {
+      const addresses = session.peers(hash).map((peer) => peer.address);
+      assert.ok(addresses.some((address) => full.test(address)), `${name} at ${s}s: ${addresses.join(' ')}`);
+    }
+  }
 });
 
 test('the log is rtorrent\'s format throughout, and in order', () => {

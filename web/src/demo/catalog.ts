@@ -41,6 +41,12 @@ export interface CatalogTorrent {
   leechers: number;
   /** Peers typically connected while active. */
   peers: number;
+  /**
+   * A peer connected for as long as the torrent runs. A full-length IPv6
+   * address is the widest the Peers tab has to show, so the torrents near
+   * the top of the list keep one there.
+   */
+  steadyPeer?: string;
   /** Announce tiers; public torrents also get rtorrent's dht:// pseudo-tracker. */
   trackers: string[][];
   isPrivate?: boolean;
@@ -133,12 +139,14 @@ export const CATALOG: CatalogTorrent[] = [
     name: 'Fedora-Workstation-Live-43-1.6.x86_64.iso', label: 'linux', size: 2_742_190_080, pieceLength: 256 * KiB,
     state: 'downloading', progress: 0, finishIn: 370, addedDays: 0.03, createdDays: 340, ratio: 0.08,
     down: 3.1 * MiB, up: 420 * KiB, seeds: 812, leechers: 96, peers: 41,
+    steadyPeer: '2001:db8:c0a8:7f1e:9d4b:e6f2:3a5c:b8d7',
     trackers: [['http://torrent.example.org:6969/announce']],
   },
   {
     name: 'archlinux-2026.10.01-x86_64.iso', label: 'linux', size: 1_434_976_256, pieceLength: 512 * KiB,
     state: 'downloading', progress: 0, finishIn: 42, addedDays: 0.02, createdDays: 5, ratio: 0.11,
     down: 1.4 * MiB, up: 210 * KiB, seeds: 402, leechers: 58, peers: 23, swing: 0.5,
+    steadyPeer: '2001:db8:85a3:8d3:1319:8a2e:370:7348',
     trackers: [['http://tracker.example.net:6969/announce']],
   },
   {

@@ -16,6 +16,7 @@ import {
   duration,
   fileName,
   formatRateInput,
+  hostPort,
   interval,
   logDay,
   logTime,
@@ -156,6 +157,30 @@ test('percent clamps into [0, 100]', () => {
 test('fileName takes the last path segment', () => {
   assert.equal(fileName('dir/sub/movie.mkv'), 'movie.mkv');
   assert.equal(fileName('plain.mkv'), 'plain.mkv');
+});
+
+test('an IPv6 address goes in brackets before its port; IPv4 and names do not', () => {
+  assert.equal(hostPort('192.0.2.7', 6881), '192.0.2.7:6881');
+  assert.equal(hostPort('peer.example.org', 51413), 'peer.example.org:51413');
+  assert.equal(hostPort('2001:db8::1', 51413), '[2001:db8::1]:51413');
+  assert.equal(hostPort('2001:db8:85a3:8d3:1319:8a2e:370:7348', 51413), '[2001:db8:85a3:8d3:1319:8a2e:370:7348]:51413');
+  assert.equal(hostPort('::ffff:192.0.2.7', 6881), '[::ffff:192.0.2.7]:6881');
+  assert.equal(hostPort('fe80::1%eth0', 6881), '[fe80::1%eth0]:6881');
+  // As rtorrent's p.address answers for an IPv6 peer: bracketed once, not twice.
+  assert.equal(hostPort('[2001:db8::1]', 51413), '[2001:db8::1]:51413');
+});
+
+test('the port is whatever follows the last colon outside the brackets', () => {
+  for (const address of ['192.0.2.7', '2001:db8::1', '[2001:db8::1]', '::', '::ffff:192.0.2.7', '2001:db8:0:0:1:0:0:1']) {
+    for (const port of [0, 1, 6881, 51413, 65535]) {
+      const text = hostPort(address, port);
+      const cut = text.lastIndexOf(':');
+      const host = text.slice(0, cut);
+      assert.equal(Number(text.slice(cut + 1)), port, text);
+      // A colon left in the host is inside brackets, so it cannot be read as the port's.
+      assert.ok(!host.includes(':') || /^\[[^\]]*\]$/.test(host), text);
+    }
+  }
 });
 
 test('log lines split into time, level and message', () => {

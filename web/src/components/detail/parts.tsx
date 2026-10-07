@@ -24,12 +24,16 @@ export function Flags({ flags }: { flags: Flag[] }) {
 
 export const yesNo = (value: boolean) => (value ? 'yes' : 'no');
 
-/** Key/value block shown when a peer or tracker row is expanded. */
-export function MiniKv({ rows }: { rows: Array<[string, ReactNode]> }) {
+/**
+ * Key/value block shown when a peer or tracker row is expanded. A 'wide' row
+ * has a line of its own and wraps rather than ending in an ellipsis, for a
+ * value that is read or copied whole: a peer's address.
+ */
+export function MiniKv({ rows }: { rows: Array<[key: string, value: ReactNode, width?: 'wide']> }) {
   return (
     <div className="mini-kv">
-      {rows.map(([key, value]) => (
-        <div key={key}>
+      {rows.map(([key, value, width]) => (
+        <div key={key} className={width}>
           <span>{key}</span>
           <b>{value}</b>
         </div>
@@ -84,7 +88,7 @@ export function RowToggle({ open, onToggle, children }: { open: boolean; onToggl
       <span className="caret" aria-hidden="true">
         {open ? '▾' : '▸'}
       </span>
-      {children}
+      <span className="row-toggle-label">{children}</span>
     </button>
   );
 }

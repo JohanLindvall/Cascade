@@ -90,6 +90,7 @@ export interface SimFile {
 
 export interface SimPeer {
   id: string;
+  /** As p.address answers it: an IPv6 address in brackets. */
   address: string;
   port: number;
   client: string;
@@ -106,6 +107,8 @@ export interface SimPeer {
   weight: number;
   /** What the peer pulls from the swarm as a whole, bytes/s. */
   swarmRate: number;
+  /** Connected for as long as the torrent runs, not in turn with the rest of the pool. */
+  steady: boolean;
 }
 
 type AnnounceEvent = 'started' | 'completed' | 'updated';
@@ -312,6 +315,11 @@ function asciiHex(text: string): string {
   return [...text].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
 }
 
+/** An address as p.address answers it: rtorrent brackets an IPv6 one itself (command_peer.cc, every release). */
+function peerAddress(address: string): string {
+  return address.includes(':') ? `[${address}]` : address;
+}
+
 function makePeer(rng: Random, seed: boolean): SimPeer {
   let pick = rng.range(0, CLIENT_WEIGHT);
   let client = CLIENTS[0];
@@ -329,7 +337,7 @@ function makePeer(rng: Random, seed: boolean): SimPeer {
   const encrypted = rng.chance(0.7);
   return {
     id: (asciiHex(client[1]) + rng.hex(24)).toUpperCase(),
-    address,
+    address: peerAddress(address),
     port: rng.chance(0.55) ? rng.pick(PORTS) : rng.int(10_000, 65_000),
     client: client[0],
     options: rng.pick(OPTIONS),
@@ -343,7 +351,13 @@ function makePeer(rng: Random, seed: boolean): SimPeer {
     preferred: rng.chance(0.03),
     weight: rng.range(0.3, 1.7),
     swarmRate: rng.range(40 * KiB, 2.2 * MiB),
+    steady: false,
   };
+}
+
+/** A catalogue torrent's steady peer: a leecher, so it stays once the torrent is complete too. */
+function steadyPeer(rng: Random, address: string): SimPeer {
+  return { ...makePeer(rng, false), address: peerAddress(address), steady: true };
 }
 
 /** Piece length as torrent creators pick it: a few thousand pieces at most. */
@@ -625,18 +639,24 @@ export class Session {
     };
   }
 
-  /** The peers connected now: a window over the torrent's pool that slides as peers come and go. */
+  /**
+   * The peers connected now: the steady ones, there since the torrent last
+   * started, then a window over the rest of its pool that slides as peers
+   * come and go.
+   */
   connected(t: SimTorrent, at = this.time / 1000): Array<{ peer: SimPeer; since: number }> {
     const count = this.peerCount(t, at);
     if (count === 0) return [];
     const pool = isComplete(t) ? t.pool.filter((peer) => !peer.seed) : t.pool;
+    const out = pool.filter((peer) => peer.steady).slice(0, count).map((peer) => ({ peer, since: t.activeSince }));
+    const turns = pool.filter((peer) => !peer.steady);
+    const slots = count - out.length;
     const rotate = 53;
     const turn = Math.floor((at - this.origin) / rotate + t.swarm.phase);
-    const out: Array<{ peer: SimPeer; since: number }> = [];
-    for (let i = 0; i < Math.min(count, pool.length); i++) {
+    for (let i = 0; i < Math.min(slots, turns.length); i++) {
       // When the peer joined, back in epoch seconds: its age and totals count from there.
-      const joined = this.origin + (turn + i - count + 1 - t.swarm.phase) * rotate;
-      out.push({ peer: pool[(turn + i) % pool.length], since: Math.max(t.activeSince, Math.floor(joined)) });
+      const joined = this.origin + (turn + i - slots + 1 - t.swarm.phase) * rotate;
+      out.push({ peer: turns[(turn + i) % turns.length], since: Math.max(t.activeSince, Math.floor(joined)) });
     }
     return out;
   }
@@ -1621,6 +1641,7 @@ export class Session {
     }
 
     t.pool = this.peerPool(t, state === 'downloading' ? 0.6 : 0.15);
+    if (entry.steadyPeer) t.pool.unshift(steadyPeer(rng.fork('steady peer'), entry.steadyPeer));
     entry.trackers.forEach((tier, group) => tier.forEach((url) => t.trackers.push(this.makeTracker(t, url, group, false))));
     if (!t.isPrivate) t.trackers.push(this.makeTracker(t, 'dht://', entry.trackers.length, false));
     if (entry.failure) {

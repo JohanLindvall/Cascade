@@ -85,7 +85,8 @@ type TorrentFile struct {
 }
 
 type Peer struct {
-	ID        string  `json:"id"`
+	ID string `json:"id"`
+	// p.address as rtorrent answers it: an IPv6 address comes in brackets.
 	Address   string  `json:"address"`
 	Port      int64   `json:"port"`
 	Client    string  `json:"client"`
