@@ -537,6 +537,7 @@ export class Rpc {
               next = value(params) !== 0;
               break;
             case 'string':
+            case 'proxy':
               next = string(params);
               break;
             case 'flags':

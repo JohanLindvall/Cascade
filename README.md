@@ -238,6 +238,11 @@ whole KiB/s and drops the fraction, so a limit of 800 B/s became unlimited too. 
 global rates under 4 GiB/s and rounds them up to whole KiB/s, as it does a throttle group's, and
 the DHT ports to 65535, refusing anything past them by name on every release.
 
+The global proxy (`network.proxy.global`, from 0.16.16) wants its proxy by IPv4 address, scheme and
+port included — `socks5://10.0.0.1:1080`. Given a host name or an IPv6 address, rtorrent 0.16.24
+and 0.16.25 crash rather than refuse it, and `RT_PROXY_GLOBAL` set to one crashed rtorrent at every
+start, so Cascade refuses those before they are sent.
+
 ## Configuration
 
 Everything is an environment variable on `docker run`. Only what you set is applied — anything
@@ -321,7 +326,7 @@ Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
 | `RT_BIND_IPV6` | unset | IPv6 bind address (rtorrent 0.16+) |
 | `RT_PROXY` | unset | HTTP proxy for tracker announces |
 | `RT_PROXY_HTTP` | unset | Proxy for all HTTP traffic (rtorrent 0.16+) |
-| `RT_PROXY_GLOBAL` | unset | Proxy for all traffic (rtorrent 0.16+) |
+| `RT_PROXY_GLOBAL` | unset | Proxy for all traffic, by IPv4 address: socks5://10.0.0.1:1080 (rtorrent 0.16+) |
 | `RT_BLOCK_OUTGOING` | rtorrent default | yes refuses outgoing connections (rtorrent 0.16+) |
 
 ### Trackers and DHT

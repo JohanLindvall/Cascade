@@ -11,10 +11,13 @@
  */
 import type { GlobalSettings } from '../contracts.ts';
 import { MAX_RATE, appliedRate } from '../settings.ts';
-import { bool, int, text } from './validate.ts';
+import { HttpError, bool, int, text } from './validate.ts';
 
-/** As the server's kinds: 'rate' is a global rate rtorrent keeps in whole KiB/s, 'port' a 16-bit port. */
-export type SettingKind = 'uint' | 'int' | 'rate' | 'port' | 'bool' | 'string' | 'flags';
+/**
+ * As the server's kinds: 'rate' is a global rate rtorrent keeps in whole KiB/s,
+ * 'port' a 16-bit port, 'proxy' the global proxy's URL, checked by proxyHostRefused.
+ */
+export type SettingKind = 'uint' | 'int' | 'rate' | 'port' | 'bool' | 'string' | 'flags' | 'proxy';
 export type SettingKey = keyof GlobalSettings;
 type SettingValue = number | boolean | string;
 
@@ -88,7 +91,7 @@ export const SETTINGS: readonly SettingSpec[] = [
   both('localAddress', 'network.local_address', 'string'),
   both('proxyAddress', 'network.http.proxy_address', 'string'),
   both('proxyHttp', 'network.proxy.http', 'string'),
-  both('proxyGlobal', 'network.proxy.global', 'string'),
+  both('proxyGlobal', 'network.proxy.global', 'proxy'),
   both('httpCapath', 'network.http.capath', 'string'),
   both('httpCacert', 'network.http.cacert', 'string'),
   both('sslVerifyPeer', 'network.http.ssl_verify_peer', 'bool'),
@@ -183,7 +186,31 @@ export function coerce(kind: SettingKind, value: unknown, key: string): SettingV
     }
     case 'string':
       return text(value, key, true);
+    case 'proxy': {
+      const url = text(value, key, true);
+      if (proxyHostRefused(url)) {
+        throw new HttpError(400, `"${key}" must give the proxy by its IPv4 address: rtorrent crashes on a host name or an IPv6 address there`);
+      }
+      return url;
+    }
   }
+}
+
+/**
+ * CheckProxyHost in server/internal/rtorrent/settings.go: a global proxy whose
+ * host is not an IPv4 address. network.proxy.global.set looks the host up as
+ * a numeric address and, finding none, goes on with no address and crashes —
+ * on a host name, and on an IPv6 address, which curl hands over in its
+ * brackets (0.16.24 and 0.16.25, measured). The server refuses those before
+ * they are sent; anything else wrong with a URL is rtorrent's to refuse.
+ */
+function proxyHostRefused(url: string): boolean {
+  const match = /^[A-Za-z][A-Za-z0-9+.-]*:\/*([^/?#]*)/.exec(url);
+  if (!match) return false;
+  let host = match[1].slice(match[1].lastIndexOf('@') + 1);
+  const colon = host.lastIndexOf(':');
+  if (colon >= 0 && !host.endsWith(']')) host = host.slice(0, colon);
+  return host !== '' && (host.includes(':') || !isIPv4(host));
 }
 
 const MiB = 1024 * 1024;
@@ -327,8 +354,10 @@ function httpProxyRefusal(value: string): string | null {
 
 /**
  * network.proxy.global.set, in ProxyManager::set_proxy_url's order. "" clears
- * it. 0.16.24 dies on a host that is not an address literal instead of
- * refusing it; the demo answers with the refusal the code means to give.
+ * it. 0.16.24 and 0.16.25 die on a host that is not an IPv4 address — a name,
+ * or an IPv6 address, which curl hands over in its brackets — instead of
+ * refusing it. The settings route never sends one (proxyHostRefused); the
+ * console answers with the refusal the code means to give.
  */
 function globalProxyRefusal(value: string): string | null {
   if (value === '') return null;
@@ -337,8 +366,7 @@ function globalProxyRefusal(value: string): string | null {
   if (url.host === '') return 'Proxy address must include a host.';
   if (url.port === 0) return 'Proxy address must include a port.';
   if (url.rest !== '' && url.rest !== '/') return 'Proxy address must not include a path, query, or fragment.';
-  const host = url.host.replace(/^\[(.*)\]$/, '$1');
-  if (!isIPv4(host) && ipv6(host) === null) return `Proxy address numeric lookup failed: ${url.host}`;
+  if (!isIPv4(url.host)) return `Proxy address numeric lookup failed: ${url.host}`;
   if (url.scheme === 'http') {
     return url.user || url.password ? "Proxy address for 'http://' must not include a user or password." : null;
   }

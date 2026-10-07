@@ -17,8 +17,11 @@ package rtorrent
 // change nothing.
 
 import (
+	"net"
+	"regexp"
 	"strings"
 
+	"github.com/JohanLindvall/Cascade/server/internal/httperr"
 	"github.com/JohanLindvall/Cascade/server/internal/validate"
 	"github.com/JohanLindvall/Cascade/server/internal/xmlrpc"
 )
@@ -47,7 +50,41 @@ const (
 	// KindPort is a port number: 0.16.25 refuses one past 65535, which
 	// earlier releases cut to 16 bits (65536 became 0).
 	KindPort SettingKind = "port"
+	// KindProxy is the global proxy's URL, a string CheckProxyHost has
+	// passed.
+	KindProxy SettingKind = "proxy"
 )
+
+// proxyAuthority is a URL's scheme and authority as rtorrent's parser (curl's)
+// reads them: any number of slashes may follow the colon.
+var proxyAuthority = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.-]*:/*([^/?#]*)`)
+
+// CheckProxyHost refuses a global proxy rtorrent would die on.
+// network.proxy.global.set (0.16.16 on) looks its host up as a numeric
+// address and, when that finds nothing, goes on with no address at all and
+// crashes: a host name does it, and so does an IPv6 address, which curl hands
+// over in its brackets — measured on 0.16.24 and 0.16.25, and given as
+// RT_PROXY_GLOBAL it crashed rtorrent again after every restart. Anything
+// else wrong with the URL, rtorrent refuses in its own words, so only an
+// authority whose host is not an IPv4 address is refused here.
+func CheckProxyHost(value, field string) error {
+	match := proxyAuthority.FindStringSubmatch(value)
+	if match == nil {
+		return nil
+	}
+	host := match[1]
+	if at := strings.LastIndexByte(host, '@'); at >= 0 {
+		host = host[at+1:]
+	}
+	if colon := strings.LastIndexByte(host, ':'); colon >= 0 && !strings.HasSuffix(host, "]") {
+		host = host[:colon]
+	}
+	// No host at all is rtorrent's to refuse; a colon left is IPv6.
+	if host == "" || !strings.Contains(host, ":") && net.ParseIP(host) != nil {
+		return nil
+	}
+	return httperr.Newf(400, "%q must give the proxy by its IPv4 address: rtorrent crashes on a host name or an IPv6 address there", field)
+}
 
 // MaxRate is the highest global rate every release keeps as given: the
 // largest whole KiB/s under 0.16.25's bound of 4294967294 bytes/s.
@@ -170,7 +207,7 @@ var settingTable = []struct {
 	{"localAddress", SettingSpec{Get: one("network.local_address"), Set: one("network.local_address.set"), Kind: KindString}},
 	{"proxyAddress", SettingSpec{Get: one("network.http.proxy_address"), Set: one("network.http.proxy_address.set"), Kind: KindString}},
 	{"proxyHttp", SettingSpec{Get: one("network.proxy.http"), Set: one("network.proxy.http.set"), Kind: KindString}},
-	{"proxyGlobal", SettingSpec{Get: one("network.proxy.global"), Set: one("network.proxy.global.set"), Kind: KindString}},
+	{"proxyGlobal", SettingSpec{Get: one("network.proxy.global"), Set: one("network.proxy.global.set"), Kind: KindProxy}},
 	{"httpCapath", SettingSpec{Get: one("network.http.capath"), Set: one("network.http.capath.set"), Kind: KindString}},
 	{"httpCacert", SettingSpec{Get: one("network.http.cacert"), Set: one("network.http.cacert.set"), Kind: KindString}},
 	{"sslVerifyPeer", SettingSpec{Get: one("network.http.ssl_verify_peer"), Set: one("network.http.ssl_verify_peer.set"), Kind: KindBool}},
@@ -304,6 +341,12 @@ func coerce(kind SettingKind, value any, key string) ([]any, error) {
 			return []any{"none"}, nil
 		}
 		return flags, nil
+	case KindProxy:
+		text, err := validate.String(value, key, true)
+		if err == nil {
+			err = CheckProxyHost(text, key)
+		}
+		return []any{text}, err
 	}
 	text, err := validate.String(value, key, true)
 	return []any{text}, err

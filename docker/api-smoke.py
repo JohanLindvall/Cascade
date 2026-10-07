@@ -93,6 +93,11 @@ def check_basics(cascade):
 def check_refusals(cascade):
     cascade.api('/api/torrents/action/stop', {'hashes': ['invalid']}, expected=400)
     cascade.api('/api/settings', {'downloadRate': None}, expected=400)
+    # rtorrent crashes on a global proxy named by host (AGENTS.md quirk 14).
+    if cascade.api('/api/capabilities')['supports']['proxyGlobal']:
+        pid = cascade.rpc('system.pid')
+        cascade.api('/api/settings', {'proxyGlobal': 'socks5://localhost:1080'}, expected=400)
+        assert cascade.rpc('system.pid') == pid, 'rtorrent restarted'
     missing = cascade.api('/api/nothing/here', expected=404)
     assert 'no such endpoint' in missing['error'], missing
     # A write another site made the browser send is refused before anything else.

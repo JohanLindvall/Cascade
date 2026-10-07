@@ -82,7 +82,8 @@ NETWORK
   RT_BIND_IPV6               IPv6 bind address (rtorrent 0.16+) [unset]
   RT_PROXY                   HTTP proxy for tracker announces [unset]
   RT_PROXY_HTTP              Proxy for all HTTP traffic (rtorrent 0.16+) [unset]
-  RT_PROXY_GLOBAL            Proxy for all traffic (rtorrent 0.16+) [unset]
+  RT_PROXY_GLOBAL            Proxy for all traffic, by IPv4 address: socks5://10.0.0.1:1080
+                             (rtorrent 0.16+) [unset]
   RT_BLOCK_OUTGOING          yes refuses outgoing connections (rtorrent 0.16+) [rtorrent
                              default]
 

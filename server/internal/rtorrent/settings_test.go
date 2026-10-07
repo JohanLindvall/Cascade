@@ -112,6 +112,37 @@ func TestRatesAndPortsStayWithinWhatRtorrentKeeps(t *testing.T) {
 	}
 }
 
+// network.proxy.global.set kills rtorrent (0.16.24 and 0.16.25, measured) when
+// its host is not a numeric address: a host name, or an IPv6 address, which
+// curl hands over in brackets. Those are a 400 before anything is sent, in
+// every spelling curl reads; whatever else is wrong with a URL rtorrent
+// refuses in its own words, and the HTTP proxy, which curl looks up itself,
+// takes a name.
+func TestAGlobalProxyRtorrentWouldCrashOnIsRefusedFirst(t *testing.T) {
+	for _, value := range []string{
+		"http://proxy.example.org:3128", "socks5h://localhost:1080", "HTTP://Proxy.Example.org:3128",
+		"http://user:pw@proxy.example.org:3128", "http://proxy.example.org:3128/", "http:/proxy.example.org:3128",
+		"http:///proxy.example.org:3128", "socks5://[::1]:1080", "http://[::1]:3128", "http://[::ffff:10.0.0.1]",
+		"http://proxy.example.org", " socks5://localhost:1080 ",
+	} {
+		_, err := SettingEntries(map[string]any{"proxyGlobal": value}, resolveAll)
+		requireFieldError(t, err, "proxyGlobal")
+	}
+	for _, value := range []string{
+		"", "socks5://10.0.0.1:1080", "http://10.0.0.1:3128/", "socks5://user@10.0.0.1:1080", " http://10.0.0.1:3128 ",
+		// rtorrent's own refusals: no scheme, no host, no port, another scheme.
+		"bogus", "10.0.0.1:3128", "http://:3128", "http://10.0.0.1", "ftp://10.0.0.1:21",
+	} {
+		call, err := entry(t, map[string]any{"proxyGlobal": value})
+		if err != nil || call.Method != "network.proxy.global.set" || call.Params[1] != validate.Trim(value) {
+			t.Errorf("%q: %#v %v", value, call, err)
+		}
+	}
+	if _, err := entry(t, map[string]any{"proxyHttp": "http://proxy.example.org:3128"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // The torrent-name switches (0.16.22 and 0.16.25) are booleans like the rest:
 // 0 or 1 after the empty target, read back as true or false.
 func TestTheTorrentNameSwitchesAreBooleans(t *testing.T) {

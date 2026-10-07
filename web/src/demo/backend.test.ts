@@ -390,11 +390,18 @@ test('settings: what 0.16.25 refuses, in its words, and what it takes, as it rea
     [{ proxyGlobal: 'bogus' }, 'network.proxy.global.set: Proxy address must include a scheme.'],
     [{ proxyGlobal: 'http://10.0.0.1' }, 'network.proxy.global.set: Proxy address must include a port.'],
     [{ proxyGlobal: 'ftp://10.0.0.1:21' }, 'network.proxy.global.set: Unsupported proxy scheme: ftp'],
-    // 0.16.24 dies on a host name here; the demo gives the refusal its code means.
-    [{ proxyGlobal: 'http://proxy.example.org:3128' }, 'network.proxy.global.set: Proxy address numeric lookup failed: proxy.example.org'],
     [{ dhtMode: 'bogus' }, 'dht.mode.set: Invalid dht mode: bogus'],
   ];
   for (const [body, error] of cases) assert.equal(refused('POST', 'settings', body, 502, error).faultCode, -503);
+  // 0.16.24 and 0.16.25 die on a global proxy named by host or by IPv6 address,
+  // so the server refuses one before it is sent; the console, which sends it,
+  // gives the refusal rtorrent's code means.
+  const crashes = '"proxyGlobal" must give the proxy by its IPv4 address: rtorrent crashes on a host name or an IPv6 address there';
+  for (const proxyGlobal of ['http://proxy.example.org:3128', 'socks5://[::1]:1080', 'http:///localhost:3128']) {
+    refused('POST', 'settings', { proxyGlobal }, 400, crashes);
+  }
+  const viaConsole = ok<{ fault?: { message: string } }>('POST', 'rpc', { method: 'network.proxy.global.set', params: ['', 'socks5://[::1]:1080'] });
+  assert.equal(viaConsole.fault?.message, 'Proxy address numeric lookup failed: [::1]');
   assert.deepEqual(ok('GET', 'settings'), before, 'a refused value was kept');
 
   const taken = ok<Record<string, unknown>>('POST', 'settings', {

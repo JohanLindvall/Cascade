@@ -57,7 +57,7 @@ Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
 | `RT_BIND_IPV6` | unset | IPv6 bind address (rtorrent 0.16+) |
 | `RT_PROXY` | unset | HTTP proxy for tracker announces |
 | `RT_PROXY_HTTP` | unset | Proxy for all HTTP traffic (rtorrent 0.16+) |
-| `RT_PROXY_GLOBAL` | unset | Proxy for all traffic (rtorrent 0.16+) |
+| `RT_PROXY_GLOBAL` | unset | Proxy for all traffic, by IPv4 address: socks5://10.0.0.1:1080 (rtorrent 0.16+) |
 | `RT_BLOCK_OUTGOING` | rtorrent default | yes refuses outgoing connections (rtorrent 0.16+) |
 
 ### Trackers and DHT

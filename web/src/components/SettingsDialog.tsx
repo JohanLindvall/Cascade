@@ -279,16 +279,18 @@ export function SettingsDialog({
               textField('bindAddressV4', 'Bind address (IPv4)', { hint: 'rtorrent 0.16+' })}
             {supports('bindAddressV6') &&
               textField('bindAddressV6', 'Bind address (IPv6)', { hint: 'rtorrent 0.16+' })}
-            {textField('proxyAddress', 'HTTP proxy for announces', { placeholder: 'host:port' })}
+            {/* 0.16 refuses a proxy without its scheme, which 0.9 took. */}
+            {textField('proxyAddress', 'HTTP proxy for announces', { placeholder: 'http://host:port' })}
             {supports('proxyHttp') &&
               textField('proxyHttp', 'HTTP proxy (all HTTP)', {
                 hint: 'rtorrent 0.16+',
-                placeholder: 'host:port',
+                placeholder: 'http://host:port',
               })}
+            {/* rtorrent crashes on a host name here (CheckProxyHost in the server). */}
             {supports('proxyGlobal') &&
               textField('proxyGlobal', 'Global proxy (all traffic)', {
-                hint: 'rtorrent 0.16+',
-                placeholder: 'host:port',
+                hint: 'rtorrent 0.16+ · by IPv4 address, not by name',
+                placeholder: 'socks5://10.0.0.1:1080',
               })}
             <Field label="Protocol encryption" hint="write-only — cannot be read back">
               <select

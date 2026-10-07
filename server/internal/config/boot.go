@@ -52,7 +52,14 @@ func StartupSettings(getenv func(string) string) (map[string]any, error) {
 		case spec.Kind == rtorrent.KindBool:
 			values[option.Setting], err = validate.Bool(raw, option.Name)
 		default:
-			values[option.Setting], err = validate.String(raw, option.Name, true)
+			var text string
+			text, err = validate.String(raw, option.Name, true)
+			if err == nil && spec.Kind == rtorrent.KindProxy {
+				// Applied at every start, a proxy rtorrent dies on would
+				// kill it again after each restart.
+				err = rtorrent.CheckProxyHost(text, option.Name)
+			}
+			values[option.Setting] = text
 		}
 		if err != nil {
 			return nil, err

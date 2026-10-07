@@ -329,7 +329,7 @@ var Options = []Option{
 		Name:    "RT_PROXY_GLOBAL",
 		Setting: "proxyGlobal",
 		Section: "Network",
-		Summary: "Proxy for all traffic (rtorrent 0.16+)",
+		Summary: "Proxy for all traffic, by IPv4 address: socks5://10.0.0.1:1080 (rtorrent 0.16+)",
 		Note:    "unset",
 	},
 	{

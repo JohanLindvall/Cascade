@@ -190,6 +190,8 @@ func TestInvalidStartupInputFailsByEnvironmentName(t *testing.T) {
 		// Past what the settings table takes, which would refuse every
 		// startup setting along with it: 4 GiB/s, in KiB/s, and a 17-bit port.
 		"RT_UPLOAD_RATE": "4194304", "RT_DHT_OVERRIDE_PORT": "65536",
+		// A global proxy rtorrent dies on, at every start.
+		"RT_PROXY_GLOBAL": "http://proxy.example.org:3128",
 	} {
 		if _, err := StartupSettings(env(map[string]string{name: value})); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("%s=%s: %v", name, value, err)

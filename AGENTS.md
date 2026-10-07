@@ -385,6 +385,14 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    tracker checking both sees a mismatch otherwise. The prefix of each release is spelled out in
    the README's *The version presented to trackers*.
 
+14. **`network.proxy.global.set` crashes rtorrent on a host it cannot read as a numeric address**
+   (0.16.16, which added it, to 0.16.25: the numeric lookup "succeeds" with no address and the
+   setter dereferences it) — a host name, and an IPv6 address too, since curl hands that over in
+   its brackets. Measured on 0.16.24 and 0.16.25; as `RT_PROXY_GLOBAL` it crashed rtorrent again
+   after every restart. `proxyGlobal` is `KindProxy`, so `CheckProxyHost` refuses such a value
+   with a 400 before anything is sent, and the startup settings stop the start by the variable's
+   name; the console and `/RPC2` still pass it through, as they pass everything.
+
 ## Adding support for a new backend command
 
 Never call a command unconditionally.
