@@ -260,6 +260,26 @@ test('a directory change reads the directory above a folder without trailing sla
   assert.deepEqual([after.directory, after.status], [before.directory, before.status]);
 });
 
+const CLAPPER = '🎬';
+const BEYOND = `contains "${CLAPPER}" (U+1F3AC): rtorrent's XML-RPC layer takes no character beyond U+FFFF, such as an emoji`;
+const ROOT = '"directory" cannot be "/": rtorrent strips a directory\'s trailing slashes and would put a single file in ".", the directory it runs in';
+
+test('a directory change refuses what rtorrent cannot take before the torrent stops: an emoji, the root', () => {
+  const { ok, refused, named } = setup();
+  const before = named('ubuntu');
+  assert.equal(before.status, 'seeding');
+  refused('PATCH', `torrents/${before.hash}`, { priority: 0, directory: `/media/films ${CLAPPER}` }, 400, `"directory" ${BEYOND}`);
+  refused('PATCH', `torrents/${before.hash}`, { directory: '/' }, 400, ROOT);
+  refused('PATCH', `torrents/${before.hash}`, { directory: ' // ' }, 400, ROOT);
+  refused('PATCH', `torrents/${before.hash}`, { directory: '/media\r\nfilms' }, 400, '"directory" contains a carriage return, which XML reads as a line feed');
+  refused('PATCH', `torrents/${before.hash}`, { throttle: `slow ${CLAPPER}` }, 400, `"throttle" ${BEYOND}`);
+  const after = named('ubuntu');
+  assert.deepEqual([after.status, after.directory, after.priority], [before.status, before.directory, before.priority]);
+  // A label goes URL-encoded, whatever it holds.
+  ok('PATCH', `torrents/${before.hash}`, { label: `linux ${CLAPPER}` });
+  assert.equal(named('ubuntu').label, `linux ${CLAPPER}`);
+});
+
 test('a magnet still fetching its metadata keeps the directory it was added with: refused, running on', () => {
   const { ok, refused, named, clock } = setup();
   ok('POST', 'torrents/url', { url: 'magnet:?xt=urn:btih:89abcdef0123456789abcdef0123456789abcdef&dn=open-movie.mkv', directory: '/downloads/fromadd' });
@@ -273,6 +293,43 @@ test('a magnet still fetching its metadata keeps the directory it was added with
   assert.deepEqual([fetched.hash, fetched.isMeta, fetched.directory], [meta.hash, false, '/downloads/fromadd']);
   ok('PATCH', `torrents/${fetched.hash}`, { directory: '/media' });
   assert.deepEqual([named('open-movie.mkv').directory, named('open-movie.mkv').status], ['/media', 'stopped']);
+});
+
+test('an add refuses a directory or a link rtorrent cannot take, the whole batch before any of it', () => {
+  const { ok, call, refused, upload, torrents, named } = setup();
+  const count = torrents().length;
+  const file = { name: 'torrents', filename: 'held.torrent', data: torrentFile({ name: 'held.iso', length: 20_000 }) };
+  const magnet = 'magnet:?xt=urn:btih:1123456789abcdef0123456789abcdef01234567';
+  for (const [parts, error] of [
+    [[file, { name: 'directory', value: `/downloads/${CLAPPER}` }], `"directory" ${BEYOND}`],
+    [[file, { name: 'directory', value: '/' }], ROOT],
+    [[file, { name: 'urls', value: `https://example.org/a.torrent\n${magnet}&dn=${CLAPPER}` }], `"urls" ${BEYOND}`],
+  ] as Array<[UploadPart[], string]>) {
+    const answer = upload(parts);
+    assert.deepEqual([answer.status, answer.body], [400, { error }]);
+  }
+  assert.equal(torrents().length, count, 'a refused batch added something');
+  refused('POST', 'torrents/url', { url: `${magnet}&dn=${CLAPPER}` }, 400, `"url" ${BEYOND}`);
+  refused('POST', 'torrents/url', { url: magnet, directory: '//' }, 400, ROOT);
+  const hash = named('ubuntu').hash;
+  refused('POST', `torrents/${hash}/trackers`, { url: `udp://tracker.example.org:6969/${CLAPPER}` }, 400, `"url" ${BEYOND}`);
+  const view = call('GET', 'torrents', undefined, `view=${encodeURIComponent(CLAPPER)}`);
+  assert.deepEqual([view.status, view.body], [400, { error: `"view" ${BEYOND}` }]);
+  assert.equal(torrents().length, count);
+  // No directory, or an empty one, is rtorrent's default.
+  const added = upload([file, { name: 'directory', value: '' }, { name: 'start', value: '0' }]);
+  assert.deepEqual((added.body as UploadResult).errors, []);
+  assert.equal(named('held.iso').directory, '/downloads');
+  ok('POST', 'torrents/url', { url: `${magnet}&dn=quiet.iso`, directory: '  ', start: false });
+  assert.equal(named('1123456789ABCDEF0123456789ABCDEF01234567.meta').directory, '/config/session');
+});
+
+test('a setting\'s text rtorrent cannot take is refused by name, and the patch with it', () => {
+  const { ok, refused } = setup();
+  const before = ok<Record<string, unknown>>('GET', 'settings');
+  refused('POST', 'settings', { pex: !before.pex, directory: `/downloads/${CLAPPER}` }, 400, `"directory" ${BEYOND}`);
+  refused('POST', 'settings', { encryption: `allow_incoming,${CLAPPER}` }, 400, `"encryption" ${BEYOND}`);
+  assert.deepEqual(ok('GET', 'settings'), before);
 });
 
 test('removing: the data goes only from inside the data roots, refused before the torrent is erased', () => {

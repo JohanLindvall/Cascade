@@ -58,6 +58,9 @@ func (s *Server) routes() *router {
 		if !ok {
 			view = "main"
 		}
+		if err := validate.RtorrentText(view, "view"); err != nil {
+			return nil, err
+		}
 		return s.svc.Torrents(c.ctx, view)
 	})
 	read("GET /api/prefs", func(*call) (any, error) { return s.store.Preferences(), nil })
@@ -87,7 +90,7 @@ func (s *Server) routes() *router {
 
 	handle("POST /api/torrents/upload", s.upload)
 	act("POST /api/torrents/url", func(c *call) error {
-		link, err := c.text("url", false)
+		link, err := validate.RtorrentString(c.body["url"], "url", false)
 		if err != nil {
 			return err
 		}
@@ -369,15 +372,18 @@ func (s *Server) patchTorrent(c *call) error {
 	if err != nil {
 		return err
 	}
-	label, err := c.optionalText("label", true)
+	// The label goes URL-encoded; the throttle group and the directory reach
+	// rtorrent as text, which a directory change used to find out only after
+	// it had stopped and closed the torrent.
+	label, err := c.optionalText("label", true, validate.String)
 	if err != nil {
 		return err
 	}
-	throttle, err := c.optionalText("throttle", true)
+	throttle, err := c.optionalText("throttle", true, validate.RtorrentString)
 	if err != nil {
 		return err
 	}
-	directory, err := c.optionalText("directory", false)
+	directory, err := c.optionalText("directory", false, validate.Directory)
 	if err != nil {
 		return err
 	}

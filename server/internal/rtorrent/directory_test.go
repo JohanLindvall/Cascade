@@ -120,23 +120,6 @@ func TestADirectoryIsTrimmedAsRtorrentKeepsOne(t *testing.T) {
 	}
 }
 
-func TestWhatRtorrentCanBeSentAsText(t *testing.T) {
-	for text, want := range map[string]bool{
-		"Season One":        true,
-		"Café 中文 tab\there": true,
-		"x\uFFFDy":          true,
-		"Caf\xe9":           false,
-		"Song \U0001F3B5":   false,
-		"\uFFFE":            false,
-		"a\rb":              false,
-		"a\x01b":            false,
-	} {
-		if got := Sendable(text); got != want {
-			t.Errorf("%q: %v", text, got)
-		}
-	}
-}
-
 func TestAFolderNamedAfterItsTorrent(t *testing.T) {
 	for _, c := range []struct {
 		name string

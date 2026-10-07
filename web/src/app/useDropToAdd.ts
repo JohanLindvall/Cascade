@@ -5,6 +5,7 @@ import { api } from '../api';
 import { useToast } from '../components/toast';
 import { acceptTorrents, dropText, droppedFiles, linksFromDrop } from '../files';
 import { useLatest } from '../hooks';
+import { unsendable } from '../rtorrentText';
 import { carriesFiles, carriesPayload, isTextEntry } from './dom';
 
 interface DropOptions {
@@ -112,9 +113,17 @@ export function useDropToAdd({ staging, onLaunch }: DropOptions): DropTarget {
       toast.push(problem.level, problem.text);
       return;
     }
-    options.current.onLaunch(event.clientX, event.clientY, links.length);
+    // A link rtorrent cannot be sent as text would have the server refuse
+    // the whole batch (uploadURLs): it is named here, and the rest added.
+    const sendable = links.filter((link) => {
+      const refused = unsendable(link);
+      if (refused !== null) toast.push('error', `A dropped link ${refused}`);
+      return refused === null;
+    });
+    if (sendable.length === 0) return;
+    options.current.onLaunch(event.clientX, event.clientY, sendable.length);
     const form = new FormData();
-    form.append('urls', links.join('\n'));
+    form.append('urls', sendable.join('\n'));
     void submit(form);
   }, [options, submit, toast]);
 

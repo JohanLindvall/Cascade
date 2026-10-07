@@ -314,6 +314,8 @@ func DecodeSettingValue(key string, value any) any {
 }
 
 // coerce validates one patch value and turns it into the setter's arguments.
+// A string reaches rtorrent as text, and is refused, named by its key, where
+// it never could (validate.RtorrentString): the whole multicall would fail.
 func coerce(kind SettingKind, value any, key string) ([]any, error) {
 	switch kind {
 	case KindUint, KindInt, KindRate, KindPort:
@@ -333,7 +335,7 @@ func coerce(kind SettingKind, value any, key string) ([]any, error) {
 		}
 		return []any{int64(0)}, nil
 	case KindFlags:
-		text, err := validate.String(value, key, true)
+		text, err := validate.RtorrentString(value, key, true)
 		if err != nil {
 			return nil, err
 		}
@@ -350,13 +352,13 @@ func coerce(kind SettingKind, value any, key string) ([]any, error) {
 		}
 		return flags, nil
 	case KindProxy:
-		text, err := validate.String(value, key, true)
+		text, err := validate.RtorrentString(value, key, true)
 		if err == nil {
 			err = CheckProxyHost(text, key)
 		}
 		return []any{text}, err
 	}
-	text, err := validate.String(value, key, true)
+	text, err := validate.RtorrentString(value, key, true)
 	return []any{text}, err
 }
 

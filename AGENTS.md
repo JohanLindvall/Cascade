@@ -114,19 +114,21 @@ The runner strips types but does not compile JSX, so a test reaches `.ts` module
 logic belongs where it can reach it. The stream's patching and reconnects (`stream.ts`,
 `streamConnection.ts`), sorting, filtering, the `.torrent` file check and drop parsing
 (`files.ts`), the selection rules, the value a selection shares for a field (`sharedValue.ts`),
-the directory a torrent's data goes into (`dataFolder.ts`), formatting and parsing, redaction, the
-preference shape and its syncing, the menu's placement and right-click rule
-(`components/menuRules.ts`), the toast hold (`components/toastHold.ts`), the order of a detail row's
-flags (`components/detail/flags.ts`) and where focus goes on selection or menu opening
-(`app/rowFocus.ts`) live apart from the components for exactly that reason. What cannot be split off
-is pinned by reading the source instead: `components/detail/tabs.test.ts` checks the detail tabs
-stay memoized, and `app/useTorrentActions.test.ts` that "Change directory" is pre-filled from
-`sharedDataFolder` and leaves out a magnet still fetching its metadata. A pure module that imports
-another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`): the runner resolves
-specifiers literally, and Vite and tsc accept either. A module that touches `window` or `document`
-at load time cannot be imported statically: `api.test.ts` stubs `document.baseURI` and then imports
-`api.ts` dynamically, and `preferences.ts` (the shape and its repair) is kept apart from `prefs.ts`
-(the fetch, the cache, the `pagehide` flush) so its tests need no stub at all.
+the directory a torrent's data goes into (`dataFolder.ts`), what rtorrent can be sent as text
+(`rtorrentText.ts`), formatting and parsing, redaction, the preference shape and its syncing, the
+menu's placement and right-click rule (`components/menuRules.ts`), the toast hold
+(`components/toastHold.ts`), the order of a detail row's flags (`components/detail/flags.ts`) and
+where focus goes on selection or menu opening (`app/rowFocus.ts`) live apart from the components
+for exactly that reason. What cannot be split off is pinned by reading the source instead:
+`components/detail/tabs.test.ts` checks the detail tabs stay memoized, and
+`app/useTorrentActions.test.ts` that "Change directory" is pre-filled from `sharedDataFolder`,
+leaves out a magnet still fetching its metadata, and holds what the server would refuse. A pure
+module that imports another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`):
+the runner resolves specifiers literally, and Vite and tsc accept either. A module that touches
+`window` or `document` at load time cannot be imported statically: `api.test.ts` stubs
+`document.baseURI` and then imports `api.ts` dynamically, and `preferences.ts` (the shape and its
+repair) is kept apart from `prefs.ts` (the fetch, the cache, the `pagehide` flush) so its tests
+need no stub at all.
 
 Go runs in Docker too, as uid 1000 so the files it writes keep their owner:
 
@@ -448,9 +450,10 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    that for a shortened name (it used to say "on disk as Caf%C3%A9.txt"). The completion move gets
    the path from rtorrent as an argument, bytes and all, and never sees a stand-in; a directory
    change takes a path from the user and can only set one that is UTF-8 within the BMP (xmlrpc-c
-   refuses an emoji in a request too), and keeps a multi-file torrent's folder by its bytes only
-   where those can be sent back — else through `d.directory.set`, which names the folder on
-   rtorrent's side (see the directory change under *Conventions*).
+   refuses an emoji in a request too, and the API refuses one first: see *Text rtorrent cannot be
+   sent* under Conventions), and keeps a multi-file torrent's folder by its bytes only where those
+   can be sent back — else through `d.directory.set`, which names the folder on rtorrent's side
+   (see the directory change under *Conventions*).
 
 13. **What the client calls itself is compile-time, in two places.** The HTTP `User-Agent`
    (`USER_AGENT`, patched into rtorrent's `set_user_agent(USER_AGENT)` call by
@@ -645,6 +648,11 @@ directory or label, or for magnets and URLs. Because the drop path has no dialog
   quotes and backslashes are escaped but a line break could end the command and start another,
   so a directory with a control character is refused (`checkLoadOptions`); the label goes in
   URL-encoded and cannot carry one.
+- The directory and every link reach rtorrent as XML-RPC text, so `loadOptions` and `uploadURLs`
+  refuse one it cannot be sent, and a directory of `/` (`validate.Directory`, see *Text rtorrent
+  cannot be sent* under Conventions), with a 400 for the whole batch before anything loads — each
+  file of the batch used to fail with xmlrpc-c's fault instead. An empty directory, or none, is
+  rtorrent's default: the Add dialog sends none when its field is empty.
 
 Failures come back per file in the upload response and are toasted by the UI.
 The response also identifies failed file and URL indices, so the Add dialog retains only failures
@@ -824,8 +832,11 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   a recheck. The listing carries `d.is_meta` as `isMeta`, so "Change directory" leaves such a
   torrent out and toasts the server's words (`FETCHING_METADATA`, `web/src/dataFolder.ts`). A
   label or priority set meanwhile is lost the same way (measured on both), but costs the fetch
-  nothing, and is not refused. The demo mirrors it: `setDirectory`, and `d.directory.set` against
-  `d.directory_base.set` in its console.
+  nothing, and is not refused. Nor does a destination of `/` get that far: it is a 400 at the edge
+  (`validate.Directory`), for a change or an add, as rtorrent strips a directory's trailing
+  slashes and the empty path left is `.`, the directory it runs in, where a single file went. The
+  demo mirrors it: `setDirectory`, and `d.directory.set` against `d.directory_base.set` in its
+  console.
 - Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes `<epoch
   seconds> <level letter> <text>` for the severity scopes and `<epoch seconds> <text>` (no level)
   for the subsystem scopes such as `tracker_events` — the same two shapes on 0.9.8, 0.16.20 and
@@ -938,6 +949,21 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   through `bulk()`, which applies the action per hash and collects failures by hash instead of
   stopping at the first. Whitespace is the browser's: `validate.Trim` trims by `jsnum.IsSpace`,
   as `String.prototype.trim` does (the byte order mark goes, U+0085 stays).
+- **Text rtorrent cannot be sent is refused at the edge, by the field's name.** xmlrpc-c fails a
+  whole call on a character beyond U+FFFF — an emoji — with -503 "Call XML not a proper XML-RPC
+  call" (0.9.8 and 0.16.25), and XML carries neither U+FFFE, U+FFFF, a C0 control but tab and line
+  feed, nor a carriage return as itself; the encoder sends a byte that is not UTF-8 as U+FFFD. A
+  directory change found that out only after it had stopped and closed the torrent, and left it
+  stopped; a settings patch lost every setting with the one. The rule is `validate.Sendable` (also
+  what `rtorrent.Folder` asks of a folder it would send back), and every field rtorrent is sent as
+  text goes through `validate.RtorrentString`, `RtorrentText` or `Directory`: a directory, the
+  Add dialog's links, a tracker URL, the throttle group, a string setting (`coerce`), the listing's
+  view. A label is exempt — it is sent URL-encoded — and so are the API console and `/RPC2`, where
+  rtorrent's fault is the answer. A JSON body's unpaired surrogate escape is decoded to U+FFFD
+  before any of this sees it, so the web UI refuses one itself. The UI holds each such field as
+  typed (`web/src/rtorrentText.ts`, worded as the server words it: the prompt's `validate`, the
+  Add dialog, the settings dialog's text fields, the Trackers tab), and a dropped link it cannot
+  send is named rather than sent; the demo answers as the server does (`demo/validate.ts`).
 - **A change runs to its end once it is sent.** The `api` adapter (`request.go`) detaches every
   request but GET, HEAD and OPTIONS from its context (`context.WithoutCancel`), `/RPC2` does the
   same, and the service's mutations detach again (`detached`): a throttle change stops the torrent,

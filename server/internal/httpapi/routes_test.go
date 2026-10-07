@@ -274,7 +274,7 @@ func TestAMagnetOrURLIsAddedFromJSON(t *testing.T) {
 	if r := send(t, "POST", h.base+"/api/torrents/url", `{"url":" magnet:?xt=urn:btih:`+hash+` ","start":false}`, nil); r.status != 200 {
 		t.Fatalf("%d %s", r.status, r.raw)
 	}
-	wantCall(t, h.service, "addTorrentUrl", "magnet:?xt=urn:btih:"+hash)
+	wantCall(t, h.service, "addTorrentUrl", "magnet:?xt=urn:btih:"+hash, contracts.LoadOptions{})
 	for _, body := range []string{`{}`, `{"url":"x","start":"perhaps"}`, `{"url":"x","label":7}`} {
 		if r := send(t, "POST", h.base+"/api/torrents/url", body, nil); r.status != 400 {
 			t.Errorf("%s: %d", body, r.status)

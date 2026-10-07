@@ -11,7 +11,7 @@
  */
 import type { GlobalSettings } from '../contracts.ts';
 import { MAX_RATE, appliedRate } from '../settings.ts';
-import { HttpError, bool, int, text } from './validate.ts';
+import { HttpError, bool, int, rtorrentString } from './validate.ts';
 
 /**
  * As the server's kinds: 'rate' is a global rate rtorrent keeps in whole KiB/s,
@@ -185,13 +185,13 @@ export function coerce(kind: SettingKind, value: unknown, key: string): SettingV
       return bool(value, key);
     case 'flags': {
       // rtorrent takes one argument per flag, which the setting keeps joined.
-      const flags = text(value, key, true).split(',').map((flag) => flag.trim()).filter(Boolean);
+      const flags = rtorrentString(value, key, true).split(',').map((flag) => flag.trim()).filter(Boolean);
       return flags.length === 0 ? 'none' : flags.join(',');
     }
     case 'string':
-      return text(value, key, true);
+      return rtorrentString(value, key, true);
     case 'proxy': {
-      const url = text(value, key, true);
+      const url = rtorrentString(value, key, true);
       if (proxyHostRefused(url)) {
         throw new HttpError(400, `"${key}" must give the proxy by its IPv4 address: rtorrent crashes on a host name or an IPv6 address there`);
       }

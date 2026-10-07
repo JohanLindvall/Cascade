@@ -7,6 +7,7 @@ import { useToast } from '../components/toast';
 import type { MenuActions } from '../components/TorrentMenu';
 import { FETCHING_METADATA, leftOutFetching, sharedDataFolder } from '../dataFolder';
 import { magnetLink, nameErrors } from '../format';
+import { directoryProblem, sentence } from '../rtorrentText';
 import { sharedValue } from '../sharedValue';
 import type { Policy, Torrent } from '../types';
 import { copyToClipboard } from './dom';
@@ -177,6 +178,12 @@ export function useTorrentActions({ targets, byHash, labels, policy, downloadDir
         // back unchanged, that moved a multi-file torrent into "X/X".
         initial: sharedDataFolder(byHash, moving),
         placeholder: downloadDir || '/downloads',
+        // What the server would refuse — the root, text rtorrent cannot be
+        // sent — is held here, as typed, rather than sent to be refused.
+        validate: (text) => {
+          const problem = directoryProblem(text);
+          return problem === null ? null : sentence(problem);
+        },
         confirmLabel: 'Change directory',
       });
       if (directory?.trim()) await patch({ directory: directory.trim() }, moving);

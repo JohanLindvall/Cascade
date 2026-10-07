@@ -5,6 +5,7 @@ import { api } from '../api';
 import { bytes, formatRateInput, interval, parseWholeNumber, rate } from '../format';
 import { useMounted } from '../hooks';
 import { redactSecrets } from '../redact';
+import { sentence, unsendable } from '../rtorrentText';
 import { appliedRate, parseGlobalRate, settingsPatch } from '../settings';
 import type { BackendSummary, Settings } from '../types';
 import { IconRefresh } from './icons';
@@ -85,14 +86,19 @@ export function SettingsDialog({
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 
-  /** Record a parsed field: its value when valid, its key in `invalid` when not. */
-  const commit = (key: NumberKey, value: number | null) => {
+  /** Mark a field as holding text Apply cannot send, or no longer. */
+  const mark = (key: keyof Settings, bad: boolean) =>
     setInvalid((current) => {
+      if (current.has(key) === bad) return current;
       const next = new Set(current);
-      if (value === null) next.add(key);
+      if (bad) next.add(key);
       else next.delete(key);
       return next;
     });
+
+  /** Record a parsed field: its value when valid, its key in `invalid` when not. */
+  const commit = (key: NumberKey, value: number | null) => {
+    mark(key, value === null);
     if (value !== null) set(key, value);
   };
 
@@ -168,17 +174,28 @@ export function SettingsDialog({
     </Field>
   );
 
-  const textField = (key: TextKey, label: string, opts: { hint?: string; placeholder?: string } = {}) => (
-    <Field label={label} hint={opts.hint}>
-      <input
-        className="input"
-        placeholder={opts.placeholder}
-        disabled={!supports(key)}
-        value={String(draft[key] ?? '')}
-        onChange={(event) => set(key, event.target.value)}
-      />
-    </Field>
-  );
+  /**
+   * A text setting, kept as typed. Text rtorrent cannot be sent — an emoji,
+   * which its XML-RPC layer refuses with the whole change — is marked, and
+   * Apply waits, rather than the server refusing it by name.
+   */
+  const textField = (key: TextKey, label: string, opts: { hint?: string; placeholder?: string } = {}) => {
+    const problem = unsendable(String(draft[key] ?? '').trim());
+    return (
+      <Field label={label} hint={opts.hint} error={problem === null ? undefined : sentence(problem)}>
+        <input
+          className="input"
+          placeholder={opts.placeholder}
+          disabled={!supports(key)}
+          value={String(draft[key] ?? '')}
+          onChange={(event) => {
+            set(key, event.target.value);
+            mark(key, unsendable(event.target.value.trim()) !== null);
+          }}
+        />
+      </Field>
+    );
+  };
 
   const switchField = (key: BoolKey, label: string, hint?: string) => (
     <Switch

@@ -104,12 +104,16 @@ func (c *call) optionalInteger(name string, max int64) (*int64, error) {
 	return &n, err
 }
 
-// optionalText is nil for an absent field.
-func (c *call) optionalText(name string, allowEmpty bool) (*string, error) {
-	if _, ok := c.field(name); !ok {
+// optionalText is nil for an absent field, and read reads one that is
+// there: validate.String, or a stricter reader of the same shape for a value
+// rtorrent is sent as text (validate.RtorrentString, validate.Directory).
+func (c *call) optionalText(name string, allowEmpty bool,
+	read func(value any, field string, allowEmpty bool) (string, error)) (*string, error) {
+	value, ok := c.field(name)
+	if !ok {
 		return nil, nil
 	}
-	text, err := c.text(name, allowEmpty)
+	text, err := read(value, name, allowEmpty)
 	return &text, err
 }
 
@@ -144,7 +148,7 @@ func requireIndex(r *http.Request) (int, error) {
 var announceURL = regexp.MustCompile(`(?i)^(https?|udp)://\S+$`)
 
 func requireAnnounceURL(value any) (string, error) {
-	text, err := validate.String(value, "url", false)
+	text, err := validate.RtorrentString(value, "url", false)
 	if err != nil {
 		return "", err
 	}
@@ -211,7 +215,9 @@ func bulk(hashes []string, action func(hash string) error) bulkResult {
 }
 
 // loadOptions reads the add options as both the multipart form and the JSON
-// body carry them.
+// body carry them. The directory reaches rtorrent as text, and is refused
+// here, for the whole batch, where it never could (validate.Directory); the
+// label goes URL-encoded, whatever it holds.
 func loadOptions(body map[string]any) (contracts.LoadOptions, error) {
 	options := contracts.LoadOptions{Start: true}
 	var err error
@@ -221,7 +227,7 @@ func loadOptions(body map[string]any) (contracts.LoadOptions, error) {
 		}
 	}
 	if value, ok := body["directory"]; ok {
-		if options.Directory, err = validate.String(value, "directory", true); err != nil {
+		if options.Directory, err = validate.Directory(value, "directory", true); err != nil {
 			return options, err
 		}
 	}
@@ -236,7 +242,8 @@ func loadOptions(body map[string]any) (contracts.LoadOptions, error) {
 var lineBreaks = regexp.MustCompile(`[\r\n]+`)
 
 // uploadURLs is the non-blank lines of the upload's "urls" field, which may
-// be absent or null.
+// be absent or null. Each reaches rtorrent as text: a line that cannot is
+// refused before any of the batch is added.
 func uploadURLs(body map[string]any) ([]string, error) {
 	value := body["urls"]
 	if value == nil {
@@ -249,6 +256,9 @@ func uploadURLs(body map[string]any) ([]string, error) {
 	urls := []string{}
 	for _, line := range lineBreaks.Split(text, -1) {
 		if line = validate.Trim(line); line != "" {
+			if err := validate.RtorrentText(line, "urls"); err != nil {
+				return nil, err
+			}
 			urls = append(urls, line)
 		}
 	}

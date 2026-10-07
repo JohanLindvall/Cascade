@@ -42,3 +42,7 @@ test('a magnet still fetching its metadata is left out, in the server\'s words',
   assert.match(source, /items: names\(moving\),/);
   assert.match(source, /await patch\(\{ directory: directory\.trim\(\) \}, moving\);/);
 });
+
+test('and what the server would refuse is held in the prompt, as typed', () => {
+  assert.match(promptDirectory(), /validate: \(text\) => \{\s*const problem = directoryProblem\(text\);/);
+});

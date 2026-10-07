@@ -267,7 +267,9 @@ func (s *Service) SetTorrentSlots(ctx context.Context, hash string, uploads, dow
 // rtorrent/directory.go). The data itself is not moved. A torrent whose data
 // already goes there is left alone, running or not, so the directory the UI
 // offers changes nothing when it is sent back as it is; a magnet still
-// fetching its metadata is refused (refuseFetchingMetadata).
+// fetching its metadata is refused (refuseFetchingMetadata). The directory is
+// the API's to check: the root, or one rtorrent cannot be sent, is refused
+// there (validate.Directory).
 func (s *Service) SetDirectory(ctx context.Context, hash, directory string) error {
 	ctx = detached(ctx)
 	// As rtorrent keeps a directory, and as DataDirectory reads the listing's:

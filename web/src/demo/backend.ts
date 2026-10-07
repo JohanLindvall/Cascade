@@ -20,7 +20,7 @@ import { Rpc, RpcFault } from './rpc.ts';
 import { Session, VIEWS, viewsOf, type AddOptions } from './session.ts';
 import { SETTINGS, applySetting, coerce, supportsMap, type SettingSpec } from './settings.ts';
 import { parseMagnet, parseTorrent } from './torrentfile.ts';
-import { Fault, HttpError, bool, int, record, text } from './validate.ts';
+import { Fault, HttpError, bool, directory, int, record, rtorrentString, rtorrentText, text } from './validate.ts';
 
 /** How often the state is read without a preference: the demo's CASCADE_STATE_POLL_MS. */
 export const DEFAULT_POLL_MS = 1000;
@@ -120,8 +120,9 @@ class Call {
     return this.has(name) ? this.integer(name, 0, max) : null;
   }
 
-  optionalText(name: string, allowEmpty: boolean): string | null {
-    return this.has(name) ? this.text(name, allowEmpty) : null;
+  /** null for an absent field; read reads one that is there (text, or a stricter reader of its shape). */
+  optionalText(name: string, allowEmpty: boolean, read: typeof text = text): string | null {
+    return this.has(name) ? read(this.body[name], name, allowEmpty) : null;
   }
 
   /** A query parameter given exactly once; a repeated one is a list, which no route takes. */
@@ -196,10 +197,11 @@ function bulk(hashes: string[], action: (hash: string) => void): { ok: boolean; 
   return { ok: errors.length === 0, errors };
 }
 
+/** The add options; the directory, which reaches rtorrent as text, refused for the whole batch where it cannot. */
 function loadOptions(body: Record<string, unknown>): AddOptions {
   const options: AddOptions = { start: true, directory: '', label: '' };
   if (Object.hasOwn(body, 'start')) options.start = bool(body.start, 'start');
-  if (Object.hasOwn(body, 'directory')) options.directory = text(body.directory, 'directory', true);
+  if (Object.hasOwn(body, 'directory')) options.directory = directory(body.directory, 'directory', true);
   if (Object.hasOwn(body, 'label')) options.label = text(body.label, 'label', true);
   return options;
 }
@@ -212,10 +214,11 @@ function checkLoadOptions(options: AddOptions): void {
   }
 }
 
-/** The non-blank lines of the "urls" field, which may be absent or null. */
+/** The non-blank lines of the "urls" field, which may be absent or null; one rtorrent cannot be sent refuses them all. */
 function uploadUrls(body: Record<string, unknown>): string[] {
   const value = body.urls ?? '';
-  return text(value, 'urls', true).split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean);
+  const lines = text(value, 'urls', true).split(/[\r\n]+/).map((line) => line.trim()).filter(Boolean);
+  return lines.map((line) => rtorrentText(line, 'urls'));
 }
 
 /** A group as rtorrent can hold it: a name it takes, and whole KiB/s rounded up (quirk 3). */
@@ -228,7 +231,7 @@ function normalizeThrottle(name: string, up: unknown, down: unknown): ThrottleGr
 }
 
 function announceUrl(value: unknown): string {
-  const link = text(value, 'url', false);
+  const link = rtorrentString(value, 'url', false);
   let host = '';
   try {
     host = new URL(link).hostname;
@@ -431,7 +434,7 @@ export class DemoServer {
     });
     this.on('GET status', () => this.state().status);
     this.on('GET torrents', (call) => {
-      const view = call.query('view') ?? 'main';
+      const view = rtorrentText(call.query('view') ?? 'main', 'view');
       if (!VIEWS.includes(view)) throw new Fault(-503, 'Could not find view.');
       const listed = new Set(session.all().filter((t) => viewsOf(t).includes(view)).map((t) => t.hash));
       return session.list().filter((t: Torrent) => listed.has(t.hash));
@@ -461,7 +464,7 @@ export class DemoServer {
 
     this.on('POST torrents/upload', (call) => this.upload(call));
     this.on('POST torrents/url', (call) => {
-      const link = call.text('url', false);
+      const link = rtorrentString(call.value('url'), 'url', false);
       this.addLink(link, loadOptions(call.body));
       return ok;
     });
@@ -491,15 +494,16 @@ export class DemoServer {
       const hash = call.hash();
       // Every field is checked before the first change: a bad last field must not leave the others applied.
       const priority = call.optionalInteger('priority', 3);
+      // The label goes URL-encoded; the throttle group and the directory reach rtorrent as text.
       const label = call.optionalText('label', true);
-      const throttle = call.optionalText('throttle', true);
-      const directory = call.optionalText('directory', false);
+      const throttle = call.optionalText('throttle', true, rtorrentString);
+      const destination = call.optionalText('directory', false, directory);
       const uploads = call.optionalInteger('maxUploads', 100_000);
       const downloads = call.optionalInteger('maxDownloads', 100_000);
       if (priority !== null) session.setPriority(hash, priority);
       if (label !== null) session.setLabel(hash, label);
       if (throttle !== null) session.setThrottle(hash, throttle);
-      if (directory !== null) session.setDirectory(hash, directory);
+      if (destination !== null) session.setDirectory(hash, destination);
       if (uploads !== null || downloads !== null) session.setSlots(hash, uploads, downloads);
       return ok;
     });
