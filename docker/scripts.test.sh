@@ -179,6 +179,28 @@ fi
 expect_ok 'RT_WATCH_ENABLE=Yes' 'RT_WATCH_ENABLE=Yes; apply_defaults; pick_port_commands; write_rc'
 grep -q watch_directory "$rc" || { echo 'RT_WATCH_ENABLE=Yes wrote no watch directory' >&2; exit 1; }
 
+# The torrent-name switches must be in force before rtorrent loads its
+# session, so they go into the rc when set — as 1/0 — and only where this
+# build has the command; unset, rtorrent keeps its own default.
+if grep -q '_name\.' "$rc"; then
+  echo 'an unset torrent-name switch reached rtorrent.rc' >&2; cat "$rc" >&2; exit 1
+fi
+expect_ok 'the torrent-name switches' '
+  RT_USE_SANITIZED_NAME=No RT_ALLOW_LEGACY_UTF8=on; apply_defaults; validate_options; pick_port_commands; write_rc'
+for line in 'system.torrent_name.use_sanitized.set = 0' 'system.file_name.allow_legacy_utf8.set = 1'; do
+  grep -Fxq -- "$line" "$rc" || { echo "rtorrent.rc lacks: $line" >&2; cat "$rc" >&2; exit 1; }
+done
+expect_ok 'a torrent-name switch this build lacks' '
+  STUB_MISSING=system.file_name.allow_legacy_utf8.set; export STUB_MISSING
+  RT_USE_SANITIZED_NAME=yes RT_ALLOW_LEGACY_UTF8=off; apply_defaults; pick_port_commands; write_rc'
+grep -Fxq 'system.torrent_name.use_sanitized.set = 1' "$rc" || { echo 'use_sanitized was not written' >&2; exit 1; }
+if grep -q allow_legacy_utf8 "$rc"; then
+  echo 'a command this build lacks reached rtorrent.rc' >&2; exit 1
+fi
+for bad in RT_USE_SANITIZED_NAME=maybe RT_ALLOW_LEGACY_UTF8=2; do
+  expect_refused "$bad" "export \"$bad\"; apply_defaults; validate_options"
+done
+
 # A lock held by another host (or a dead process) is cleared; one held by a
 # live process here is not, and RT_SESSION_LOCK_KEEP keeps any.
 lock="$entry/session/rtorrent.lock"

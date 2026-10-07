@@ -50,8 +50,8 @@ without it, any web page you visit could reach Cascade
   per-torrent throttling, file priorities, tracker management, peers, labels, plus a raw API
   console and an XML-RPC passthrough for anything the UI does not wrap. The settings dialog
   covers the full tunable surface: slots, peer ranges, ports, binds, proxies, encryption,
-  DHT, tracker TLS verification, disk preload/sync, socket buffers and resource limits —
-  each control greyed out when the running rtorrent lacks it.
+  DHT, tracker TLS verification, disk preload/sync, how torrents and files are named, socket
+  buffers and resource limits — each control greyed out when the running rtorrent lacks it.
 - **Drop torrents anywhere** — drag `.torrent` files onto the window and they are added and
   started on the spot, no dialog in the way.
 - **Lightly gamified** — a level and a set of badges earned from real transfer totals, with a
@@ -217,6 +217,20 @@ blocking, and a random-access hint for hashing. On older backends unsupported co
 `network.bind_device` commands, so from that release `RT_BIND`, `RT_BIND_IPV4` and `RT_BIND_IPV6`
 take a plain address.
 
+Two switches decide what rtorrent calls a torrent and its files, under **Torrent & file names** in
+the settings dialog. 0.16.22 loads a torrent with a `/` in its name, which earlier releases
+refused, and saves the `/` as `_` (`system.file_name.replace_slash`);
+`system.torrent_name.use_sanitized` (`RT_USE_SANITIZED_NAME`) picks whether the list shows that
+name or the torrent's own. 0.16.25 names a torrent and its files from the `name.utf-8` and
+`path.utf-8` that older torrent makers wrote beside a name in a legacy encoding, unless
+`system.file_name.allow_legacy_utf8` (`RT_ALLOW_LEGACY_UTF8`) is off. rtorrent applies both as it
+loads a torrent — the session's too, at every start — so the two variables also go into the
+generated `rtorrent.rc`, and a change made in the dialog reaches only the torrents added after it,
+until rtorrent restarts. The legacy switch decides where such a torrent's files are saved: choose
+it before adding torrents that carry both names, and keep it. Cascade's own upload check still
+refuses a `/` in a torrent's name, as rtorrent did before 0.16.22; the watch directory, magnet
+links and URLs reach rtorrent's handling.
+
 ## Configuration
 
 Everything is an environment variable on `docker run`. Only what you set is applied — anything
@@ -324,6 +338,8 @@ Rates are in KiB/s; 0 means unlimited.
 | `RT_PREALLOCATE` | rtorrent default | Preallocate files, yes/no |
 | `RT_HASH_ON_COMPLETION` | rtorrent default | Re-verify on completion, yes/no |
 | `RT_ADVISE_RANDOM_HASHING` | rtorrent default | Random-access hint while hashing, yes/no (rtorrent 0.16+) |
+| `RT_USE_SANITIZED_NAME` | rtorrent default | List a torrent under its saved name, a / in it shown as _, yes/no (rtorrent 0.16.22+) |
+| `RT_ALLOW_LEGACY_UTF8` | rtorrent default | Name torrents and their files from name.utf-8 and path.utf-8 where a torrent has them, yes/no (rtorrent 0.16.25+) |
 | `RT_MEMORY_MAX` | rtorrent default | Piece memory cap, bytes |
 | `RT_MAX_FILE_SIZE` | rtorrent default | Largest accepted file, bytes |
 | `RT_SYNC_TIMEOUT` | rtorrent default | Piece disk-sync timeout, seconds |
@@ -373,7 +389,7 @@ Rates are in KiB/s; 0 means unlimited.
 
 ### Escape hatches
 
-Settings given as environment variables are applied over XML-RPC at startup rather than written into rtorrent.rc, so changes made in the UI last until the container restarts.
+Settings given as environment variables are applied over XML-RPC at startup rather than written into rtorrent.rc, so changes made in the UI last until the container restarts. The torrent-name switches go into rtorrent.rc as well, where the build has them, since rtorrent names its session's torrents before anything else can reach it.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

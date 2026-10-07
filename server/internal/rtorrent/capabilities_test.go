@@ -188,6 +188,39 @@ func TestASetterTheReleaseIgnoresIsAbsentFromThatReleaseOnForEveryConsumer(t *te
 	}
 }
 
+// 0.16.22 added system.torrent_name.use_sanitized and 0.16.25
+// system.file_name.allow_legacy_utf8 (the two commands 0.16.25 lists and
+// 0.16.24 does not). Each switch is offered and read where its release lists
+// it, so the dialog greys out the rest.
+func TestTheTorrentNameSwitchesAreOfferedWhereTheReleaseListsThem(t *testing.T) {
+	sanitized := []string{"system.torrent_name.use_sanitized", "system.torrent_name.use_sanitized.set"}
+	legacy := []string{"system.file_name.allow_legacy_utf8", "system.file_name.allow_legacy_utf8.set"}
+	for _, c := range []struct {
+		version string
+		listed  []string
+		offered map[string]bool
+	}{
+		{"0.9.8", nil, map[string]bool{"useSanitizedName": false, "allowLegacyUtf8": false}},
+		{"0.16.24", sanitized, map[string]bool{"useSanitizedName": true, "allowLegacyUtf8": false}},
+		{"0.16.25", append(slices.Clone(sanitized), legacy...), map[string]bool{"useSanitizedName": true, "allowLegacyUtf8": true}},
+	} {
+		t.Run(c.version, func(t *testing.T) {
+			listed := append([]string{"d.multicall2"}, c.listed...)
+			caps := rtorrent.NewCapabilities(backend(listed, rtorrenttest.Answers{"system.client_version": c.version}), fields)
+			ensure(t, caps)
+			readable := map[string]bool{}
+			for _, setting := range rtorrent.ReadableSettings(caps.Resolve) {
+				readable[setting.Key] = true
+			}
+			for key, offered := range c.offered {
+				if caps.Supports(key) != offered || readable[key] != offered {
+					t.Errorf("%s: supported %v, read %v, want %v", key, caps.Supports(key), readable[key], offered)
+				}
+			}
+		})
+	}
+}
+
 func TestCompositeFeaturesNeedAllTheirCommandsAndMalformedProbesAreNotCached(t *testing.T) {
 	client := backend([]string{"throttle.up"}, nil)
 	caps := rtorrent.NewCapabilities(client, fields)

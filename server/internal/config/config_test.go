@@ -164,6 +164,11 @@ func TestStartupSettingsFollowTheCatalog(t *testing.T) {
 	if settings["downloadRate"] != int64(500*1024) || settings["pex"] != false || settings["maxPeersSeed"] != int64(-1) {
 		t.Errorf("units, booleans and signed values: %v", settings)
 	}
+	// The torrent-name switches, which the entrypoint also writes into the rc.
+	settings, err = StartupSettings(env(map[string]string{"RT_USE_SANITIZED_NAME": "No", "RT_ALLOW_LEGACY_UTF8": "on"}))
+	if err != nil || settings["useSanitizedName"] != false || settings["allowLegacyUtf8"] != true {
+		t.Errorf("the torrent-name switches: %v %v", settings, err)
+	}
 }
 
 func TestQuotesAndBackslashesInStartupStringsSurviveJSON(t *testing.T) {
@@ -180,7 +185,7 @@ func TestQuotesAndBackslashesInStartupStringsSurviveJSON(t *testing.T) {
 }
 
 func TestInvalidStartupInputFailsByEnvironmentName(t *testing.T) {
-	for name, value := range map[string]string{"RT_DOWNLOAD_RATE": "fast", "RT_PEX": "perhaps", "RT_MAX_UPLOADS": "-1"} {
+	for name, value := range map[string]string{"RT_DOWNLOAD_RATE": "fast", "RT_PEX": "perhaps", "RT_MAX_UPLOADS": "-1", "RT_ALLOW_LEGACY_UTF8": "2"} {
 		if _, err := StartupSettings(env(map[string]string{name: value})); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("%s=%s: %v", name, value, err)
 		}

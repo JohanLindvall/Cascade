@@ -58,7 +58,9 @@ var Sections = []string{
 var SectionNotes = map[string]string{
 	"Bandwidth and slots": "Rates are in KiB/s; 0 means unlimited.",
 	"Escape hatches": "Settings given as environment variables are applied over XML-RPC at startup rather than " +
-		"written into rtorrent.rc, so changes made in the UI last until the container restarts.",
+		"written into rtorrent.rc, so changes made in the UI last until the container restarts. The torrent-name " +
+		"switches go into rtorrent.rc as well, where the build has them, since rtorrent names its session's " +
+		"torrents before anything else can reach it.",
 }
 
 const rtorrentDefault = "rtorrent default"
@@ -423,6 +425,20 @@ var Options = []Option{
 		Setting: "adviseRandomHashing",
 		Section: "Storage",
 		Summary: "Random-access hint while hashing, yes/no (rtorrent 0.16+)",
+		Note:    rtorrentDefault,
+	},
+	{
+		Name:    "RT_USE_SANITIZED_NAME",
+		Setting: "useSanitizedName",
+		Section: "Storage",
+		Summary: "List a torrent under its saved name, a / in it shown as _, yes/no (rtorrent 0.16.22+)",
+		Note:    rtorrentDefault,
+	},
+	{
+		Name:    "RT_ALLOW_LEGACY_UTF8",
+		Setting: "allowLegacyUtf8",
+		Section: "Storage",
+		Summary: "Name torrents and their files from name.utf-8 and path.utf-8 where a torrent has them, yes/no (rtorrent 0.16.25+)",
 		Note:    rtorrentDefault,
 	},
 	{

@@ -246,6 +246,8 @@ export interface GlobalSettings {
   preallocate: boolean;
   checkHashOnCompletion: boolean;
   adviseRandomHashing: boolean;
+  useSanitizedName: boolean;
+  allowLegacyUtf8: boolean;
   directory: string;
   sessionDirectory: string;
   bindAddress: string;

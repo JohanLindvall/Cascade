@@ -47,9 +47,10 @@ type BoolKey = KeysOfType<boolean>;
 
 /**
  * Live rtorrent settings, grouped by domain: bandwidth, peers, network,
- * trackers & DHT, storage & disk, resource limits. Every field name doubles as
- * a feature key in the backend's capability map, so a control this rtorrent
- * build cannot apply is greyed out rather than silently ignored.
+ * trackers & DHT, storage & disk, torrent & file names, resource limits.
+ * Every field name doubles as a feature key in the backend's capability map,
+ * so a control this rtorrent build cannot apply is greyed out rather than
+ * silently ignored.
  */
 export function SettingsDialog({
   onClose, backend, statePollMs, statePollDefaultMs, onStatePollChange,
@@ -172,8 +173,14 @@ export function SettingsDialog({
     </Field>
   );
 
-  const switchField = (key: BoolKey, label: string) => (
-    <Switch checked={!!draft[key]} disabled={!supports(key)} onChange={(value) => set(key, value)} label={label} />
+  const switchField = (key: BoolKey, label: string, hint?: string) => (
+    <Switch
+      checked={!!draft[key]}
+      disabled={!supports(key)}
+      onChange={(value) => set(key, value)}
+      label={label}
+      hint={hint}
+    />
   );
 
   if (!settings) {
@@ -379,6 +386,31 @@ export function SettingsDialog({
             {supports('adviseRandomHashing') &&
               switchField('adviseRandomHashing', 'Random-access hint while hashing')}
           </div>
+        </div>
+
+        <div className="section">
+          <h3>Torrent &amp; file names</h3>
+          <div className="switch-row">
+            {switchField(
+              'useSanitizedName',
+              'List torrents under their saved name',
+              supports('useSanitizedName')
+                ? 'A / in a torrent’s name is saved as _; off, the list shows the / as the torrent has it'
+                : 'rtorrent 0.16.22+',
+            )}
+            {switchField(
+              'allowLegacyUtf8',
+              'Use a torrent’s UTF-8 names',
+              supports('allowLegacyUtf8')
+                ? 'name.utf-8 and path.utf-8, which older torrents carry beside a legacy-encoded name — this changes where such files are saved'
+                : 'rtorrent 0.16.25+',
+            )}
+          </div>
+          {/* rtorrent names a torrent as it loads it (AGENTS.md quirk 6). */}
+          <p className="section-note">
+            rtorrent applies both as it loads a torrent: a change here reaches the torrents added after it, until
+            rtorrent restarts and loads every torrent as RT_USE_SANITIZED_NAME and RT_ALLOW_LEGACY_UTF8 say.
+          </p>
         </div>
 
         <div className="section">

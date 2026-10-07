@@ -166,6 +166,29 @@ def check_inert_setter(cascade):
             cascade.rpc('network.max_open_files.set', '', before)
 
 
+def check_name_switches(cascade):
+    """The torrent-name switches of 0.16.22 and 0.16.25 are offered where this
+    rtorrent lists their setters, and round-trip there; elsewhere they are
+    neither read nor written, and a change to one is skipped, not refused."""
+    supports = cascade.api('/api/capabilities')['supports']
+    methods = set(cascade.api('/api/rpc/methods')['methods'])
+    settings = cascade.api('/api/settings')
+    for key, command in (('useSanitizedName', 'system.torrent_name.use_sanitized'),
+                         ('allowLegacyUtf8', 'system.file_name.allow_legacy_utf8')):
+        listed = command + '.set' in methods
+        assert supports[key] == listed, (key, supports[key], listed)
+        if not listed:
+            assert key not in settings, (key, settings[key])
+            assert key not in cascade.api('/api/settings', {key: False}), key
+            continue
+        before = settings[key]
+        try:
+            after = cascade.api('/api/settings', {key: not before})[key]
+            assert after == (not before) and cascade.rpc(command) == int(not before), (key, before, after)
+        finally:
+            cascade.api('/api/settings', {key: before})
+
+
 def bencode(value):
     if isinstance(value, int):
         return b'i%de' % value
@@ -277,6 +300,7 @@ def main(base, container=None):
     check_page_and_headers(cascade)
     check_settings_and_throttles(cascade)
     check_inert_setter(cascade)
+    check_name_switches(cascade)
     check_long_file_name(cascade)
     check_stream(cascade)
     print(f'API smoke test passed on rtorrent {version}')

@@ -4,7 +4,8 @@
  * The simulated server route by route: the shapes the UI reads, the checks the
  * Go server makes and the words it refuses with, and rtorrent's own faults
  * relayed as the server relays them — a 502 with the fault, or a bulk route's
- * per-hash error. The messages here were taken from a running 0.16.24.
+ * per-hash error. The messages here were taken from a running 0.16.25, which
+ * words them as 0.16.24 did but for the value checks it added.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -20,7 +21,7 @@ function setup() {
   const clock = new ManualClock(START);
   const saved: unknown[] = [];
   const server = new DemoServer({
-    now: () => clock.now, timers: clock, seed: 5, version: '0.16.24', onPreferences: (prefs) => saved.push(prefs),
+    now: () => clock.now, timers: clock, seed: 5, version: '0.16.25', onPreferences: (prefs) => saved.push(prefs),
   });
   const call = (method: string, path: string, body?: unknown, query = ''): DemoResponse => server.handle({
     method,
@@ -59,9 +60,9 @@ test('the state: the real contract, the demo policy, the release from the Docker
   assert.deepEqual(state.status.policy, { rawRpc: true, deleteData: true });
   assert.equal(state.status.statePollMs, DEFAULT_POLL_MS);
   assert.equal(state.status.statePollDefaultMs, DEFAULT_POLL_MS);
-  assert.equal(state.status.backend.clientVersion, '0.16.24');
-  assert.equal(state.status.backend.libraryVersion, '0.16.24');
-  // What a real 0.16.24 has no working setter for, so the dialog greys out or hides the same controls.
+  assert.equal(state.status.backend.clientVersion, '0.16.25');
+  assert.equal(state.status.backend.libraryVersion, '0.16.25');
+  // What a real 0.16.25 has no working setter for, so the dialog greys out or hides the same controls.
   const { supports } = state.status.backend;
   assert.deepEqual(Object.keys(supports).filter((key) => !supports[key]).sort(), ['maxHttpOpen', 'maxOpenFiles', 'portOpen', 'sessionDirectory']);
   assert.equal(state.status.backend.methodCount, ok<{ methods: string[] }>('GET', 'rpc/methods').methods.length);
@@ -311,7 +312,33 @@ test('settings: every readable one reported, a bad value refused by name, a good
   assert.ok(!('portOpen' in after));
 });
 
-test('settings: what 0.16.24 refuses, in its words, and what it takes, as it reads it back', () => {
+test('settings: the torrent-name switches of 0.16.22 and 0.16.25, on by default, set alike from the dialog and the console', () => {
+  const { ok, call } = setup();
+  const rpc = (method: string, params: unknown[]) => ok<{ ok: boolean; result?: unknown; fault?: { code: number; message: string } }>(
+    'POST', 'rpc', { method, params });
+  const { supports } = ok<StateResponse>('GET', 'state').status.backend;
+  assert.equal(supports.useSanitizedName, true);
+  assert.equal(supports.allowLegacyUtf8, true);
+  const settings = ok<Record<string, unknown>>('GET', 'settings');
+  assert.deepEqual([settings.useSanitizedName, settings.allowLegacyUtf8], [true, true]);
+  const updated = ok<Record<string, unknown>>('POST', 'settings', { useSanitizedName: false, allowLegacyUtf8: 'off' });
+  assert.deepEqual([updated.useSanitizedName, updated.allowLegacyUtf8], [false, false]);
+  assert.equal(call('POST', 'settings', { allowLegacyUtf8: 2 }).status, 400);
+  assert.deepEqual(rpc('system.file_name.allow_legacy_utf8', ['']), { ok: true, result: 0 });
+  // rtorrent keeps any value but 0 as on.
+  assert.deepEqual(rpc('system.file_name.allow_legacy_utf8.set', ['', 2]), { ok: true, result: 0 });
+  assert.deepEqual(rpc('system.file_name.allow_legacy_utf8', ['']), { ok: true, result: 1 });
+  assert.equal(ok<Record<string, unknown>>('GET', 'settings').allowLegacyUtf8, true);
+  // In 0.16.25's words: a value that is not one, one with a sign 0.16.25 no longer reads, and none at all.
+  assert.deepEqual(rpc('system.file_name.allow_legacy_utf8.set', ['', 'abc']).fault, { code: -503, message: 'Not a value.' });
+  assert.deepEqual(rpc('system.torrent_name.use_sanitized.set', ['', '+1']).fault, { code: -503, message: 'Not a value.' });
+  assert.deepEqual(rpc('system.torrent_name.use_sanitized.set', ['']).fault, {
+    code: -503, message: 'Wrong object type: expected: value actual: none',
+  });
+  assert.deepEqual(rpc('system.torrent_name.use_sanitized', ['']), { ok: true, result: 0 });
+});
+
+test('settings: what 0.16.25 refuses, in its words, and what it takes, as it reads it back', () => {
   const { ok, refused } = setup();
   const before = ok<Record<string, unknown>>('GET', 'settings');
   const cases: Array<[Record<string, unknown>, string]> = [
@@ -431,7 +458,7 @@ test('the API console: commands that answer from the session, rtorrent\'s faults
   const methods = ok<{ methods: string[] }>('GET', 'rpc/methods').methods;
   assert.deepEqual(methods, [...methods].sort());
   assert.deepEqual(rpc('system.listMethods'), { ok: true, result: methods });
-  assert.deepEqual(rpc('system.client_version'), { ok: true, result: '0.16.24' });
+  assert.deepEqual(rpc('system.client_version'), { ok: true, result: '0.16.25' });
   assert.deepEqual(rpc('system.listMethodz'), { ok: false, fault: { code: -506, message: "Method 'system.listMethodz' not defined" } });
   const ubuntu = named('ubuntu');
   assert.deepEqual(rpc('d.name', [ubuntu.hash]), { ok: true, result: ubuntu.name });

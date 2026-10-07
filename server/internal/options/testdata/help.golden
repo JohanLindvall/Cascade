@@ -103,6 +103,10 @@ STORAGE
   RT_HASH_ON_COMPLETION      Re-verify on completion, yes/no [rtorrent default]
   RT_ADVISE_RANDOM_HASHING   Random-access hint while hashing, yes/no (rtorrent 0.16+) [rtorrent
                              default]
+  RT_USE_SANITIZED_NAME      List a torrent under its saved name, a / in it shown as _, yes/no
+                             (rtorrent 0.16.22+) [rtorrent default]
+  RT_ALLOW_LEGACY_UTF8       Name torrents and their files from name.utf-8 and path.utf-8 where
+                             a torrent has them, yes/no (rtorrent 0.16.25+) [rtorrent default]
   RT_MEMORY_MAX              Piece memory cap, bytes [rtorrent default]
   RT_MAX_FILE_SIZE           Largest accepted file, bytes [rtorrent default]
   RT_SYNC_TIMEOUT            Piece disk-sync timeout, seconds [rtorrent default]
@@ -152,7 +156,9 @@ WEB SERVER
 
 ESCAPE HATCHES
   Settings given as environment variables are applied over XML-RPC at startup rather than
-  written into rtorrent.rc, so changes made in the UI last until the container restarts.
+  written into rtorrent.rc, so changes made in the UI last until the container restarts. The
+  torrent-name switches go into rtorrent.rc as well, where the build has them, since rtorrent
+  names its session's torrents before anything else can reach it.
   RT_EXTRA_CONFIG            Raw rtorrent.rc lines appended to the generated config [unset]
   RT_EXTRA_CONFIG_FILE       File of extra rtorrent.rc lines to append [unset]
   RT_CONFIG_FILE             Use this rtorrent.rc verbatim instead of generating one

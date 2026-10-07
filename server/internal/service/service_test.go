@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -502,6 +503,49 @@ func TestASetterTheReleaseIgnoresIsSkippedAndNamedInTheStartupWarning(t *testing
 			warning := "rtorrent " + version + " does not support: maxOpenFiles"
 			if applies != (len(client.CallsTo("network.max_open_files.set")) == 2) || applies == strings.Contains(out.String(), warning) {
 				t.Fatalf("%d sent, logged %q", len(client.CallsTo("network.max_open_files.set")), out.String())
+			}
+		})
+	}
+}
+
+// RT_USE_SANITIZED_NAME (0.16.22) and RT_ALLOW_LEGACY_UTF8 (0.16.25) as
+// startup settings: sent where the release lists the setter, and named in
+// the warning where it does not.
+func TestTheTorrentNameSwitchesApplyAtStartupWhereTheReleaseHasThem(t *testing.T) {
+	sanitized := []string{"system.torrent_name.use_sanitized", "system.torrent_name.use_sanitized.set"}
+	legacy := []string{"system.file_name.allow_legacy_utf8", "system.file_name.allow_legacy_utf8.set"}
+	for _, c := range []struct {
+		version     string
+		listed      []string
+		applied     int
+		unsupported string
+	}{
+		{"0.16.25", append(slices.Clone(sanitized), legacy...), 2, ""},
+		{"0.16.24", sanitized, 1, "allowLegacyUtf8"},
+		{"0.9.8", nil, 0, "allowLegacyUtf8, useSanitizedName"},
+	} {
+		t.Run(c.version, func(t *testing.T) {
+			client := backend(c.listed...).Answer("system.client_version", c.version)
+			s := newService(t, client, nil)
+			if err := os.WriteFile(s.cfg.BootSettingsFile, []byte(`{"useSanitizedName":false,"allowLegacyUtf8":false}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out := logged(t)
+			if err := s.applyBootSettings(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for _, setter := range []string{"system.torrent_name.use_sanitized.set", "system.file_name.allow_legacy_utf8.set"} {
+				sent := client.CallsTo(setter)
+				listed := slices.Contains(c.listed, setter)
+				if listed != (len(sent) == 1) || listed && !reflect.DeepEqual(sent[0].Params, []any{"", int64(0)}) {
+					t.Errorf("%s: %v", setter, sent)
+				}
+			}
+			logs := out.String()
+			if !strings.Contains(logs, "applied "+strconv.Itoa(c.applied)+" startup setting(s)") ||
+				(c.unsupported == "") == strings.Contains(logs, "does not support") ||
+				c.unsupported != "" && !strings.Contains(logs, "rtorrent "+c.version+" does not support: "+c.unsupported) {
+				t.Errorf("logged %q", logs)
 			}
 		})
 	}

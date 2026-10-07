@@ -102,6 +102,13 @@ validate_options() {
     return 0
   fi
   enabled RT_PORT_RANDOM "$RT_PORT_RANDOM" || :
+  # The torrent-name switches reach the rc only when set (pick_name_switches).
+  if [ -n "${RT_USE_SANITIZED_NAME:-}" ]; then
+    enabled RT_USE_SANITIZED_NAME "$RT_USE_SANITIZED_NAME" || :
+  fi
+  if [ -n "${RT_ALLOW_LEGACY_UTF8:-}" ]; then
+    enabled RT_ALLOW_LEGACY_UTF8 "$RT_ALLOW_LEGACY_UTF8" || :
+  fi
   check_rc_value RT_UMASK "$RT_UMASK" '[0-7]{1,4}' 'an octal umask like 0022'
   check_rc_value RT_WATCH_INTERVAL "$RT_WATCH_INTERVAL" '[0-9]+(:[0-9]{1,2}){0,2}' 'a number of seconds, or a time like 00:00:10'
   if [ -n "${RT_SCGI_PORT:-}" ]; then
@@ -198,9 +205,11 @@ clear_session_lock() {
 # rtorrent.rc
 #
 # Only commands that exist in every supported rtorrent (0.9.x to 0.16.x) go in
-# here — rtorrent aborts on an unknown command in its config file. Everything
-# version-dependent is applied afterwards over XML-RPC by the web server, which
-# probes the command table first and skips what this build does not have.
+# here — rtorrent aborts on an unknown command in its config file — and the
+# few that must be in force before rtorrent starts, each asked of this build
+# first (rc_command_exists). Everything else version-dependent is applied
+# afterwards over XML-RPC by the web server, which probes the command table
+# first and skips what this build does not have.
 # --------------------------------------------------------------------------
 
 quote() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
@@ -217,7 +226,9 @@ stored_log_scopes() {
 # Ask this rtorrent whether it knows a command, by feeding it a one-line option
 # file. Used for the few settings that must be in rtorrent.rc — the listening
 # port has to be right before rtorrent binds, and 0.16 renamed the commands
-# from network.port_range to network.listen.port.range.
+# from network.port_range to network.listen.port.range; the torrent-name
+# switches have to be right before the session loads, and arrived in 0.16.22
+# and 0.16.25.
 rc_command_exists() {
   probe_rc="$(mktemp)"
   printf '%s\n' "$1" > "$probe_rc"
@@ -238,6 +249,33 @@ pick_port_commands() {
     PORT_RANDOM_CMD="network.port_random.set"
   fi
   log "listen port commands: $PORT_RANGE_CMD / $PORT_RANDOM_CMD"
+}
+
+# The torrent-name switches go into the rc as well as the startup settings:
+# rtorrent names a torrent as it loads it, and it loads the session before the
+# server can apply anything. Applied only afterwards, a switch would name the
+# session's torrents one way and new ones another — and RT_ALLOW_LEGACY_UTF8
+# would have rtorrent look for a torrent's files, after every restart, under
+# other names than it saved them under. Only a build that knows the command
+# gets the line, since rtorrent aborts on an unknown one; the server's
+# startup settings name what this build lacks.
+pick_name_switches() {
+  NAME_SWITCHES=""
+  if [ -n "${RT_USE_SANITIZED_NAME:-}" ]; then
+    add_name_switch system.torrent_name.use_sanitized.set RT_USE_SANITIZED_NAME "$RT_USE_SANITIZED_NAME"
+  fi
+  if [ -n "${RT_ALLOW_LEGACY_UTF8:-}" ]; then
+    add_name_switch system.file_name.allow_legacy_utf8.set RT_ALLOW_LEGACY_UTF8 "$RT_ALLOW_LEGACY_UTF8"
+  fi
+}
+
+# add_name_switch <command> <name> <value>
+add_name_switch() {
+  if enabled "$2" "$3"; then switch=1; else switch=0; fi
+  if rc_command_exists "$1 = $switch"; then
+    NAME_SWITCHES="$NAME_SWITCHES$1 = $switch
+"
+  fi
 }
 
 # Log groups also changed between releases. A scope saved by another version
@@ -278,6 +316,11 @@ render_rc() {
   if enabled RT_PORT_RANDOM "$RT_PORT_RANDOM"; then port_random=yes; else port_random=no; fi
   rc_line "$PORT_RANDOM_CMD = $port_random"
   echo
+  if [ -n "${NAME_SWITCHES:-}" ]; then
+    rc_line "# RT_USE_SANITIZED_NAME / RT_ALLOW_LEGACY_UTF8, in force before the session loads."
+    printf '%s' "$NAME_SWITCHES"
+    echo
+  fi
   rc_line "# XML-RPC over SCGI — this is what the web UI and any external client talk to."
   rc_line "network.scgi.open_local = $(quote "$RT_SCGI_SOCKET")"
   if [ -n "${RT_SCGI_PORT:-}" ]; then
@@ -336,6 +379,7 @@ write_rc() {
   RT_LOG_LEVEL="$(filter_log_scopes $(printf '%s' "$RT_LOG_LEVEL" | tr ',' ' '))"
   # shellcheck disable=SC2046
   LOG_SCOPES="$RT_LOG_LEVEL $(filter_log_scopes $(stored_log_scopes))"
+  pick_name_switches
   render_rc > "$RC_FILE"
   own "$PUID:$PGID" "$RC_FILE"
 }

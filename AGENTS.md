@@ -279,6 +279,15 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    rtorrent which name it knows (`rc_command_exists`, a one-line option file) and writes that one.
    Use the same trick for anything else that genuinely must be in the rc.
 
+   The torrent-name switches are the second case (`pick_name_switches`): rtorrent names a torrent
+   as it loads it, and it loads the session before the server connects, so a switch applied over
+   XML-RPC would reach only torrents added later — and a torrent added with
+   `system.file_name.allow_legacy_utf8` off would be looked for under other file names after the
+   next restart (measured on 0.16.25). `RT_USE_SANITIZED_NAME` and `RT_ALLOW_LEGACY_UTF8` are
+   written into the rc where `rc_command_exists` finds the command (0.16.22 and 0.16.25 added
+   them), and staged as startup settings too, which re-apply the same value and name the key in
+   the boot-settings warning on a build without it.
+
    The few values the rc carries as they are — `RT_PORT_RANGE`, `RT_UMASK`, `RT_WATCH_INTERVAL`,
    `RT_SCGI_PORT` — are checked by `validate_options` before anything is written, so a bad one
    stops the start by name rather than as a parse error thirty seconds later. The patterns follow
@@ -346,7 +355,13 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    and runs `path_fit_test.cc` with the same toolchain first. What reports what: `d.name` and
    `f.path` keep the torrent's own names (rtorrent joins `f.path` from the components itself,
    deliberately left alone); `frozen_path`, `d.base_path` and `d.directory` are the on-disk truth,
-   so delete-data is right. The Files tab fetches `f.frozen_path` and shows "on disk as …" when the
+   so delete-data is right. Which of a torrent's names those are is rtorrent's to choose in two
+   more ways: from 0.16.22 a `/` inside a name or a path component is saved as
+   `system.file_name.replace_slash` (`_`) — in `f.path` always, in `d.name` unless
+   `system.torrent_name.use_sanitized` is off (`useSanitizedName`); earlier releases refused such a
+   torrent, and Cascade's upload check still does — and from 0.16.25 both come from `name.utf-8`
+   and `path.utf-8` where a torrent has them, unless `system.file_name.allow_legacy_utf8` is off
+   (`allowLegacyUtf8`), which moves the files on disk too. The Files tab fetches `f.frozen_path` and shows "on disk as …" when the
    two differ (`MapFile`'s `OnDisk`), which is also what the API smoke test checks.
    `docker/patches/apply-<repo>.sh` is the general hook — one per repository, run after clone and
    before configure.
@@ -374,7 +389,10 @@ Never call a command unconditionally.
   warning, and the `supports` map: every setting key automatically becomes a feature that is true
   when the backend has a working setter, and the dialog greys the control out by that same key.
   Remember quirk 7: set the value and read it back on the oldest and newest rtorrent before trusting
-  it.
+  it. The key also goes into `GlobalSettings` in `web/src/contracts.ts` and the demo's table
+  (`web/src/demo/settings.ts`, as the Dockerfile's release has it), and an environment variable for
+  it is an entry in `options.go` naming it as its `Setting`. A setting rtorrent reads only as it
+  loads a torrent needs its variable in the rc as well (quirk 6).
 - **Anything else** (per-torrent commands, probes) goes in `featureMethods` in
   `internal/rtorrent/capabilities.go`, guarded with `caps.Supports("yourFeature")`.
 - **A command a release still lists but ignores** goes in `inertFrom` in the same file, with the

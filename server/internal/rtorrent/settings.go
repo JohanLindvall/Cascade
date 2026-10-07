@@ -116,6 +116,19 @@ var settingTable = []struct {
 	{"preallocate", SettingSpec{Get: one("system.file.allocate"), Set: one("system.file.allocate.set"), Kind: KindBool}},
 	{"checkHashOnCompletion", SettingSpec{Get: one("pieces.hash.on_completion"), Set: one("pieces.hash.on_completion.set"), Kind: KindBool}},
 	{"adviseRandomHashing", SettingSpec{Get: one("system.files.advise_random.hashing"), Set: one("system.files.advise_random.hashing.set"), Kind: KindBool}},
+	// rtorrent names a torrent as it loads it, the session's included, so the
+	// two name switches reach only what is loaded after a change — which is
+	// why the entrypoint also writes their variables into rtorrent.rc
+	// (AGENTS.md quirk 6).
+	//
+	// 0.16.22 saves a "/" in a torrent's name as system.file_name.replace_slash
+	// ("_"), where earlier releases refused the torrent; this picks whether
+	// d.name is that name or the torrent's own.
+	{"useSanitizedName", SettingSpec{Get: one("system.torrent_name.use_sanitized"), Set: one("system.torrent_name.use_sanitized.set"), Kind: KindBool}},
+	// 0.16.25 names a torrent and its files from name.utf-8 and path.utf-8,
+	// which older torrent makers wrote beside a name in a legacy encoding.
+	// Unlike the switch above, this moves such a torrent's files on disk.
+	{"allowLegacyUtf8", SettingSpec{Get: one("system.file_name.allow_legacy_utf8"), Set: one("system.file_name.allow_legacy_utf8.set"), Kind: KindBool}},
 	{"directory", SettingSpec{Get: one("directory.default"), Set: one("directory.default.set"), Kind: KindString}},
 	// Changing the session directory of a running rtorrent is not supported.
 	{"sessionDirectory", SettingSpec{Get: one("session.path"), Kind: KindString}},

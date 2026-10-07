@@ -660,6 +660,23 @@ table.torrents th[tabindex]:focus-visible,
   opacity: 0.45;
 }
 
+/* A switch with a hint: the hint lines up under the label, past the track
+   (34px) and the gap after it (9px), and wraps rather than widening the row. */
+.switch-field {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  max-width: 360px;
+}
+
+.switch-field .hint {
+  padding-left: 43px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-faint);
+}
+
 .search {
   position: relative;
   display: flex;
@@ -1756,6 +1773,19 @@ table.grid tr.detail-row > td {
   text-transform: uppercase;
   color: var(--text-faint);
   font-weight: 650;
+}
+
+/* Toggles straight under a heading need no gap from a grid above them. */
+.section > h3 + .switch-row {
+  margin-top: 0;
+}
+
+/* A caveat for a whole section, under its controls. */
+.section-note {
+  margin: 12px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-faint);
 }
 
 /* dropzone */

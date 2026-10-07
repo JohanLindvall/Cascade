@@ -84,6 +84,27 @@ func TestCoercionByKind(t *testing.T) {
 	}
 }
 
+// The torrent-name switches (0.16.22 and 0.16.25) are booleans like the rest:
+// 0 or 1 after the empty target, read back as true or false.
+func TestTheTorrentNameSwitchesAreBooleans(t *testing.T) {
+	for key, setter := range map[string]string{
+		"useSanitizedName": "system.torrent_name.use_sanitized.set",
+		"allowLegacyUtf8":  "system.file_name.allow_legacy_utf8.set",
+	} {
+		for value, want := range map[any]int64{false: 0, "on": 1} {
+			call, err := entry(t, map[string]any{key: value})
+			if err != nil || call.Method != setter || !reflect.DeepEqual(call.Params, []any{"", want}) {
+				t.Errorf("%s=%v: %#v %v", key, value, call, err)
+			}
+		}
+		_, err := SettingEntries(map[string]any{key: 2.0}, resolveAll)
+		requireFieldError(t, err, key)
+		if DecodeSettingValue(key, int64(0)) != false || DecodeSettingValue(key, int64(1)) != true {
+			t.Errorf("%s decodes as %#v", key, DecodeSettingValue(key, int64(1)))
+		}
+	}
+}
+
 func TestMalformedValuesNeverBecomeZeroUnlimitedOrTruthy(t *testing.T) {
 	for _, value := range []any{nil, "", "fast", false, []any{}, map[string]any{}, math.Inf(1), math.NaN(), 1.5, float64(validate.MaxSafeInteger + 1)} {
 		_, err := SettingEntries(map[string]any{"downloadRate": value}, resolveAll)

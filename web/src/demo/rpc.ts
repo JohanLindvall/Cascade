@@ -6,7 +6,8 @@
  * session's own values, setters and lifecycle commands changing it — and any
  * other name faults the way xmlrpc-c does ("Method 'x' not defined", -506).
  * The command names, the help texts and the faults for a missing, mistyped or
- * refused argument are copied from a running 0.16.24 wherever one was checked.
+ * refused argument are copied from a running 0.16.25 wherever one was checked
+ * (0.16.24 answered alike, but for the value checks 0.16.25 added).
  */
 import {
   type Session, type SimTorrent, SESSION_DIR, VIEWS, basePathOf, completedBytes, directoryOf, ratioPermille, viewsOf,

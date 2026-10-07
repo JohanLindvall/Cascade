@@ -3,7 +3,7 @@
 /**
  * The global settings as the server's table has them
  * (server/internal/rtorrent/settings.go), resolved against the release the
- * demo presents, 0.16.24: each key's getter and setter there, and how its
+ * demo presents, 0.16.25: each key's getter and setter there, and how its
  * value is checked. A key with no getter is not reported, one with no setter
  * is not supported, and the dialog greys it out as it does against a real
  * install. The REST settings routes and the console's commands both go
@@ -73,6 +73,10 @@ export const SETTINGS: readonly SettingSpec[] = [
   both('preallocate', 'system.file.allocate', 'bool'),
   both('checkHashOnCompletion', 'pieces.hash.on_completion', 'bool'),
   both('adviseRandomHashing', 'system.files.advise_random.hashing', 'bool'),
+  // The torrent-name switches of 0.16.22 and 0.16.25. The demo names no
+  // torrent with a slash or a legacy encoding, so they change no name here.
+  both('useSanitizedName', 'system.torrent_name.use_sanitized', 'bool'),
+  both('allowLegacyUtf8', 'system.file_name.allow_legacy_utf8', 'bool'),
   both('directory', 'directory.default', 'string'),
   // A running rtorrent cannot move its session: reported, never set.
   spec('sessionDirectory', 'session.path', null, 'string'),
@@ -94,7 +98,7 @@ export const SETTINGS: readonly SettingSpec[] = [
   both('blockOutgoing', 'network.block.outgoing', 'bool'),
 ];
 
-/** What a fresh session reports: 0.16.24's own defaults, with an upload limit set. */
+/** What a fresh session reports: 0.16.25's own defaults, with an upload limit set. */
 export function defaultSettings(): GlobalSettings {
   return {
     downloadRate: 0,
@@ -134,6 +138,8 @@ export function defaultSettings(): GlobalSettings {
     preallocate: false,
     checkHashOnCompletion: true,
     adviseRandomHashing: false,
+    useSanitizedName: true,
+    allowLegacyUtf8: true,
     directory: '/downloads',
     sessionDirectory: '/config/session/',
     bindAddress: '',
@@ -178,7 +184,7 @@ const MiB = 1024 * 1024;
 const DHT_MODES = ['disable', 'off', 'auto', 'on'];
 const ENCRYPTION_MODES = ['deny', 'allow', 'prefer', 'require'];
 const HTTP_PROXY_SCHEMES = ['http', 'https', 'socks4', 'socks4a', 'socks5', 'socks5h'];
-/** The demo has no resolver: only what a container's /etc/hosts answers, in the order 0.16.24 got it. */
+/** The demo has no resolver: only what a container's /etc/hosts answers, in the order 0.16.24 and 0.16.25 got it. */
 const HOSTS: Record<string, string[]> = { localhost: ['::1', '127.0.0.1'] };
 
 /**
@@ -331,7 +337,7 @@ function globalProxyRefusal(value: string): string | null {
     return url.user || url.password ? "Proxy address for 'http://' must not include a user or password." : null;
   }
   if (url.scheme === 'socks5' || url.scheme === 'socks5h') {
-    // As 0.16.24 has it: a user with a password is refused, under the other message.
+    // As 0.16.24 and 0.16.25 have it: a user with a password is refused, under the other message.
     if (url.user && url.password) return `Proxy address for '${url.scheme}://' must not include a password without a user.`;
     return null;
   }
@@ -340,9 +346,9 @@ function globalProxyRefusal(value: string): string | null {
 
 /**
  * What rtorrent itself refuses of a value the checks above let through, in
- * its own words (taken from 0.16.24 and its sources), or null for one it
- * takes. The settings route reports it as the server reports a faulting
- * setter: a 502 naming the command.
+ * its own words (taken from 0.16.25, which words them as 0.16.24 did, and
+ * its sources), or null for one it takes. The settings route reports it as
+ * the server reports a faulting setter: a 502 naming the command.
  */
 export function refusal(key: SettingKey, value: SettingValue): string | null {
   const n = Number(value);
