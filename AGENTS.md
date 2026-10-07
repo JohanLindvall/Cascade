@@ -114,18 +114,19 @@ The runner strips types but does not compile JSX, so a test reaches `.ts` module
 logic belongs where it can reach it. The stream's patching and reconnects (`stream.ts`,
 `streamConnection.ts`), sorting, filtering, the `.torrent` file check and drop parsing
 (`files.ts`), the selection rules, the value a selection shares for a field (`sharedValue.ts`),
-the directory a torrent's data goes into (`dataFolder.ts`), formatting and parsing, redaction, the preference shape and its syncing, the menu's placement and
-right-click rule (`components/menuRules.ts`), the toast hold (`components/toastHold.ts`) and where
-focus goes on selection or menu opening (`app/rowFocus.ts`) live apart from the components for exactly
-that reason. What cannot be split off is pinned by reading the source instead:
-`components/detail/tabs.test.ts` checks the detail tabs stay memoized, and
-`app/useTorrentActions.test.ts` that "Change directory" is pre-filled from `sharedDataFolder`.
-A pure module that imports another spells the specifier with `.ts` (`preferences.ts` →
-`'./sort.ts'`): the runner resolves specifiers literally, and Vite and tsc accept either. A module
-that touches `window` or `document` at load time cannot be imported statically: `api.test.ts`
-stubs `document.baseURI` and then imports `api.ts` dynamically, and `preferences.ts` (the shape and
-its repair) is kept apart from `prefs.ts` (the fetch, the cache, the `pagehide` flush) so its
-tests need no stub at all.
+the directory a torrent's data goes into (`dataFolder.ts`), formatting and parsing, redaction, the
+preference shape and its syncing, the menu's placement and right-click rule
+(`components/menuRules.ts`), the toast hold (`components/toastHold.ts`), the order of a detail row's
+flags (`components/detail/flags.ts`) and where focus goes on selection or menu opening
+(`app/rowFocus.ts`) live apart from the components for exactly that reason. What cannot be split off
+is pinned by reading the source instead: `components/detail/tabs.test.ts` checks the detail tabs
+stay memoized, and `app/useTorrentActions.test.ts` that "Change directory" is pre-filled from
+`sharedDataFolder`. A pure module that imports another spells the specifier with `.ts`
+(`preferences.ts` → `'./sort.ts'`): the runner resolves specifiers literally, and Vite and tsc
+accept either. A module that touches `window` or `document` at load time cannot be imported
+statically: `api.test.ts` stubs `document.baseURI` and then imports `api.ts` dynamically, and
+`preferences.ts` (the shape and its repair) is kept apart from `prefs.ts` (the fetch, the cache, the
+`pagehide` flush) so its tests need no stub at all.
 
 Go runs in Docker too, as uid 1000 so the files it writes keep their owner:
 
@@ -717,10 +718,15 @@ chip have fixed widths, and the card layout's rate spans have a `min-width` — 
 ticking from `2m 54s` to `2m 9s` is one character narrower, and with content-sized columns the
 name column absorbs the difference and the whole table steps sideways on every update. Column
 widths are percentages so narrow windows squeeze rather than scroll; check with
-`getBoundingClientRect()` on the `th`s before and after a value change, not by eye. Rows must not
-trade places either: `sortTorrents` breaks every tie by name and then hash, and names the collator
-calls equal ("Movie"/"movie", "Episode 07"/"Episode 7") share a rank, so the hash decides rather
-than the order rtorrent listed them in.
+`getBoundingClientRect()` on the `th`s before and after a value change, not by eye. Nor may a row
+change height: a peer's Flags cell and a tracker's State cell (`.flags`) are one tag tall and show
+the tags that fit, whole, then an ellipsis. `flags.ts` lists what is wrong first, so that is what
+shows, and the cell's title and the expanded row name every flag (a touch screen has no title).
+A space drawn zero wide (`.flag-gap`) parts the tags, or the accessible name, `innerText` and a
+copy run them into one word ("bannedsnub"). Rows must not trade places either: `sortTorrents`
+breaks every tie by name and then hash, and names the collator calls equal ("Movie"/"movie",
+"Episode 07"/"Episode 7") share a rank, so the hash decides rather than the order rtorrent listed
+them in.
 
 **What the stream redraws must stay cheap.** The app renders on every delta, up to ten a second.
 The table's rows (`TorrentRow`, `TorrentCard`) and the fetched detail tabs (`FilesTab`, `PeersTab`,

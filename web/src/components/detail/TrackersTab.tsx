@@ -8,7 +8,8 @@ import type { Tracker } from '../../types';
 import { useClock } from '../clock';
 import { IconPlus } from '../icons';
 import { useToast } from '../toast';
-import { Flags, MiniKv, NoteRow, RowToggle, useExpanded, yesNo, type Flag } from './parts';
+import { trackerFlags } from './flags';
+import { Flags, MiniKv, NoteRow, RowToggle, useExpanded, yesNo } from './parts';
 
 const COLUMNS = 10;
 
@@ -24,21 +25,6 @@ const TRACKER_EVENTS: Record<number, string> = {
 
 /** A tracker URL rtorrent can announce to (d.tracker.insert takes anything). */
 const TRACKER_URL = /^(https?|udp):\/\/\S+$/i;
-
-function trackerFlags(tracker: Tracker): Flag[] {
-  const flags: Flag[] = [];
-  if (tracker.busy) flags.push({ label: 'announcing', title: 'Request in flight' });
-  if (tracker.open) flags.push({ label: 'open', title: 'Connection open' });
-  if (!tracker.usable) flags.push({ label: 'unusable', title: 'Not currently usable', tone: 'warn' });
-  if (tracker.extra) flags.push({ label: 'extra', title: 'Added at runtime, not from the torrent' });
-  if (tracker.failures > 0 && tracker.successes === 0) {
-    flags.push({ label: 'failing', title: 'No successful announce yet', tone: 'bad' });
-  }
-  if (flags.length === 0 && tracker.successes > 0) {
-    flags.push({ label: 'ok', title: 'Announced successfully', tone: 'good' });
-  }
-  return flags;
-}
 
 /** The torrent's trackers, each one switchable; a row expands to its announce history. Memoized, as FilesTab. */
 export const TrackersTab = memo(function TrackersTab({
@@ -142,6 +128,12 @@ export const TrackersTab = memo(function TrackersTab({
                           ['Last scrape', relative(tracker.lastScrape)],
                           ['Scrapable', yesNo(tracker.canScrape)],
                           ['Usable', yesNo(tracker.usable)],
+                          // With Usable and the OK / fail column, the State cell's
+                          // tags in words: the cell may have room for only the first
+                          // of them, and a touch screen shows no title.
+                          ['Announcing', yesNo(tracker.busy)],
+                          ['Connection open', yesNo(tracker.open)],
+                          ['Added at runtime', yesNo(tracker.extra)],
                         ]}
                       />
                     </td>

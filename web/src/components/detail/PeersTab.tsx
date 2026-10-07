@@ -4,21 +4,10 @@ import { Fragment, memo, type ReactNode } from 'react';
 import { bytes, hostPort, percent, rate } from '../../format';
 import type { Peer } from '../../types';
 import { ProgressBar } from '../ui';
-import { Flags, MiniKv, NoteRow, RowToggle, useExpanded, yesNo, type Flag } from './parts';
+import { peerFlags } from './flags';
+import { Flags, MiniKv, NoteRow, RowToggle, useExpanded, yesNo } from './parts';
 
 const COLUMNS = 9;
-
-function peerFlags(peer: Peer): Flag[] {
-  const flags: Flag[] = [];
-  if (peer.encrypted) flags.push({ label: 'enc', title: 'Connection is encrypted', tone: 'good' });
-  if (peer.obfuscated) flags.push({ label: 'obf', title: 'Header obfuscation in use' });
-  if (peer.incoming) flags.push({ label: 'in', title: 'Peer connected to us' });
-  if (peer.preferred) flags.push({ label: 'pref', title: 'Preferred peer', tone: 'good' });
-  if (peer.snubbed) flags.push({ label: 'snub', title: 'Snubbed — sent us nothing recently', tone: 'warn' });
-  if (peer.unwanted) flags.push({ label: 'unwanted', title: 'Marked unwanted', tone: 'warn' });
-  if (peer.banned) flags.push({ label: 'banned', title: 'Banned', tone: 'bad' });
-  return flags;
-}
 
 /**
  * An address that may wrap after any colon, so a narrow screen breaks it
