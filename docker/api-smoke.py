@@ -9,8 +9,9 @@ error shapes, the cross-site guard, compression and caching headers, setting
 and throttle round trips in rtorrent's own units, a setting offered only where
 its setter works, which names the legacy-name switch saves a torrent under,
 the state stream, the libtorrent path patch (a torrent named past Linux's
-255-byte limit must start), and deleting the data of a torrent whose name is
-not UTF-8. Given the container's name it gives up as soon as the container
+255-byte limit must start), deleting the data of a torrent whose name is not
+UTF-8, and a directory change, which must not nest a multi-file torrent inside
+its own folder. Given the container's name it gives up as soon as the container
 exits rather than waiting out the readiness timeout, and looks at its disk
 where a check needs to; without it, such a check is skipped.
 
@@ -332,12 +333,14 @@ def check_long_file_name(cascade):
         remove_torrent(cascade, info_hash)
 
 
-def upload_torrents(cascade, *torrents):
+def upload_torrents(cascade, *torrents, **fields):
     boundary = 'cascade-smoke-' + uuid.uuid4().hex
     form = b''.join(
         (f'--{boundary}\r\nContent-Disposition: form-data; name="torrents"; filename="t{i}.torrent"\r\n'
          'Content-Type: application/x-bittorrent\r\n\r\n').encode() + torrent + b'\r\n'
-        for i, torrent in enumerate(torrents)) + f'--{boundary}--\r\n'.encode()
+        for i, torrent in enumerate(torrents)) + b''.join(
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
+        for name, value in fields.items()) + f'--{boundary}--\r\n'.encode()
     status, _, body = cascade.fetch('/api/torrents/upload', form, 'POST',
                                     {'content-type': f'multipart/form-data; boundary={boundary}'})
     assert status == 200, (status, body)
@@ -420,6 +423,48 @@ def check_names_that_are_not_text(cascade):
         cascade.run('sh', '-c', 'rm -rf -- "$1"/*"$2"*', 'sh', directory, tag)
 
 
+def check_directory_change(cascade):
+    """A directory change takes the directory the data goes into, as an add
+    does. d.directory is a multi-file torrent's own folder, and d.directory.set
+    appends the torrent's name to what it is given, so the directory the UI
+    offered back used to nest the torrent inside itself. The offer must change
+    nothing, and a new directory get the folder, by the name it has."""
+    tag = uuid.uuid4().hex[:8]
+    root = cascade.rpc('directory.default').rstrip('/') + f'/smoke-dir-{tag}'
+    data = tag.encode() * 2048
+    common = {'piece length': len(data), 'pieces': hashlib.sha1(data).digest()}
+    single = {**common, 'name': f'single {tag}.bin', 'length': len(data)}
+    multi = {**common, 'name': f'multi {tag}', 'files': [{'length': len(data), 'path': ['a.bin']}]}
+    hashes = [hashlib.sha1(bencode(info)).hexdigest().upper() for info in (single, multi)]
+    torrents = [bencode({'announce': 'http://tracker.invalid/announce', 'info': info}) for info in (single, multi)]
+
+    def directories():
+        listed = {t['hash']: t['directory'] for t in cascade.api('/api/state')['torrents']}
+        return [listed.get(info_hash) for info_hash in hashes]
+
+    def move(directory):
+        for info_hash in hashes:
+            cascade.api(f'/api/torrents/{info_hash}', {'directory': directory}, 'PATCH')
+
+    try:
+        # Never started, so nothing reaches the disk.
+        result = upload_torrents(cascade, *torrents, directory=f'{root}/a', start='false')
+        assert result['added'] == 2, result
+        offered = [f'{root}/a', f'{root}/a/multi {tag}']
+        assert directories() == offered, directories()
+        move(f'{root}/a')
+        assert directories() == offered, f'the directory offered moved them: {directories()}'
+        move(f'{root}/b/')
+        assert directories() == [f'{root}/b', f'{root}/b/multi {tag}'], directories()
+        # A folder named otherwise, as another tool leaves one, keeps its name.
+        cascade.rpc('d.directory_base.set', hashes[1], f'{root}/b/Other {tag}')
+        move(f'{root}/c')
+        assert directories() == [f'{root}/c', f'{root}/c/Other {tag}'], directories()
+    finally:
+        for info_hash in hashes:
+            cascade.fetch(f'/api/torrents/{info_hash}', method='DELETE')
+
+
 def check_stream(cascade):
     """The state stream: a compressed snapshot first, then a delta once a
     change lands — here a preference, which the status carries."""
@@ -477,6 +522,7 @@ def main(base, container=None):
     check_legacy_names(cascade)
     check_long_file_name(cascade)
     check_names_that_are_not_text(cascade)
+    check_directory_change(cascade)
     check_stream(cascade)
     print(f'API smoke test passed on rtorrent {version}')
 
