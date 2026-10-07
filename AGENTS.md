@@ -360,7 +360,11 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    disk, a component at a time, and refuses with a 409 before the erase when two paths fit, or when
    the one that fits is not confirmed by rtorrent: `f.is_created` stats the real bytes, and a
    torrent whose own data is gone must not take a namesake with it. The root checks then apply to
-   the bytes found. A stand-in is chosen per string, so a UTF-8 file name under a Latin-1
+   the bytes found. The listing and the Files tab ask for the `.base64` variants of `d.name`,
+   `d.base_path`, `f.path_components` and `f.frozen_path` where the backend has them
+   (`ExactFields`), so an emoji shows as itself and a stray byte as U+FFFD; `d.directory` has no
+   variant and borrows the base path's bytes when its stand-in fits them, and before 0.16.13 the UI
+   shows rtorrent's stand-ins. A stand-in is chosen per string, so a UTF-8 file name under a Latin-1
    directory arrives escaped in `f.frozen_path` and as itself in `f.path`: `MapFile` does not take
    that for a shortened name (it used to say "on disk as Caf%C3%A9.txt"). The completion move gets
    the path from rtorrent as an argument, bytes and all, and never sees a stand-in; a directory

@@ -4,6 +4,7 @@ package service
 
 import (
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"os"
 	"reflect"
@@ -87,6 +88,17 @@ func TestATorrentTheSessionHoldsIsA409NamingItAndIsNotLoadedAgain(t *testing.T) 
 				t.Errorf("%s: %s was called: %v", name, method, calls)
 			}
 		}
+	}
+}
+
+func TestATorrentAlreadyLoadedIsNamedByItsExactBytesWhereRtorrentSendsThem(t *testing.T) {
+	data, infoHash := singleFile(t)
+	// d.name is the stand-in an emoji gets; the .base64 variant the bytes.
+	client := backend("d.name.base64").Answer("d.hash", infoHash).Answer("d.name", "Song %F0%9F%8E%B5").
+		Answer("d.name.base64", base64.StdEncoding.EncodeToString([]byte("Song \U0001F3B5")))
+	err := newService(t, client, nil).AddTorrentFile(ctx, data, contracts.LoadOptions{Start: true})
+	if status(t, err) != 409 || !strings.Contains(err.Error(), "\"Song \U0001F3B5\" is already loaded") {
+		t.Fatalf("%v", err)
 	}
 }
 

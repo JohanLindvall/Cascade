@@ -275,6 +275,8 @@ def check_names_that_are_not_text(cascade):
 
         methods = cascade.rpc('system.listMethods')
         exact = 'd.base_path.base64' in methods
+        if exact:  # the list shows the bytes, read the way a browser reads them
+            assert listed[hashes[0]]['name'] == f'Caf\ufffd smoke-{tag}.bin', listed[hashes[0]]['name']
         reported = cascade.rpc('d.base_path', hashes[0])
         stand_in = reported.rsplit('/', 1)[1].encode()
         assert stand_in != single['name'], reported

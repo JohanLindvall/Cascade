@@ -684,7 +684,9 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
 - Names are bytes to rtorrent, but XML-RPC text has to be UTF-8 — and through xmlrpc-c, the RPC
   layer the image builds with, UTF-8 within the Basic Multilingual Plane, which leaves out emoji.
   For a name that is not, such as a Latin-1 `Café.bin` from an old torrent, rtorrent sends a
-  stand-in — `Caf%E9.bin` from 0.16.3, `Caf?.bin` before — and the UI shows it as sent.
+  stand-in: `Caf%E9.bin` from 0.16.3, `Caf?.bin` before. From rtorrent 0.16.13 Cascade asks for
+  the bytes instead and shows the name as it is, emoji included, with `�` for a byte that is not
+  UTF-8; on older releases the UI shows the stand-in.
 - Global settings changed in the UI are not persisted to `rtorrent.rc`; the environment is the
   source of truth on restart.
 - "Change directory" stops the torrent and updates its saved path. Move already-downloaded files

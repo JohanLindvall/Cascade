@@ -7,6 +7,7 @@ package rtorrent
 // transient tracker message must not paint a healthy torrent red.
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -122,6 +123,52 @@ func TestLabelsDecodeTheRuTorrentWayAndBadEscapesSurvive(t *testing.T) {
 		if got := MapTorrent(row(Row{"d.custom1": raw}), 0).Label; got != want {
 			t.Errorf("label %q decoded as %q, want %q", raw, got, want)
 		}
+	}
+}
+
+func b64(text string) string { return base64.StdEncoding.EncodeToString([]byte(text)) }
+
+func TestNamesAndPathsSentExactlyAreShownAsTheyAre(t *testing.T) {
+	// An emoji is valid UTF-8 that only the exact variant carries as itself;
+	// a byte that is not UTF-8 reads as U+FFFD, as a browser reads it.
+	single := MapTorrent(row(Row{"d.name.base64": b64("Song \U0001F3B5.bin"),
+		"d.base_path.base64": b64("/downloads/M\xfcsik/Song \U0001F3B5.bin"), "d.directory": "/downloads/M%FCsik"}), 0)
+	if single.Name != "Song \U0001F3B5.bin" || single.BasePath != "/downloads/M\uFFFDsik/Song \U0001F3B5.bin" ||
+		single.Directory != "/downloads/M\uFFFDsik" {
+		t.Errorf("single-file %q, %q, %q", single.Name, single.BasePath, single.Directory)
+	}
+	multi := MapTorrent(row(Row{"d.name.base64": b64("Caf\xe9 dir"), "d.is_multi_file": int64(1),
+		"d.base_path.base64": b64("/downloads/Caf\xe9 dir"), "d.directory": "/downloads/Caf%E9 dir"}), 0)
+	if multi.Name != "Caf\uFFFD dir" || multi.BasePath != "/downloads/Caf\uFFFD dir" || multi.Directory != multi.BasePath {
+		t.Errorf("multi-file %q, %q, %q", multi.Name, multi.BasePath, multi.Directory)
+	}
+	// A directory changed since the torrent last opened is not the base path's:
+	// it stays as rtorrent reports it.
+	moved := MapTorrent(row(Row{"d.is_multi_file": int64(1), "d.base_path.base64": b64("/downloads/Caf\xe9 dir"),
+		"d.directory": "/elsewhere/Caf%E9 dir"}), 0)
+	if moved.Directory != "/elsewhere/Caf%E9 dir" {
+		t.Errorf("moved directory %q", moved.Directory)
+	}
+	unopened := MapTorrent(row(Row{"d.base_path.base64": "", "d.directory": "/downloads"}), 0)
+	if unopened.BasePath != "" || unopened.Directory != "/downloads" {
+		t.Errorf("unopened %q, %q", unopened.BasePath, unopened.Directory)
+	}
+
+	file := MapFile(Row{"f.path_components.base64": []any{b64("sub\xff"), b64("Caf\xc3\xa9.txt")},
+		"f.frozen_path.base64": b64("/downloads/Caf\xe9 dir/sub\xff/Caf\xc3\xa9.txt")}, 0)
+	if file.Path != "sub\uFFFD/Café.txt" || file.OnDisk != "" {
+		t.Errorf("file %q on disk as %q", file.Path, file.OnDisk)
+	}
+	cut := MapFile(Row{"f.path_components.base64": []any{b64("Caf\xe9 " + strings.Repeat("x", 300) + ".bin")},
+		"f.frozen_path.base64": b64("/downloads/Caf\xe9 xxx~1a2b3c4d.bin")}, 0)
+	if cut.OnDisk != "Caf\uFFFD xxx~1a2b3c4d.bin" {
+		t.Errorf("shortened name reported as %q", cut.OnDisk)
+	}
+	if got := TextOf("d.name.base64", b64("Caf\xe9")); got != "Caf\uFFFD" {
+		t.Errorf("TextOf exact: %q", got)
+	}
+	if got := TextOf("d.name", "Caf%E9"); got != "Caf%E9" {
+		t.Errorf("TextOf plain: %q", got)
 	}
 }
 

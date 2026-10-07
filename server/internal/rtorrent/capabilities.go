@@ -382,11 +382,14 @@ func (c *Capabilities) probe(ctx context.Context) (probed, error) {
 }
 
 // pickAvailable filters candidate field commands down to those the backend
-// implements, keeping their order.
+// implements, keeping their order, and asks for a field's exact variant
+// (ExactFields) in its place where the backend has one.
 func pickAvailable(available map[string]bool, candidates []string) []string {
 	picked := []string{}
 	for _, name := range candidates {
-		if available[name] {
+		if exact, ok := ExactFields[name]; ok && available[exact] {
+			picked = append(picked, exact)
+		} else if available[name] {
 			picked = append(picked, name)
 		}
 	}
