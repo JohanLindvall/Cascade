@@ -6,6 +6,7 @@ package rtorrent
 // their answers becomes what the UI shows.
 
 import (
+	"encoding/base64"
 	"math"
 	"net/url"
 	"strconv"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/JohanLindvall/Cascade/server/internal/contracts"
 	"github.com/JohanLindvall/Cascade/server/internal/jsnum"
+	"github.com/JohanLindvall/Cascade/server/internal/utf8text"
 )
 
 // TorrentFields are asked for in the listing multicall. Only fields something
@@ -34,6 +36,9 @@ var TorrentFields = []string{
 	"d.is_active",
 	"d.is_private",
 	"d.is_multi_file",
+	// A magnet still fetching its metadata, whose directory the UI does not
+	// offer to change (refuseFetchingMetadata in internal/service).
+	"d.is_meta",
 	"d.complete",
 	"d.hashing",
 	"d.hashing_failed",
@@ -53,6 +58,18 @@ var TorrentFields = []string{
 	"d.timestamp.started",
 	"d.timestamp.finished",
 	"d.creation_date",
+}
+
+// ExactFields maps a name or path field to the variant that carries its bytes
+// exactly, as base64 (rtorrent 0.16.13 and later). Where a backend has the
+// variant it is asked for in the field's place, at the same cost: the plain
+// field arrives as a stand-in for any name that is not UTF-8 or holds an
+// emoji (see standin.go). d.directory has no such variant.
+var ExactFields = map[string]string{
+	"d.name":        "d.name.base64",
+	"d.base_path":   "d.base_path.base64",
+	"f.path":        "f.path_components.base64",
+	"f.frozen_path": "f.frozen_path.base64",
 }
 
 // FileFields are asked for in f.multicall.
@@ -152,6 +169,56 @@ func (r Row) text(key string) string {
 	}
 }
 
+// bytes reads a name or path field: the bytes rtorrent holds when the row
+// carries its exact variant (ExactFields), and rtorrent's text otherwise.
+// exact says which.
+func (r Row) bytes(key string) (value string, exact bool) {
+	encoded, ok := r[ExactFields[key]]
+	if !ok {
+		return r.text(key), false
+	}
+	// f.path_components.base64 is a list, a component each.
+	if parts, isList := encoded.([]any); isList {
+		decoded := make([]string, len(parts))
+		for i, part := range parts {
+			decoded[i] = fromBase64(Text(part))
+		}
+		return strings.Join(decoded, "/"), true
+	}
+	return fromBase64(Text(encoded)), true
+}
+
+// fromBase64 is the bytes base64 text carries, or the text itself should
+// rtorrent ever answer with something else.
+func fromBase64(text string) string {
+	raw, err := base64.StdEncoding.DecodeString(text)
+	if err != nil {
+		return text
+	}
+	return string(raw)
+}
+
+// shown is a name or path as the UI shows it: exact bytes are read as UTF-8
+// the way a browser reads them, U+FFFD for what is not; rtorrent's own text
+// is already text.
+func shown(value string, exact bool) string {
+	if exact {
+		return utf8text.Decode([]byte(value))
+	}
+	return value
+}
+
+// TextOf reads the answer to a name or path field, or to its exact variant,
+// as text to show.
+func TextOf(field string, value any) string {
+	for plain, variant := range ExactFields {
+		if field == variant {
+			return shown(Row{variant: value}.bytes(plain))
+		}
+	}
+	return Text(value)
+}
+
 // isRealError tells a torrent that is broken from one whose tracker is
 // merely complaining: rtorrent puts transient announce failures in the
 // message too, prefixed "Tracker:" in any case.
@@ -249,6 +316,8 @@ func MapTorrent(row Row, addedAt int64) contracts.Torrent {
 	complete := row.flag("d.complete")
 	hashing := row.integer("d.hashing")
 	message := row.text("d.message")
+	name, exactName := row.bytes("d.name")
+	base, exactBase := row.bytes("d.base_path")
 
 	var status contracts.TorrentStatus
 	switch {
@@ -286,7 +355,7 @@ func MapTorrent(row Row, addedAt int64) contracts.Torrent {
 
 	return contracts.Torrent{
 		Hash:              row.text("d.hash"),
-		Name:              row.text("d.name"),
+		Name:              shown(name, exactName),
 		Status:            status,
 		Progress:          progress,
 		Size:              size,
@@ -301,13 +370,14 @@ func MapTorrent(row Row, addedAt int64) contracts.Torrent {
 		Priority:          row.integer("d.priority"),
 		Label:             decodeLabel(row.text("d.custom1")),
 		Message:           message,
-		Directory:         row.text("d.directory"),
-		BasePath:          row.text("d.base_path"),
+		Directory:         shownDirectory(row),
+		BasePath:          shown(base, exactBase),
 		Throttle:          row.text("d.throttle_name"),
 		IsOpen:            isOpen,
 		IsActive:          isActive,
 		IsPrivate:         row.flag("d.is_private"),
 		IsMultiFile:       row.flag("d.is_multi_file"),
+		IsMeta:            row.flag("d.is_meta"),
 		Hashing:           hashing,
 		ChunkSize:         row.integer("d.chunk_size"),
 		ChunksDone:        row.integer("d.completed_chunks"),
@@ -331,14 +401,17 @@ func baseName(path string) string {
 func MapFile(row Row, index int) contracts.TorrentFile {
 	sizeChunks := row.integer("f.size_chunks")
 	done := row.integer("f.completed_chunks")
-	path := row.text("f.path")
+	path, exactPath := row.bytes("f.path")
 	// f.frozen_path is the absolute path the file was opened under; only its
 	// last component is compared, since the directories above it are the
-	// torrent's base path and already shown as such.
-	frozen := row.text("f.frozen_path")
+	// torrent's base path and already shown as such. rtorrent sends a
+	// stand-in for a string as a whole (see standin.go), so a name that
+	// arrives as itself in f.path arrives escaped in a frozen path whose
+	// directory is not UTF-8: the same name, not a shortened one.
+	frozen, exactFrozen := row.bytes("f.frozen_path")
 	onDisk := ""
-	if frozen != "" && baseName(frozen) != baseName(path) {
-		onDisk = baseName(frozen)
+	if name, disk := baseName(path), baseName(frozen); frozen != "" && disk != name && !Reports(name, disk) {
+		onDisk = shown(disk, exactFrozen)
 	}
 	progress := 0.0
 	if sizeChunks > 0 {
@@ -346,7 +419,7 @@ func MapFile(row Row, index int) contracts.TorrentFile {
 	}
 	return contracts.TorrentFile{
 		Index:           index,
-		Path:            path,
+		Path:            shown(path, exactPath),
 		OnDisk:          onDisk,
 		Size:            row.integer("f.size_bytes"),
 		CompletedChunks: done,

@@ -155,7 +155,10 @@ func (s *Service) status(ctx context.Context, torrents []contracts.Torrent) (con
 	var dhtNodes int64
 	if dht := answer("dht.statistics"); dht.Err == nil {
 		if stats, ok := dht.Value.(map[string]any); ok {
-			dhtNodes = int64(rtorrent.Number(stats["active_nodes"]))
+			// "nodes" is how many nodes libtorrent's DHT routing table holds,
+			// under that name from 0.9.8 to 0.16.25. While DHT is not running
+			// rtorrent sends only "dht", "active" and "throttle": 0.
+			dhtNodes = int64(rtorrent.Number(stats["nodes"]))
 		}
 	}
 	downloadDir := ""

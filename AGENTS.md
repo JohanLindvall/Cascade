@@ -19,7 +19,9 @@ server/                   the Go module: main.go serves, and answers the entrypo
                           everything above it depends on (a Transport can be injected).
                           capabilities.go: probes system.listMethods, picks a command dialect.
                           settings.go: every rtorrent global setting as one declarative table.
-                          model.go: rtorrent fields -> Torrent/File/Peer/Tracker
+                          model.go: rtorrent fields -> Torrent/File/Peer/Tracker.
+                          standin.go: what rtorrent sends for a name XML-RPC cannot carry
+                          directory.go: where a torrent's data goes, read the way it is set
   internal/rtorrent/rtorrenttest/  FakeClient, the scripted rtorrent the tests use
   internal/contracts/     the HTTP data shapes (web/src/contracts.ts mirrors them)
   internal/options/       every environment variable as one catalog; renders --help and the
@@ -33,7 +35,8 @@ server/                   the Go module: main.go serves, and answers the entrypo
                           (per-torrent changes), settings.go, throttles.go, logs.go,
                           restarts.go (the recheck & restart decision, pure), serial.go
                           (the per-torrent and per-group mutation queues, shared reads),
-                          datapaths.go (the delete-data path checks)
+                          datapaths.go (the delete-data path checks, and the bytes on
+                          disk a reported path stands for)
   internal/store/         the one JSON state file; throttle group validation
   internal/game/          badge definitions, XP and level curve
   internal/torrentfile/   bencode parse: reject non-torrents, derive the info hash
@@ -111,13 +114,17 @@ The runner strips types but does not compile JSX, so a test reaches `.ts` module
 logic belongs where it can reach it. The stream's patching and reconnects (`stream.ts`,
 `streamConnection.ts`), sorting, filtering, the `.torrent` file check and drop parsing
 (`files.ts`), the selection rules, the value a selection shares for a field (`sharedValue.ts`),
-formatting and parsing, redaction, the preference shape and its syncing, the menu's placement and
-right-click rule (`components/menuRules.ts`), the toast hold (`components/toastHold.ts`) and where
-focus goes on selection or menu opening (`app/rowFocus.ts`) live apart from the components for exactly
-that reason. What cannot be split off is pinned by reading the source instead:
-`components/detail/tabs.test.ts` checks the detail tabs stay memoized. A pure module
-that imports another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`): the
-runner resolves specifiers literally, and Vite and tsc accept either. A module that touches
+the directory a torrent's data goes into (`dataFolder.ts`), what rtorrent can be sent as text
+(`rtorrentText.ts`), formatting and parsing, redaction, the preference shape and its syncing, the
+menu's placement and right-click rule (`components/menuRules.ts`), the toast hold
+(`components/toastHold.ts`), the order of a detail row's flags (`components/detail/flags.ts`) and
+where focus goes on selection or menu opening (`app/rowFocus.ts`) live apart from the components
+for exactly that reason. What cannot be split off is pinned by reading the source instead:
+`components/detail/tabs.test.ts` checks the detail tabs stay memoized, and
+`app/useTorrentActions.test.ts` that "Change directory" is pre-filled from `sharedDataFolder`,
+leaves out a magnet still fetching its metadata, and holds what the server would refuse. A pure
+module that imports another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`):
+the runner resolves specifiers literally, and Vite and tsc accept either. A module that touches
 `window` or `document` at load time cannot be imported statically: `api.test.ts` stubs
 `document.baseURI` and then imports `api.ts` dynamically, and `preferences.ts` (the shape and its
 repair) is kept apart from `prefs.ts` (the fetch, the cache, the `pagehide` flush) so its tests
@@ -140,13 +147,15 @@ image's build stage copies those files in for the same reason.
 The shell has its suite too, `docker/scripts.test.sh`, run in the image build and in CI. It
 sources the entrypoint with `ENTRYPOINT_LIBRARY=1`, which defines its functions without running
 `main` (a name outside the option families, so the options check does not take it for a
-setting), and drives the rc rendering, the value checks (`validate_options`, `enabled`) and the
-session-lock handling against stub `rtorrent` and `cascade` binaries. Each case runs in a shell of
-its own (`with_entrypoint` uses `sh -c`, not a subshell: under `if`, a subshell runs with `set -e`
-suspended and a failed step would not end the case), through `expect_ok` or `expect_refused`,
-which show a case's stderr only when it fails. New entrypoint behaviour belongs in a function, and
-in a case there. Run it under `dash` as well as BusyBox: dash's `echo` reads backslashes, which is
-why rc lines go through `printf`.
+setting), and drives the rc rendering, the value checks (`validate_options`, `enabled`), the
+session-lock handling and rtorrent's start, wait and restart against stub `rtorrent`, `cascade`,
+`screen`, `su-exec` and `pidof` binaries, kernel tables staged under `PROC_NET`, and a `kill`
+function in place of the builtin (a function of that name overrides it). Each case runs in a
+shell of its own (`with_entrypoint` uses `sh -c`, not a subshell: under `if`, a subshell runs with
+`set -e` suspended and a failed step would not end the case), through `expect_ok` or
+`expect_refused`, which show a case's stderr only when it fails. New entrypoint behaviour belongs
+in a function, and in a case there. Run it under `dash` as well as BusyBox: dash's `echo` reads
+backslashes, which is why rc lines go through `printf`.
 
 The server suite reaches everything above the socket without one: `rtorrent.NewClient` takes an
 optional `Transport`, and `service.Service` and `Capabilities` depend on the `rtorrent.Client`
@@ -193,6 +202,12 @@ A full end-to-end transfer can be staged with two containers and a throwaway tra
 file from one, download it in the other, and watch progress, peers and rates in the UI. A
 completion — and so the finish animation — can be forced without a swarm: put the payload in
 `/downloads` first, then upload its `.torrent`, and rtorrent's hash check completes it outright.
+To rtorrent that is no finished download, though: `event.download.finished` fires only when a
+download completes its last piece, so the completion move (`RT_COMPLETED_DIR`) never runs for it
+(0.9.8 and 0.16.25 alike). To exercise the move, let one container download from another, no
+tracker needed: both on one Docker network, the payload and the torrent in the seeder, the torrent
+in the other, and there `POST /api/rpc` with `{"method": "add_peer", "params": ["<hash>",
+"<seeder's address>:50000"]}`.
 
 **Check UI work by looking at it.** A build only proves it typechecks; CSS regressions do not
 fail a build. Boot the image, seed a few torrents through the API, set the theme with
@@ -261,6 +276,12 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    and re-applied once rtorrent has restarted (see *What a restarted rtorrent forgets* under
    Conventions). They also cannot be deleted at runtime — deleting sets them to unlimited.
 
+   The global setters take bytes/s but keep whole KiB/s in 32 bits too, measured on 0.9.8, 0.16.24
+   and 0.16.25: they drop the fraction, so 800 B/s became 0 — unlimited — and before 0.16.25 a rate
+   of 4 GiB/s wrapped to 0 as well, which 0.16.25 refuses instead ("Throttle rate must be between 0
+   and 4294967294."). Their settings are `KindRate`: rounded up to whole KiB/s like a group's, and
+   held to `MaxRate`, the last whole KiB/s under that bound.
+
 4. **A running download rejects a throttle change** ("Cannot set throttle on active download"), so
    `SetTorrentThrottle` stops it, sets, and restarts.
 
@@ -279,20 +300,74 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    rtorrent which name it knows (`rc_command_exists`, a one-line option file) and writes that one.
    Use the same trick for anything else that genuinely must be in the rc.
 
-   The few values the rc carries as they are — `RT_PORT_RANGE`, `RT_UMASK`, `RT_WATCH_INTERVAL`,
-   `RT_SCGI_PORT` — are checked by `validate_options` before anything is written, so a bad one
-   stops the start by name rather than as a parse error thirty seconds later. The patterns follow
-   what rtorrent's rc parser takes (checked on 0.9.8 and 0.16.24), not a tidier subset, so nothing
-   that started rtorrent before is refused now. rtorrent reads a number the way C does: a bare
-   `22` was decimal (umask 0026), so `render_rc` writes the umask with a leading `0`, and
-   `RT_PORT_RANDOM` is written as `yes`/`no` because rtorrent refuses `on`/`off`. With a supplied
-   rc kept (`keeps_supplied_rc`), only `RT_PORT_RANGE` (which the port probe uses either way) and
-   the booleans are checked.
+   The torrent-name switches are the second case (`pick_name_switches`): rtorrent names a torrent
+   as it loads it, and it loads the session before the server connects, so a switch applied over
+   XML-RPC would reach only torrents added later — and a multi-file torrent added with
+   `system.file_name.allow_legacy_utf8` off would have its files looked for under other names after
+   the next restart, while a single-file torrent's file keeps its legacy name either way (both
+   measured on 0.16.25). `RT_USE_SANITIZED_NAME` and `RT_ALLOW_LEGACY_UTF8` are
+   written into the rc where `rc_command_exists` finds the command (0.16.22 and 0.16.25 added
+   them), and staged as startup settings too, which re-apply the same value and name the key in
+   the boot-settings warning on a build without it.
 
-7. **A setter existing does not mean it works.** 0.16 registers
-   `network.http.max_total_connections.set` but the value never changes, so `maxHttpOpen` maps only
-   to the legacy command and the UI greys the field out there. When adding a setting, set it and
-   read it back before believing it.
+   The completion move is the third case (`RT_COMPLETED_DIR`; see *Conventions*). It is a method in
+   the rc, and rtorrent looks a method's commands up only as it runs them, so a name this build
+   lacks would fail at the base setter it ends with — after the move, leaving the data moved and
+   the torrent pointing where it was. 0.16.22 renamed that setter `d.directory.base.set`, keeping
+   `d.directory_base.set` as a redirect for now, and 0.9.8 has only the old name, so
+   `pick_base_directory_command` asks for the new one. A `d.*` command cannot run in an option
+   file, which has no torrent to give it, so the probe names it as a `method.redirect`'s target,
+   which only a command that exists can be.
+
+   The few values the rc carries as they are — `RT_PORT_RANGE`, `RT_UMASK`, `RT_WATCH_INTERVAL`,
+   `RT_SCGI_PORT`, `RT_SCGI_BIND` — are checked by `validate_options` before anything is written,
+   so a bad one stops the start by name rather than as a parse error thirty seconds later. The
+   patterns follow what rtorrent's rc parser takes (checked on 0.9.8 and 0.16.24), not a tidier
+   subset, so nothing that started rtorrent before is refused now. rtorrent reads a number the way
+   C does: a bare `22` was decimal (umask 0026), so `render_rc` writes the umask with a leading
+   `0`, the SCGI port goes in without its leading zeros (`05000` is port 2560 to rtorrent's `%i`
+   and 5000 to the server), and `RT_PORT_RANDOM` is written as `yes`/`no` because rtorrent refuses
+   `on`/`off`. The SCGI port is held to decimal 1–65535 and the bind to addresses and names, which
+   the server reads as rtorrent does. With a supplied rc kept (`keeps_supplied_rc`), only
+   `RT_PORT_RANGE` (which the port probe uses either way), the SCGI port and bind (which say what
+   to wait for and where the server connects) and the booleans are checked. Those two are the one
+   place where a value that started rtorrent before is refused now: earlier releases ignored them
+   with a kept rc, so a malformed leftover stops the start, and the README tells upgraders so.
+
+   rtorrent accepts one SCGI listener: a second `network.scgi.open_*` stops the rc with "SCGI
+   already enabled." (0.9.8 and 0.16 alike). The rc used to open the socket and then the port, so
+   `RT_SCGI_PORT` crash-looped rtorrent behind a healthy container; the port now *replaces* the
+   socket (`scgi_listener`). `wait_for_socket` looks for the listener in the kernel's tables — a
+   LISTEN entry in `/proc/net/tcp` or `tcp6` for the port, a listening entry at the path in
+   `/proc/net/unix` for the socket (`PROC_NET` stands in for both in the tests) — and only while
+   rtorrent still runs: one that died at a later rc line, or was killed, leaves its socket file
+   behind, which is how that crash loop passed the wait. A supplied rc is not read. It had to open
+   the socket while that was all the wait knew, and with `RT_SCGI_PORT` set it may open that port
+   instead, so either passes for it — settled in `apply_defaults`, since once `write_rc` has
+   created a missing `RT_CONFIG_FILE` a generated rc looks supplied. `CASCADE_SCGI`, unless given,
+   is exported once rtorrent is up, naming the listener that answered (`127.0.0.1` for a wildcard
+   bind).
+
+   The first start (`launch_rtorrent`) ends the container when the wait fails, but stops an
+   rtorrent that still runs first (`stop_rtorrent`, quirk 8): the exit takes the container down,
+   and a killed rtorrent leaves its lock behind, while a stopped one has flushed the log the
+   failure goes on to show. The supervisor's restart (`restart_rtorrent`) waits the same way,
+   without the exit.
+
+7. **A setter existing does not mean it works.** From 0.16.15
+   `network.http.max_total_connections.set` and `network.max_open_files.set` are stubs that answer
+   0, log a deprecation warning and change nothing. `maxHttpOpen` maps only to the legacy
+   `network.http.max_open.set`, which 0.16.14 stopped listing, so the UI greys the field out there.
+   The open-file limit's setter has the same name in every release, and 0.9.8 applies it, so
+   `inertFrom` in `internal/rtorrent/capabilities.go` names the command with the first release
+   that ignores it, and from that release on the probe treats it as absent: the `supports` map (the
+   dialog greys `maxOpenFiles` out), the settings writes and the boot-settings warning all go by
+   that, while the getter still reads and the console still lists the command. Two more are there
+   for the same reason: `dht.port.set` from 0.16.1, where `dht.port` became the port the running
+   DHT has (0 while it is off) and `dht.override_port.set` the way to choose one, and
+   `trackers.use_udp.set` from 0.16.12, where UDP trackers are always on — each measured on the
+   releases either side (0.16.0/0.16.1, 0.16.11/0.16.12). When adding a setting, set it and read it
+   back before believing it, on both sides of any release that might differ.
 
 8. **rtorrent locks its session directory** and only releases the lock on a clean shutdown. A
    SIGKILLed container leaves `rtorrent.lock` behind and every later start dies with "Could not
@@ -303,12 +378,13 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    A clean shutdown is slower than it looks: on SIGINT rtorrent announces "stopped" to every tracker
    and only drops the unanswered requests after about ten seconds (`handle_shutdown` in its
    control.cc, in rounds), so 100 torrents behind a hung tracker took 12–21s, measured. The
-   entrypoint's `stop_all` gives it 30s, then SIGTERM (quick shutdown) and 10s more, and must never
-   exit while rtorrent still runs: the container goes with the script and the kernel kills what is
-   left. It used to allow 10s and exit, so every `docker stop` left the lock behind and a stale peer
-   in the trackers' tables ("Got multiple targets in peer table!"). Docker's own timeout has to
-   outlast that, hence `--stop-timeout 60` in every `docker run` the docs show and `-t 60` in `make
-   stop` — a plain `docker stop` otherwise kills at Docker's default ten seconds.
+   entrypoint's `stop_rtorrent`, which `stop_all` and a failed first start both go through, gives
+   it 30s, then SIGTERM (quick shutdown) and 10s more, and the script must never exit while
+   rtorrent still runs: the container goes with the script and the kernel kills what is left. It
+   used to allow 10s and exit, so every `docker stop` left the lock behind and a stale peer in the
+   trackers' tables ("Got multiple targets in peer table!"). Docker's own timeout has to outlast
+   that, hence `--stop-timeout 60` in every `docker run` the docs show and `-t 60` in `make stop` —
+   a plain `docker stop` otherwise kills at Docker's default ten seconds.
 
 9. **rtorrent needs a pty**, so it runs inside a detached `screen` session. `SCREENDIR` must be
    mode 0700 or screen refuses to start. screen also serves a session only to the user who
@@ -336,13 +412,64 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    name is a directory and never passes through `Path`, which is how the first cut of the patch
    still failed multi-file torrents). It is pattern-based rather than a diff per release, knows the
    spellings of 0.13.x/0.15.x/0.16.x, and fails the build if a spelling is missing; it also compiles
-   and runs `path_fit_test.cc` with the same toolchain first. What reports what: `d.name` and
+   and runs `path_fit_test.cc` with the same toolchain first. The rule has two ports, held to the
+   same values, which must move with it: the demo's `pathfit.ts` (the Files tab's "on disk as …")
+   and `fitComponent` in `internal/rtorrent/directory.go` (which folder a directory change may
+   leave to `d.directory.set`). What reports what: `d.name` and
    `f.path` keep the torrent's own names (rtorrent joins `f.path` from the components itself,
    deliberately left alone); `frozen_path`, `d.base_path` and `d.directory` are the on-disk truth,
-   so delete-data is right. The Files tab fetches `f.frozen_path` and shows "on disk as …" when the
-   two differ (`MapFile`'s `OnDisk`), which is also what the API smoke test checks.
-   `docker/patches/apply-<repo>.sh` is the general hook — one per repository, run after clone and
-   before configure.
+   so delete-data is right — as bytes, which XML-RPC cannot always carry (below). Which of a
+   torrent's names those are is rtorrent's to choose in two more ways: from 0.16.22 a `/` inside a
+   name or a path component is saved as `system.file_name.replace_slash` (`_`) — in `f.path` always,
+   in `d.name` unless `system.torrent_name.use_sanitized` is off (`useSanitizedName`); earlier
+   releases refused such a torrent, and Cascade's upload check still does — and from 0.16.25, where
+   a torrent carries `name.utf-8` and `path.utf-8` beside legacy-encoded names, `d.name` comes from
+   `name.utf-8`, and a multi-file torrent's directory and `f.path` from those too, unless
+   `system.file_name.allow_legacy_utf8` is off (`allowLegacyUtf8`). That moves a multi-file
+   torrent's files on disk, while a single-file torrent's file keeps its legacy `name` either way
+   (libtorrent's `parse_single_file` reads nothing else) and only its `d.name` follows the switch;
+   the API smoke test holds the release to both. The Files tab fetches `f.frozen_path` and shows "on
+   disk as …" when it differs from `f.path` (`MapFile`'s `OnDisk`), which is also what the API smoke
+   test checks. `docker/patches/apply-<repo>.sh` is the general hook — one per repository, run after
+   clone and before configure.
+
+   **Nor does anything make those names UTF-8, and XML-RPC text must be.** An old torrent names its
+   files in Latin-1 and libtorrent writes those bytes as they are — 0.16.25 still names a single
+   file by its legacy `name`, whatever `name.utf-8` says. xmlrpc-c, every image's RPC layer, takes a
+   string only if it is UTF-8 inside the Basic Multilingual Plane, so an emoji fails as well (1.51,
+   and the current release still); rtorrent then sends a stand-in for the whole string
+   (`internal/rtorrent/standin.go`): from 0.16.7 every byte outside printable ASCII as `%XX`,
+   upper-case (libtorrent's `string_with_escape_codes`), before 0.16.3 every non-ASCII byte as `?`.
+   `%` is not escaped and `?` stands for itself, so neither can be undone from the text, and a
+   delete that took `d.base_path` at its word removed nothing and answered 200 — or removed a file
+   that really is called `Caf%E9 …`. 0.16.3 to 0.16.6 send no stand-in at all: their
+   `string_with_escape_codes` adds `'%'` and the two hex digits up as numbers, one byte from 0x85
+   to 0xB1, which xmlrpc-c refuses again: a command answers fault -510 (so a delete is a 502
+   before anything is erased), and a string inside a list — a multicall's answer, the listing's
+   among them — crashes rtorrent. `dataPath` (`service/datapaths.go`) asks 0.16.13 and later for
+   `d.base_path.base64`, the bytes exactly. On older releases it matches the stand-in against the
+   disk, a component at a time, and refuses with a 409 before the erase when two paths fit, or when
+   the one that fits is not confirmed by rtorrent: `f.is_created` stats the real bytes, and a
+   torrent whose own data is gone must not take a namesake with it. Padding confirms nothing: from
+   0.15 a file whose BEP 47 `attr` holds a `p` is padding whatever it is called, and `f.is_created`
+   answers 1 for it without a stat — but it is never opened, so its frozen path stays empty, and
+   `filesPresent` counts only a file that has one. It asks for both as numbers (`f.is_created`,
+   `not=$f.frozen_path`), never for a name: the files under a base path that reads as plain text
+   can still be named in a way that crashes 0.16.3 to 0.16.6. The root checks then apply to the
+   bytes found. The listing and the Files tab ask for the `.base64` variants of `d.name`,
+   `d.base_path`, `f.path_components` and `f.frozen_path` where the backend has them
+   (`ExactFields`), so an emoji shows as itself and a stray byte as U+FFFD; `d.directory` has no
+   variant and borrows the base path's bytes when its stand-in fits them, and before 0.16.13 the UI
+   shows rtorrent's stand-ins. A stand-in is chosen per string, so a UTF-8 file name under a Latin-1
+   directory arrives escaped in `f.frozen_path` and as itself in `f.path`: `MapFile` does not take
+   that for a shortened name (it used to say "on disk as Caf%C3%A9.txt"). The completion move gets
+   the path from rtorrent as an argument, bytes and all, and never sees a stand-in, and rtorrent
+   composes the root it sets afterwards from its own bytes (see the completion move under
+   *Conventions*); a directory change takes a path from the user and can only set one that is UTF-8
+   within the BMP (xmlrpc-c refuses an emoji in a request too, and the API refuses one first: see
+   *Text rtorrent cannot be sent* under Conventions), and keeps a multi-file torrent's folder by its
+   bytes only where those can be sent back — else through `d.directory.set`, which names the folder
+   on rtorrent's side (see the directory change under *Conventions*).
 
 13. **What the client calls itself is compile-time, in two places.** The HTTP `User-Agent`
    (`USER_AGENT`, patched into rtorrent's `set_user_agent(USER_AGENT)` call by
@@ -357,6 +484,14 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    tracker checking both sees a mismatch otherwise. The prefix of each release is spelled out in
    the README's *The version presented to trackers*.
 
+14. **`network.proxy.global.set` crashes rtorrent on a host it cannot read as a numeric address**
+   (0.16.16, which added it, to 0.16.25: the numeric lookup "succeeds" with no address and the
+   setter dereferences it) — a host name, and an IPv6 address too, since curl hands that over in
+   its brackets. Measured on 0.16.24 and 0.16.25; as `RT_PROXY_GLOBAL` it crashed rtorrent again
+   after every restart. `proxyGlobal` is `KindProxy`, so `CheckProxyHost` refuses such a value
+   with a 400 before anything is sent, and the startup settings stop the start by the variable's
+   name; the console and `/RPC2` still pass it through, as they pass everything.
+
 ## Adding support for a new backend command
 
 Never call a command unconditionally.
@@ -367,9 +502,16 @@ Never call a command unconditionally.
   warning, and the `supports` map: every setting key automatically becomes a feature that is true
   when the backend has a working setter, and the dialog greys the control out by that same key.
   Remember quirk 7: set the value and read it back on the oldest and newest rtorrent before trusting
-  it.
+  it. The key also goes into `GlobalSettings` in `web/src/contracts.ts` and the demo's table
+  (`web/src/demo/settings.ts`, as the Dockerfile's release has it), and an environment variable for
+  it is an entry in `options.go` naming it as its `Setting`. A setting rtorrent reads only as it
+  loads a torrent needs its variable in the rc as well (quirk 6).
 - **Anything else** (per-torrent commands, probes) goes in `featureMethods` in
   `internal/rtorrent/capabilities.go`, guarded with `caps.Supports("yourFeature")`.
+- **A command a release still lists but ignores** goes in `inertFrom` in the same file, with the
+  first release that ignores it (quirk 7). From that release on `Resolve`, `Has` and the
+  `supports` map leave it out, so a feature that needs it and a setting whose setter it is turn
+  off together; `MethodNames`, the console's list, keeps it, since rtorrent does.
 
 Field commands in `model.go` are filtered against `system.listMethods` automatically — a field the
 backend lacks simply maps to `0`/`''`.
@@ -522,6 +664,14 @@ directory or label, or for magnets and URLs. Because the drop path has no dialog
   quotes and backslashes are escaped but a line break could end the command and start another,
   so a directory with a control character is refused (`checkLoadOptions`); the label goes in
   URL-encoded and cannot carry one.
+- The directory and every link reach rtorrent as XML-RPC text. The directory goes with every item,
+  so `loadOptions` refuses one it cannot be sent, and a directory of `/` (`validate.Directory`, see
+  *Text rtorrent cannot be sent* under Conventions), with a 400 for the whole batch before anything
+  loads — each file of the batch used to fail with xmlrpc-c's fault instead. A link concerns itself
+  alone: one rtorrent cannot be sent fails as its own item (`upload` in `routes.go`), named in
+  `errors` and `failedUrls`, and the rest of the batch is added — refusing the batch for it lost
+  every file and link beside it. An empty directory, or none, is rtorrent's default: the Add dialog
+  sends none when its field is empty.
 
 Failures come back per file in the upload response and are toasted by the UI.
 The response also identifies failed file and URL indices, so the Add dialog retains only failures
@@ -595,10 +745,15 @@ chip have fixed widths, and the card layout's rate spans have a `min-width` — 
 ticking from `2m 54s` to `2m 9s` is one character narrower, and with content-sized columns the
 name column absorbs the difference and the whole table steps sideways on every update. Column
 widths are percentages so narrow windows squeeze rather than scroll; check with
-`getBoundingClientRect()` on the `th`s before and after a value change, not by eye. Rows must not
-trade places either: `sortTorrents` breaks every tie by name and then hash, and names the collator
-calls equal ("Movie"/"movie", "Episode 07"/"Episode 7") share a rank, so the hash decides rather
-than the order rtorrent listed them in.
+`getBoundingClientRect()` on the `th`s before and after a value change, not by eye. Nor may a row
+change height: a peer's Flags cell and a tracker's State cell (`.flags`) are one tag tall and show
+the tags that fit, whole, then an ellipsis. `flags.ts` lists what is wrong first, so that is what
+shows, and the cell's title and the expanded row name every flag (a touch screen has no title).
+A space drawn zero wide (`.flag-gap`) parts the tags, or the accessible name, `innerText` and a
+copy run them into one word ("bannedsnub"). Rows must not trade places either: `sortTorrents`
+breaks every tie by name and then hash, and names the collator calls equal ("Movie"/"movie",
+"Episode 07"/"Episode 7") share a rank, so the hash decides rather than the order rtorrent listed
+them in.
 
 **What the stream redraws must stay cheap.** The app renders on every delta, up to ten a second.
 The table's rows (`TorrentRow`, `TorrentCard`) and the fetched detail tabs (`FilesTab`, `PeersTab`,
@@ -664,9 +819,66 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   faults become 502 with rtorrent's own message, prefixed with the command that failed when it
   came out of a multicall).
 - Anything that deletes data must stay inside `Config.DeleteRoots` (checked by `assertDeletable`).
-- A per-torrent directory change stops and closes the torrent before setting its path, and leaves
-  it stopped for the owner to move the data and recheck it. Keep those lifecycle commands separate
-  and in the per-torrent mutation queue, as for recheck and throttle changes.
+- **A directory change takes the directory the data goes into**, the one an add's
+  `d.directory.set` names — not what `d.directory` reports, which for a multi-file torrent is its
+  own folder: `d.directory.set` appends the torrent's name, so handing it `d.directory` back
+  nested the torrent inside itself (`/downloads/X/X`, on 0.9.8 as on 0.16.25). "Change directory"
+  offers `dataFolder` (`web/src/dataFolder.ts`); the server reads the listing the same way
+  (`DataDirectory`, `internal/rtorrent/directory.go`) and leaves a torrent already there alone,
+  running or not. Both sides of that comparison are read without trailing slashes
+  (`TrimDirectory`), and a change or an add sends its directory without them: `d.directory.set`
+  keeps the slashes it is given before the name it appends (`/downloads//X`, on 0.9.8 as on
+  0.16.25), and a parent read as `/downloads/` matched no offer, so confirming one stopped the
+  torrent. A multi-file torrent keeps the folder it has, by its bytes, through
+  `d.directory_base.set` (`d.directory.base.set` from 0.16.22, the old name a redirect): a folder
+  set by another tool, or shortened by the libtorrent patch (quirk 12), is not named after the
+  torrent. Bytes that cannot be read exactly (a stand-in no base path vouches for) or sent back
+  (not UTF-8, or an emoji — xmlrpc-c refuses a character outside the BMP in a request too, -503)
+  fall back to `d.directory.set`, which appends the name on rtorrent's side, when the folder is
+  named after the torrent, shortened or not (`NamedAfterTorrent`); anything else is refused before
+  anything changes. A `?` is a stand-in only before 0.16.3 (`QuestionMarksStandIn`, by
+  `system.client_version`): from there it is the name's own, and a folder whose only mark is one
+  is kept by its text even where no base path can vouch for it. A change stops and
+  closes the torrent before setting its path, and leaves it stopped for the owner to move the data
+  and recheck it; `d.base_path` follows only at the next open. Keep those lifecycle commands
+  separate and in the per-torrent mutation queue, as for recheck and throttle changes. A magnet
+  still fetching its metadata never gets that far: it is a 409 before anything stops
+  (`refuseFetchingMetadata`), and a `PATCH` asks it before its first field changes anything
+  (`RefuseDirectoryChange`), or a priority, label or throttle group set ahead of it would stay
+  changed behind a 409, which does not wake the stream. Until the metadata arrives the session holds
+  a download of the metadata alone (`d.is_meta`, on 0.9.8 as on 0.16.25), which rtorrent then stops,
+  erases and replaces with the torrent, loaded with the commands the add carried
+  (`process_meta_download` and `try_create_download_from_meta_download` in its source) — its
+  `d.directory.set` among them. The change was lost, measured in a two-container swarm, and the stop
+  it took held the fetch up until a recheck. The listing carries `d.is_meta` as `isMeta`, so "Change
+  directory" leaves such a torrent out and toasts the server's words (`FETCHING_METADATA`,
+  `web/src/dataFolder.ts`). A label or priority set meanwhile is lost the same way (measured on
+  both), but costs the fetch nothing, and is not refused. Nor does a destination of `/` get that
+  far: it is a 400 at the edge (`validate.Directory`), for a change or an add, as rtorrent strips a
+  directory's trailing slashes and the empty path left is `.`, the directory it runs in, where a
+  single file went. The demo mirrors it: `setDirectory`, and `d.directory.set` against
+  `d.directory_base.set` in its console.
+- **The completion move keeps a torrent with its data.** With `RT_COMPLETED_DIR` set, the rc's
+  `d.move_to_complete` runs on `event.download.finished`: `cascade-move check` refuses a move that
+  cannot be made, the torrent is stopped and closed, `cascade-move move` moves the data under the
+  name it has on disk, and only then does the torrent get its new root, through the base setter
+  (quirk 6), before it is reopened, started and saved. The root is the destination for a single
+  file, and for a multi-file torrent the destination and `d.base_filename`, its folder's own name.
+  It used to go through `d.directory.set`, which appends the torrent's name, so a folder not named
+  after the torrent — one "Change directory" kept, or another tool gave it — was looked for where
+  it was not, and a recheck found 0% (0.9.8 and 0.16.25 alike). rtorrent composes that root itself
+  (`if`, `cat` and `d.base_filename`, which still reads the frozen root after `d.close`), so bytes
+  that are not UTF-8 never travel as text. Nor is it read back from the script: 0.9.8 keeps an
+  `execute.capture`'s output in one buffer for every caller and serves XML-RPC while the child
+  runs, so the output of a capture made over XML-RPC meanwhile lands in rtorrent's own (measured:
+  `BBBBAAAA` where the slow one printed `AAAA`; 0.16.25 holds the XML-RPC call until rtorrent's is
+  done) — and a move can take minutes. The script takes the name by parameter expansion, since a
+  command substitution drops the newlines a name may end in, and the rc gives `RT_COMPLETED_DIR`
+  without trailing slashes, since `cat` joins the folder on with a slash of its own. Proven with
+  real downloads (see *Build and test*) of a single file, a multi-file torrent named after itself
+  and one in a renamed folder, with Latin-1 names and names the patch shortened, into `/done` and
+  into `/downloads/done`, on 0.9.8 and 0.16.25: the base path is the moved data and a recheck
+  finds it complete, after a restart too.
 - Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes `<epoch
   seconds> <level letter> <text>` for the severity scopes and `<epoch seconds> <text>` (no level)
   for the subsystem scopes such as `tracker_events` — the same two shapes on 0.9.8, 0.16.20 and
@@ -722,8 +934,9 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   415 (`refusedAsSent`) — refusals the API and the service make before asking rtorrent to change
   anything. A 403 or a 5xx still wakes it: a data delete is refused with 403 *after* the torrent
   was erased, and a failure can follow half a change. So a 400, 404, 409, 413 or 415 must never follow
-  a change — keep that true when adding one deep in the service. The interval is
-  `status.statePollMs` — the user's preference, else
+  a change — keep that true when adding one deep in the service, and ask for it before the first
+  change of a request that makes several (`RefuseDirectoryChange` in `patchTorrent`). The
+  interval is `status.statePollMs` — the user's preference, else
   `CASCADE_STATE_POLL_MS` (500 ms) — within 100 ms to a minute. The state is held as a tree whose
   branches are decoded and whose leaves (a torrent, a history sample, a status value) stay raw
   JSON until their bytes differ, so a read of 500 torrents diffs in about a millisecond. The patch
@@ -779,6 +992,24 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   through `bulk()`, which applies the action per hash and collects failures by hash instead of
   stopping at the first. Whitespace is the browser's: `validate.Trim` trims by `jsnum.IsSpace`,
   as `String.prototype.trim` does (the byte order mark goes, U+0085 stays).
+- **Text rtorrent cannot be sent is refused at the edge, by the field's name.** xmlrpc-c fails a
+  whole call on a character beyond U+FFFF — an emoji — with -503 "Call XML not a proper XML-RPC
+  call" (0.9.8 and 0.16.25), and XML carries neither U+FFFE, U+FFFF, a C0 control but tab and line
+  feed, nor a carriage return as itself; the encoder sends a byte that is not UTF-8 as U+FFFD. A
+  directory change found that out only after it had stopped and closed the torrent, and left it
+  stopped; a settings patch lost every setting with the one. The rule is `validate.Sendable` (also
+  what `rtorrent.Folder` asks of a folder it would send back), and every field rtorrent is sent as
+  text goes through `validate.RtorrentString`, `RtorrentText` or `Directory`: a directory, the
+  Add dialog's links (each its own failure in an upload, not the batch's), a tracker URL, the
+  throttle group, a string setting (`coerce`, and `StartupSettings`, which stops the start by the
+  variable's name rather than lose every startup setting to the table's refusal), the listing's
+  view. A label is exempt — it is sent URL-encoded — and so are the API console and `/RPC2`, where
+  rtorrent's fault is the answer. A JSON body's unpaired surrogate escape is decoded to U+FFFD
+  before any of this sees it, so the web UI refuses one itself. The UI holds each such field as
+  typed (`web/src/rtorrentText.ts`, worded as the server words it: the prompt's `validate`, the
+  Add dialog, the settings dialog's text fields, the Trackers tab); a dropped link, which no field
+  holds, comes back as its own failure and is toasted like any other. The demo answers as the
+  server does (`demo/validate.ts`).
 - **A change runs to its end once it is sent.** The `api` adapter (`request.go`) detaches every
   request but GET, HEAD and OPTIONS from its context (`context.WithoutCancel`), `/RPC2` does the
   same, and the service's mutations detach again (`detached`): a throttle change stops the torrent,

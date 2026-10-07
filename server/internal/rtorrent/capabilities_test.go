@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/JohanLindvall/Cascade/server/internal/rtorrent"
 	"github.com/JohanLindvall/Cascade/server/internal/rtorrent/rtorrenttest"
+	"github.com/JohanLindvall/Cascade/server/internal/xmlrpc"
 )
 
 var fields = rtorrent.FieldLists{
@@ -93,6 +95,20 @@ func TestFieldListsAreFilteredToWhatTheBackendImplements(t *testing.T) {
 	}
 }
 
+func TestNamesAndPathsAreAskedForByTheirExactVariantsWhereTheBackendHasThem(t *testing.T) {
+	caps := rtorrent.NewCapabilities(backend([]string{"d.multicall2", "d.hash", "d.name", "d.name.base64",
+		"d.directory", "d.base_path", "d.base_path.base64", "f.path", "f.path_components.base64", "f.frozen_path",
+		"f.frozen_path.base64", "f.size_bytes"}, nil), fields)
+	ensure(t, caps)
+	dialect := caps.Dialect()
+	if want := []string{"d.hash", "d.name.base64", "d.directory", "d.base_path.base64"}; !reflect.DeepEqual(dialect.TorrentFields, want) {
+		t.Errorf("torrent fields %#v, want %#v", dialect.TorrentFields, want)
+	}
+	if want := []string{"f.path_components.base64", "f.frozen_path.base64", "f.size_bytes"}; !reflect.DeepEqual(dialect.FileFields, want) {
+		t.Errorf("file fields %#v, want %#v", dialect.FileFields, want)
+	}
+}
+
 func TestABackendExposingNoTorrentFieldGetsTheFullListToFaultLoudly(t *testing.T) {
 	caps := rtorrent.NewCapabilities(backend([]string{"d.multicall2"}, nil), fields)
 	ensure(t, caps)
@@ -128,6 +144,133 @@ func TestSupportsCoversFeaturesAndEverySettingKey(t *testing.T) {
 		if _, ok := supports[key]; !ok {
 			t.Errorf("no supports entry for the setting %s", key)
 		}
+	}
+}
+
+// From 0.16.15 network.max_open_files.set is a stub that logs a deprecation
+// warning and changes nothing, under the name every release has: only the
+// version tells it apart, and everything that asks has to agree.
+func TestASetterTheReleaseIgnoresIsAbsentFromThatReleaseOnForEveryConsumer(t *testing.T) {
+	listed := []string{"d.multicall2", "network.max_open_files", "network.max_open_files.set", "throttle.global_up.max_rate.set"}
+	for version, settable := range map[string]bool{
+		"0.9.8":       true,
+		"0.15.2":      true,
+		"0.16":        true,
+		"0.16.9":      true,
+		"0.16.14":     true, // the last release that applies it
+		"0.16.15":     false,
+		"0.16.24":     false,
+		"0.16.25":     false,
+		"0.16.25-rc1": false,
+		"1.0":         false,
+		// A version probe that faults says nothing about which side it is on.
+		"(fault)": true,
+	} {
+		t.Run(version, func(t *testing.T) {
+			var answer rtorrenttest.Answer = version
+			if version == "(fault)" {
+				answer = &xmlrpc.Fault{Code: -506, Message: "Method 'system.client_version' not defined"}
+			}
+			caps := rtorrent.NewCapabilities(backend(listed, rtorrenttest.Answers{"system.client_version": answer}), fields)
+			ensure(t, caps)
+			setter, unsupported, calls := "", []string{"maxOpenFiles"}, []rtorrent.Call{}
+			if settable {
+				setter, unsupported = "network.max_open_files.set", []string{}
+				calls = []rtorrent.Call{{Method: setter, Params: []any{"", int64(1234)}}}
+			}
+			if caps.Supports("maxOpenFiles") != settable || !caps.Supports("uploadRate") {
+				t.Errorf("supports maxOpenFiles %v, uploadRate %v", caps.Supports("maxOpenFiles"), caps.Supports("uploadRate"))
+			}
+			if got := caps.Resolve("network.max_open_files.set"); got != setter || caps.Has("network.max_open_files.set") != settable {
+				t.Errorf("resolved %q", got)
+			}
+			if got, err := rtorrent.SettingEntries(map[string]any{"maxOpenFiles": 1234.0}, caps.Resolve); err != nil || !reflect.DeepEqual(got, calls) {
+				t.Errorf("entries %#v %v", got, err)
+			}
+			if got := rtorrent.UnsupportedSettingKeys([]string{"maxOpenFiles"}, caps.Resolve); !reflect.DeepEqual(got, unsupported) {
+				t.Errorf("unsupported %v", got)
+			}
+			// The value is still read, and the console still lists the setter,
+			// as rtorrent does.
+			if !slices.Contains(rtorrent.ReadableSettings(caps.Resolve), rtorrent.ReadableSetting{Key: "maxOpenFiles", Getter: "network.max_open_files"}) {
+				t.Error("the value is no longer read")
+			}
+			if !slices.Contains(caps.MethodNames(), "network.max_open_files.set") || caps.Info().MethodCount != len(listed) {
+				t.Errorf("methods %v", caps.MethodNames())
+			}
+		})
+	}
+}
+
+// dht.port.set (from 0.16.1) and trackers.use_udp.set (from 0.16.12) are two
+// more setters a release keeps listing but ignores: each is offered up to the
+// release before its own, and read-only from it on, where its getter still
+// reads (measured on 0.9.8, 0.16.0, 0.16.1, 0.16.11, 0.16.12 and 0.16.25).
+func TestTheDHTPortAndUDPTrackerSettersAreInertFromTheirReleases(t *testing.T) {
+	listed := []string{"d.multicall2", "dht.port", "dht.port.set", "trackers.use_udp", "trackers.use_udp.set"}
+	for version, settable := range map[string][2]bool{
+		"0.9.8":   {true, true},
+		"0.16.0":  {true, true},
+		"0.16.1":  {false, true},
+		"0.16.11": {false, true},
+		"0.16.12": {false, false},
+		"0.16.25": {false, false},
+	} {
+		t.Run(version, func(t *testing.T) {
+			caps := rtorrent.NewCapabilities(backend(listed, rtorrenttest.Answers{"system.client_version": version}), fields)
+			ensure(t, caps)
+			unsupported := []string{}
+			for i, key := range []string{"dhtPort", "udpTrackers"} {
+				if caps.Supports(key) != settable[i] {
+					t.Errorf("supports %s: %v", key, caps.Supports(key))
+				}
+				if !settable[i] {
+					unsupported = append(unsupported, key)
+				}
+			}
+			if got := rtorrent.UnsupportedSettingKeys([]string{"dhtPort", "udpTrackers"}, caps.Resolve); !reflect.DeepEqual(got, unsupported) {
+				t.Errorf("unsupported %v", got)
+			}
+			readable := rtorrent.ReadableSettings(caps.Resolve)
+			for _, setting := range []rtorrent.ReadableSetting{{Key: "dhtPort", Getter: "dht.port"}, {Key: "udpTrackers", Getter: "trackers.use_udp"}} {
+				if !slices.Contains(readable, setting) {
+					t.Errorf("%s is no longer read", setting.Key)
+				}
+			}
+		})
+	}
+}
+
+// 0.16.22 added system.torrent_name.use_sanitized and 0.16.25
+// system.file_name.allow_legacy_utf8 (the two commands 0.16.25 lists and
+// 0.16.24 does not). Each switch is offered and read where its release lists
+// it, so the dialog greys out the rest.
+func TestTheTorrentNameSwitchesAreOfferedWhereTheReleaseListsThem(t *testing.T) {
+	sanitized := []string{"system.torrent_name.use_sanitized", "system.torrent_name.use_sanitized.set"}
+	legacy := []string{"system.file_name.allow_legacy_utf8", "system.file_name.allow_legacy_utf8.set"}
+	for _, c := range []struct {
+		version string
+		listed  []string
+		offered map[string]bool
+	}{
+		{"0.9.8", nil, map[string]bool{"useSanitizedName": false, "allowLegacyUtf8": false}},
+		{"0.16.24", sanitized, map[string]bool{"useSanitizedName": true, "allowLegacyUtf8": false}},
+		{"0.16.25", append(slices.Clone(sanitized), legacy...), map[string]bool{"useSanitizedName": true, "allowLegacyUtf8": true}},
+	} {
+		t.Run(c.version, func(t *testing.T) {
+			listed := append([]string{"d.multicall2"}, c.listed...)
+			caps := rtorrent.NewCapabilities(backend(listed, rtorrenttest.Answers{"system.client_version": c.version}), fields)
+			ensure(t, caps)
+			readable := map[string]bool{}
+			for _, setting := range rtorrent.ReadableSettings(caps.Resolve) {
+				readable[setting.Key] = true
+			}
+			for key, offered := range c.offered {
+				if caps.Supports(key) != offered || readable[key] != offered {
+					t.Errorf("%s: supported %v, read %v, want %v", key, caps.Supports(key), readable[key], offered)
+				}
+			}
+		})
 	}
 }
 

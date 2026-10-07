@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
-import { bytes, formatRateInput, interval, parseRate, parseWholeNumber, rate } from '../format';
+import { bytes, formatRateInput, interval, parseWholeNumber, rate } from '../format';
 import { useMounted } from '../hooks';
 import { redactSecrets } from '../redact';
-import { settingsPatch } from '../settings';
+import { sentence, unsendable } from '../rtorrentText';
+import { appliedRate, parseGlobalRate, settingsPatch } from '../settings';
 import type { BackendSummary, Settings } from '../types';
 import { IconRefresh } from './icons';
 import { Field, ParsedInput, Switch } from './form';
@@ -47,9 +48,10 @@ type BoolKey = KeysOfType<boolean>;
 
 /**
  * Live rtorrent settings, grouped by domain: bandwidth, peers, network,
- * trackers & DHT, storage & disk, resource limits. Every field name doubles as
- * a feature key in the backend's capability map, so a control this rtorrent
- * build cannot apply is greyed out rather than silently ignored.
+ * trackers & DHT, storage & disk, torrent & file names, resource limits.
+ * Every field name doubles as a feature key in the backend's capability map,
+ * so a control this rtorrent build cannot apply is greyed out rather than
+ * silently ignored.
  */
 export function SettingsDialog({
   onClose, backend, statePollMs, statePollDefaultMs, onStatePollChange,
@@ -84,14 +86,19 @@ export function SettingsDialog({
   const set = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setDraft((current) => ({ ...current, [key]: value }));
 
-  /** Record a parsed field: its value when valid, its key in `invalid` when not. */
-  const commit = (key: NumberKey, value: number | null) => {
+  /** Mark a field as holding text Apply cannot send, or no longer. */
+  const mark = (key: keyof Settings, bad: boolean) =>
     setInvalid((current) => {
+      if (current.has(key) === bad) return current;
       const next = new Set(current);
-      if (value === null) next.add(key);
+      if (bad) next.add(key);
       else next.delete(key);
       return next;
     });
+
+  /** Record a parsed field: its value when valid, its key in `invalid` when not. */
+  const commit = (key: NumberKey, value: number | null) => {
+    mark(key, value === null);
     if (value !== null) set(key, value);
   };
 
@@ -124,56 +131,80 @@ export function SettingsDialog({
    * number input turned a lone "-" into 0 (so -1 could not be typed), applied
    * 0 when cleared, and changed value under a scrolling mouse wheel.
    */
-  const numberField = (key: NumberKey, label: string, opts: { hint?: string; min?: number } = {}) => {
+  const numberField = (key: NumberKey, label: string, opts: { hint?: string; min?: number; max?: number } = {}) => {
     const min = opts.min ?? 0;
+    const max = opts.max ?? Number.MAX_SAFE_INTEGER;
     return (
       <Field
         label={label}
         hint={opts.hint}
-        error={invalid.has(key) ? `A whole number, ${min} or more` : undefined}
+        error={invalid.has(key) ? (opts.max === undefined ? `A whole number, ${min} or more` : `A whole number from ${min} to ${max}`) : undefined}
       >
         <ParsedInput
           inputMode="numeric"
           disabled={!supports(key)}
           initial={draft[key] === undefined ? '' : String(draft[key])}
-          parse={(text) => parseWholeNumber(text, min)}
+          parse={(text) => {
+            const value = parseWholeNumber(text, min);
+            return value !== null && value <= max ? value : null;
+          }}
           onValue={(value) => commit(key, value)}
         />
       </Field>
     );
   };
 
-  /** A global rate limit, typed the way the throttle dialog takes them. */
+  /**
+   * A global rate limit, typed the way the throttle dialog takes them. The
+   * hint is what rtorrent will hold: the rate rounded up to whole KiB/s.
+   */
   const rateField = (key: 'downloadRate' | 'uploadRate', label: string) => (
     <Field
       label={label}
-      hint={draft[key] ? rate(draft[key] ?? 0) : 'unlimited'}
-      error={invalid.has(key) ? 'Not a rate — try 500k, 2M or 800 B/s' : undefined}
+      hint={draft[key] ? rate(appliedRate(draft[key] ?? 0)) : 'unlimited'}
+      error={invalid.has(key) ? 'Not a rate under 4 GiB/s — try 500k, 2M or 800 B/s' : undefined}
     >
       <ParsedInput
         placeholder="unlimited — e.g. 500k, 2M"
         disabled={!supports(key)}
         initial={formatRateInput(settings?.[key] ?? 0)}
-        parse={parseRate}
+        parse={parseGlobalRate}
         onValue={(value) => commit(key, value)}
       />
     </Field>
   );
 
-  const textField = (key: TextKey, label: string, opts: { hint?: string; placeholder?: string } = {}) => (
-    <Field label={label} hint={opts.hint}>
-      <input
-        className="input"
-        placeholder={opts.placeholder}
-        disabled={!supports(key)}
-        value={String(draft[key] ?? '')}
-        onChange={(event) => set(key, event.target.value)}
-      />
-    </Field>
-  );
+  /**
+   * A text setting, kept as typed. Text rtorrent cannot be sent — an emoji,
+   * which its XML-RPC layer refuses with the whole change — is marked, and
+   * Apply waits, rather than the server refusing it by name.
+   */
+  const textField = (key: TextKey, label: string, opts: { hint?: string; placeholder?: string } = {}) => {
+    const problem = unsendable(String(draft[key] ?? '').trim());
+    return (
+      <Field label={label} hint={opts.hint} error={problem === null ? undefined : sentence(problem)}>
+        <input
+          className="input"
+          placeholder={opts.placeholder}
+          disabled={!supports(key)}
+          value={String(draft[key] ?? '')}
+          onChange={(event) => {
+            set(key, event.target.value);
+            mark(key, unsendable(event.target.value.trim()) !== null);
+          }}
+        />
+      </Field>
+    );
+  };
 
-  const switchField = (key: BoolKey, label: string) => (
-    <Switch checked={!!draft[key]} disabled={!supports(key)} onChange={(value) => set(key, value)} label={label} />
+  const switchField = (key: BoolKey, label: string, hint?: string) => (
+    <Switch
+      checked={!!draft[key]}
+      disabled={!supports(key)}
+      onChange={(value) => set(key, value)}
+      label={label}
+      hint={hint}
+    />
   );
 
   if (!settings) {
@@ -265,16 +296,18 @@ export function SettingsDialog({
               textField('bindAddressV4', 'Bind address (IPv4)', { hint: 'rtorrent 0.16+' })}
             {supports('bindAddressV6') &&
               textField('bindAddressV6', 'Bind address (IPv6)', { hint: 'rtorrent 0.16+' })}
-            {textField('proxyAddress', 'HTTP proxy for announces', { placeholder: 'host:port' })}
+            {/* 0.16 refuses a proxy without its scheme, which 0.9 took. */}
+            {textField('proxyAddress', 'HTTP proxy for announces', { placeholder: 'http://host:port' })}
             {supports('proxyHttp') &&
               textField('proxyHttp', 'HTTP proxy (all HTTP)', {
                 hint: 'rtorrent 0.16+',
-                placeholder: 'host:port',
+                placeholder: 'http://host:port',
               })}
+            {/* rtorrent crashes on a host name here (CheckProxyHost in the server). */}
             {supports('proxyGlobal') &&
               textField('proxyGlobal', 'Global proxy (all traffic)', {
-                hint: 'rtorrent 0.16+',
-                placeholder: 'host:port',
+                hint: 'rtorrent 0.16+ · by IPv4 address, not by name',
+                placeholder: 'socks5://10.0.0.1:1080',
               })}
             <Field label="Protocol encryption" hint="write-only — cannot be read back">
               <select
@@ -321,16 +354,20 @@ export function SettingsDialog({
                 ))}
               </select>
             </Field>
-            {numberField('dhtPort', 'DHT port')}
+            {numberField('dhtPort', 'DHT port', {
+              max: 65535,
+              hint: supports('dhtPort') ? undefined : 'read-only on rtorrent 0.16.1+: the port DHT runs on, 0 while it is off',
+            })}
             {supports('dhtOverridePort') &&
               numberField('dhtOverridePort', 'DHT announce port override', {
                 hint: '0 uses the listening port',
+                max: 65535,
               })}
             {textField('httpCapath', 'Trusted CA directory', { hint: 'for tracker TLS' })}
             {textField('httpCacert', 'Trusted CA bundle', { hint: 'for tracker TLS' })}
           </div>
           <div className="switch-row">
-            {switchField('udpTrackers', 'UDP trackers')}
+            {switchField('udpTrackers', 'UDP trackers', supports('udpTrackers') ? undefined : 'always on from rtorrent 0.16.12')}
             {supports('sslVerifyPeer') &&
               switchField('sslVerifyPeer', 'Verify tracker TLS certificates')}
             {supports('sslVerifyHost') &&
@@ -382,9 +419,36 @@ export function SettingsDialog({
         </div>
 
         <div className="section">
+          <h3>Torrent &amp; file names</h3>
+          <div className="switch-row">
+            {switchField(
+              'useSanitizedName',
+              'List torrents under their saved name',
+              supports('useSanitizedName')
+                ? 'A / in a torrent’s name is saved as _; off, the list shows the / as the torrent has it'
+                : 'rtorrent 0.16.22+',
+            )}
+            {switchField(
+              'allowLegacyUtf8',
+              'Use a torrent’s UTF-8 names',
+              supports('allowLegacyUtf8')
+                ? 'name.utf-8 and path.utf-8, which older torrents carry beside a legacy-encoded name — for a multi-file torrent this changes where its files are saved; a single-file torrent keeps its legacy file name, and only its listed name changes'
+                : 'rtorrent 0.16.25+',
+            )}
+          </div>
+          {/* rtorrent names a torrent as it loads it (AGENTS.md quirk 6). */}
+          <p className="section-note">
+            rtorrent applies both as it loads a torrent: a change here reaches the torrents added after it, until
+            rtorrent restarts and loads every torrent as RT_USE_SANITIZED_NAME and RT_ALLOW_LEGACY_UTF8 say.
+          </p>
+        </div>
+
+        <div className="section">
           <h3>Resource limits</h3>
           <div className="form-grid">
-            {numberField('maxOpenFiles', 'Max open files')}
+            {numberField('maxOpenFiles', 'Max open files', {
+              hint: supports('maxOpenFiles') ? undefined : 'read-only on rtorrent 0.16.15+',
+            })}
             {numberField('maxOpenSockets', 'Max open sockets')}
             {numberField('maxHttpOpen', 'Max concurrent HTTP requests', {
               hint: supports('maxHttpOpen') ? undefined : 'read-only on rtorrent 0.16+',

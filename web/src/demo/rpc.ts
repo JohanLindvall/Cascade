@@ -6,10 +6,12 @@
  * session's own values, setters and lifecycle commands changing it — and any
  * other name faults the way xmlrpc-c does ("Method 'x' not defined", -506).
  * The command names, the help texts and the faults for a missing, mistyped or
- * refused argument are copied from a running 0.16.24 wherever one was checked.
+ * refused argument are copied from a running 0.16.25 wherever one was checked
+ * (0.16.24 answered alike, but for the value checks 0.16.25 added).
  */
 import {
-  type Session, type SimTorrent, SESSION_DIR, VIEWS, basePathOf, completedBytes, directoryOf, ratioPermille, viewsOf,
+  type Session, type SimTorrent, SESSION_DIR, VIEWS, basePathOf, completedBytes, directoryBaseSet, directoryOf, directorySet,
+  ratioPermille, viewsOf,
 } from './session.ts';
 import { SETTINGS, applySetting } from './settings.ts';
 import { HttpError } from './validate.ts';
@@ -92,7 +94,11 @@ function string(params: unknown[], at = 1): string {
 function torrentGetters(session: Session): Record<string, (t: SimTorrent) => Value> {
   const row = (t: SimTorrent) => session.row(t);
   return {
-    'd.base_filename': (t) => t.name,
+    // The base path's last component: a folder named otherwise is named so here, and nothing is until the first open.
+    'd.base_filename': (t) => {
+      const base = basePathOf(t);
+      return base.slice(base.lastIndexOf('/') + 1);
+    },
     'd.base_path': (t) => basePathOf(t),
     'd.bytes_done': (t) => completedBytes(t),
     'd.chunk_size': (t) => t.chunk,
@@ -103,6 +109,7 @@ function torrentGetters(session: Session): Record<string, (t: SimTorrent) => Val
     'd.creation_date': (t) => t.createdAt,
     'd.custom1': (t) => encodeURIComponent(t.label),
     'd.directory': (t) => directoryOf(t),
+    'd.directory_base': (t) => directoryOf(t),
     'd.down.rate': (t) => t.downRate,
     'd.down.total': (t) => Math.round(t.downTotal),
     'd.downloads_max': (t) => t.maxDownloads,
@@ -198,7 +205,7 @@ function fileGetters(session: Session): Record<string, (t: SimTorrent, index: nu
       if (!t.everOpened) return '';
       const name = row(t, i).onDisk || t.files[i].path.slice(t.files[i].path.lastIndexOf('/') + 1);
       const dirs = t.files[i].path.split('/').slice(0, -1);
-      return [t.multi ? basePathOf(t) : t.frozen, ...dirs, name].join('/');
+      return [t.frozen, ...dirs, name].join('/');
     },
     'f.is_created': (t, i) => flag(row(t, i).created),
     'f.is_open': () => 0,
@@ -384,12 +391,18 @@ export class Rpc {
       t.throttle = name;
       return 0;
     });
+    // The directory the data goes into: a multi-file torrent's folder is named after it again.
     this.on('d.directory.set', (params) => {
-      const t = this.torrent(params);
-      const directory = string(params);
-      t.parent = directory.length > 1 ? directory.replace(/\/+$/, '') : directory;
+      directorySet(this.torrent(params), string(params));
       return 0;
     });
+    // The root itself, d.directory as it reports it; 0.16.22 renamed it and kept the old name as a redirect.
+    for (const name of ['d.directory.base.set', 'd.directory_base.set']) {
+      this.on(name, (params) => {
+        directoryBaseSet(this.torrent(params), string(params));
+        return 0;
+      });
+    }
     this.on('d.message.set', (params) => {
       const t = this.torrent(params);
       t.message = string(params);
@@ -517,7 +530,7 @@ export class Rpc {
     for (const setting of SETTINGS) {
       if (setting.get) {
         this.on(setting.get, () => {
-          const current = session.settings[setting.key];
+          const current = session.readSetting(setting.key);
           return typeof current === 'boolean' ? flag(current) : current;
         });
       }
@@ -528,12 +541,15 @@ export class Rpc {
           switch (setting.kind) {
             case 'uint':
             case 'int':
+            case 'rate':
+            case 'port':
               next = value(params);
               break;
             case 'bool':
               next = value(params) !== 0;
               break;
             case 'string':
+            case 'proxy':
               next = string(params);
               break;
             case 'flags':
@@ -547,14 +563,33 @@ export class Rpc {
         });
       }
     }
-    // 0.16 keeps the old name of the HTTP connection limit as a setter that
-    // only warns, which is why the settings table offers no setter for it.
-    this.on('network.http.max_total_connections.set', (params) => {
+    // From 0.16.15 these setters are stubs that check their value, warn and
+    // change nothing, which is why the settings table offers no setter for
+    // the HTTP connection limit or the open-file limit.
+    const stubs: Array<[command: string, successor: string]> = [
+      ['network.http.max_total_connections.set', 'system.sockets.http.min_alloc.set'],
+      ['network.max_open_files.set', 'system.sockets.files.min_alloc.set'],
+    ];
+    for (const [command, successor] of stubs) {
+      this.on(command, (params) => {
+        if (typeof params[0] !== 'string') throw new RpcFault(-503, 'invalid parameters: target must be a string');
+        value(params);
+        session.note('W', `${command} is deprecated, use ${successor} instead.`);
+        return 0;
+      });
+    }
+    // Two more, with nothing to name in their place: the DHT port has
+    // followed the listening port (or the override) since 0.16.1, and UDP
+    // trackers have been on for good since 0.16.12. dht.port.set's line goes
+    // to the dht scope, which the default log does not carry.
+    const inert = (line: string | null) => (params: unknown[]) => {
       if (typeof params[0] !== 'string') throw new RpcFault(-503, 'invalid parameters: target must be a string');
       value(params);
-      session.note('W', 'network.http.max_total_connections.set is deprecated, use system.sockets.http.min_alloc.set instead.');
+      if (line !== null) session.note('E', line);
       return 0;
-    });
+    };
+    this.on('dht.port.set', inert(null));
+    this.on('trackers.use_udp.set', inert('trackers.use_udp.set is no longer supported'));
     const rates = () => session.globalRates();
     this.on('throttle.global_down.rate', () => rates().down);
     this.on('throttle.global_up.rate', () => rates().up);

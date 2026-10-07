@@ -12,10 +12,12 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -318,11 +320,20 @@ func TestThePollIntervalPreferenceOverridesTheServerDefault(t *testing.T) {
 }
 
 func TestDHTStatisticsAreOnlyAskedForWhenTheBackendHasThem(t *testing.T) {
-	client := backend("dht.statistics").Answer("dht.statistics", map[string]any{"active_nodes": 42})
-	s := newService(t, client, nil)
-	result, err := s.status(ctx, []contracts.Torrent{})
-	if err != nil || result.DHTNodes != 42 || len(client.CallsTo("dht.statistics")) != 1 {
-		t.Fatalf("%d %v", result.DHTNodes, err)
+	for want, answer := range map[int64]map[string]any{
+		// What 0.16.25 answered with DHT running (0.9.8 has the same keys):
+		// the routing table's node count is "nodes".
+		73: {"active": 1, "buckets": 14, "bytes_read": 0, "bytes_written": 0, "cycle": 2, "dht": "on", "errors_caught": 2,
+			"errors_received": 6, "nodes": 73, "peers": 0, "peers_max": 0, "queries_received": 3, "queries_sent": 263,
+			"replies_received": 121, "throttle": "", "torrents": 0},
+		// With DHT off rtorrent leaves the counters out altogether.
+		0: {"active": 0, "dht": "off", "throttle": ""},
+	} {
+		client := backend("dht.statistics").Answer("dht.statistics", answer)
+		result, err := newService(t, client, nil).status(ctx, []contracts.Torrent{})
+		if err != nil || result.DHTNodes != want || len(client.CallsTo("dht.statistics")) != 1 {
+			t.Fatalf("%d, want %d: %v", result.DHTNodes, want, err)
+		}
 	}
 	bare := backend()
 	if _, err := newService(t, bare, nil).status(ctx, []contracts.Torrent{}); err != nil {
@@ -430,6 +441,113 @@ func TestStartupSettingsAreAppliedThroughTheSameFilter(t *testing.T) {
 	_ = os.WriteFile(s.cfg.BootSettingsFile, []byte(`[1,2]`), 0o644)
 	if err := s.applyBootSettings(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// lockedBuffer is a log output a test can read while the logger writes.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// logged collects what the service logs until the test ends.
+func logged(t *testing.T) *lockedBuffer {
+	t.Helper()
+	out := &lockedBuffer{}
+	previous, flags := log.Writer(), log.Flags()
+	log.SetOutput(out)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previous)
+		log.SetFlags(flags)
+	})
+	return out
+}
+
+// 0.16.15 kept network.max_open_files.set as a stub that changes nothing:
+// from there a change through the API skips it, and a startup setting for it
+// is named in the warning rather than counted as applied.
+func TestASetterTheReleaseIgnoresIsSkippedAndNamedInTheStartupWarning(t *testing.T) {
+	for version, applies := range map[string]bool{"0.9.8": true, "0.16.25": false} {
+		t.Run(version, func(t *testing.T) {
+			client := backend("network.max_open_files", "network.max_open_files.set").Answer("system.client_version", version)
+			s := newService(t, client, nil)
+			if err := s.UpdateSettings(ctx, map[string]any{"maxOpenFiles": float64(1234), "downloadRate": float64(2048)}); err != nil {
+				t.Fatal(err)
+			}
+			sent := client.CallsTo("network.max_open_files.set")
+			if applies != (len(sent) == 1) || applies && !reflect.DeepEqual(sent[0].Params, []any{"", int64(1234)}) ||
+				len(client.CallsTo("throttle.global_down.max_rate.set")) != 1 {
+				t.Fatalf("%v", client.Calls())
+			}
+
+			if err := os.WriteFile(s.cfg.BootSettingsFile, []byte(`{"maxOpenFiles":1234}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out := logged(t)
+			if err := s.applyBootSettings(ctx); err != nil {
+				t.Fatal(err)
+			}
+			warning := "rtorrent " + version + " does not support: maxOpenFiles"
+			if applies != (len(client.CallsTo("network.max_open_files.set")) == 2) || applies == strings.Contains(out.String(), warning) {
+				t.Fatalf("%d sent, logged %q", len(client.CallsTo("network.max_open_files.set")), out.String())
+			}
+		})
+	}
+}
+
+// RT_USE_SANITIZED_NAME (0.16.22) and RT_ALLOW_LEGACY_UTF8 (0.16.25) as
+// startup settings: sent where the release lists the setter, and named in
+// the warning where it does not.
+func TestTheTorrentNameSwitchesApplyAtStartupWhereTheReleaseHasThem(t *testing.T) {
+	sanitized := []string{"system.torrent_name.use_sanitized", "system.torrent_name.use_sanitized.set"}
+	legacy := []string{"system.file_name.allow_legacy_utf8", "system.file_name.allow_legacy_utf8.set"}
+	for _, c := range []struct {
+		version     string
+		listed      []string
+		applied     int
+		unsupported string
+	}{
+		{"0.16.25", append(slices.Clone(sanitized), legacy...), 2, ""},
+		{"0.16.24", sanitized, 1, "allowLegacyUtf8"},
+		{"0.9.8", nil, 0, "allowLegacyUtf8, useSanitizedName"},
+	} {
+		t.Run(c.version, func(t *testing.T) {
+			client := backend(c.listed...).Answer("system.client_version", c.version)
+			s := newService(t, client, nil)
+			if err := os.WriteFile(s.cfg.BootSettingsFile, []byte(`{"useSanitizedName":false,"allowLegacyUtf8":false}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out := logged(t)
+			if err := s.applyBootSettings(ctx); err != nil {
+				t.Fatal(err)
+			}
+			for _, setter := range []string{"system.torrent_name.use_sanitized.set", "system.file_name.allow_legacy_utf8.set"} {
+				sent := client.CallsTo(setter)
+				listed := slices.Contains(c.listed, setter)
+				if listed != (len(sent) == 1) || listed && !reflect.DeepEqual(sent[0].Params, []any{"", int64(0)}) {
+					t.Errorf("%s: %v", setter, sent)
+				}
+			}
+			logs := out.String()
+			if !strings.Contains(logs, "applied "+strconv.Itoa(c.applied)+" startup setting(s)") ||
+				(c.unsupported == "") == strings.Contains(logs, "does not support") ||
+				c.unsupported != "" && !strings.Contains(logs, "rtorrent "+c.version+" does not support: "+c.unsupported) {
+				t.Errorf("logged %q", logs)
+			}
+		})
 	}
 }
 
@@ -705,33 +823,6 @@ func TestASymlinkAliasOfARootCannotDeleteTheRootButFilesWithinWork(t *testing.T)
 	}
 	if _, err := os.Stat(filepath.Join(base.cfg.DownloadDir, "file")); !os.IsNotExist(err) {
 		t.Fatal("the file is still there")
-	}
-}
-
-func TestChangingADirectoryClosesFirstAndLeavesItStopped(t *testing.T) {
-	client := backend("d.directory.set", "d.save_full_session")
-	s := newService(t, client, nil)
-	if err := s.SetDirectory(ctx, hash, "/downloads/moved"); err != nil {
-		t.Fatal(err)
-	}
-	var got []rtorrent.Call
-	for _, c := range client.Calls() {
-		if strings.HasPrefix(c.Method, "d.") {
-			got = append(got, c)
-		}
-	}
-	want := []rtorrent.Call{
-		{Method: "d.stop", Params: []any{hash}},
-		{Method: "d.close", Params: []any{hash}},
-		{Method: "d.directory.set", Params: []any{hash, "/downloads/moved"}},
-		{Method: "d.save_full_session", Params: []any{hash}},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("%v", got)
-	}
-	unsupported := backend()
-	if code := status(t, newService(t, unsupported, nil).SetDirectory(ctx, hash, "/downloads/moved")); code != 501 || len(unsupported.CallsTo("d.stop")) != 0 {
-		t.Fatalf("%d", code)
 	}
 }
 

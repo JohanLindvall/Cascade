@@ -164,6 +164,11 @@ func TestStartupSettingsFollowTheCatalog(t *testing.T) {
 	if settings["downloadRate"] != int64(500*1024) || settings["pex"] != false || settings["maxPeersSeed"] != int64(-1) {
 		t.Errorf("units, booleans and signed values: %v", settings)
 	}
+	// The torrent-name switches, which the entrypoint also writes into the rc.
+	settings, err = StartupSettings(env(map[string]string{"RT_USE_SANITIZED_NAME": "No", "RT_ALLOW_LEGACY_UTF8": "on"}))
+	if err != nil || settings["useSanitizedName"] != false || settings["allowLegacyUtf8"] != true {
+		t.Errorf("the torrent-name switches: %v %v", settings, err)
+	}
 }
 
 func TestQuotesAndBackslashesInStartupStringsSurviveJSON(t *testing.T) {
@@ -180,9 +185,43 @@ func TestQuotesAndBackslashesInStartupStringsSurviveJSON(t *testing.T) {
 }
 
 func TestInvalidStartupInputFailsByEnvironmentName(t *testing.T) {
-	for name, value := range map[string]string{"RT_DOWNLOAD_RATE": "fast", "RT_PEX": "perhaps", "RT_MAX_UPLOADS": "-1"} {
+	for name, value := range map[string]string{
+		"RT_DOWNLOAD_RATE": "fast", "RT_PEX": "perhaps", "RT_MAX_UPLOADS": "-1", "RT_ALLOW_LEGACY_UTF8": "2",
+		// Past what the settings table takes, which would refuse every
+		// startup setting along with it: 4 GiB/s, in KiB/s, and a 17-bit port.
+		"RT_UPLOAD_RATE": "4194304", "RT_DHT_OVERRIDE_PORT": "65536",
+		// A global proxy rtorrent dies on, at every start.
+		"RT_PROXY_GLOBAL": "http://proxy.example.org:3128",
+		// Text rtorrent cannot be sent, which the settings table refuses as
+		// well, in a path, the encryption flags, the addresses.
+		"RT_HTTP_CACERT": "/etc/ssl/\U0001F512.pem",
+		"RT_ENCRYPTION":  "allow_incoming,\U0001F512",
+		"RT_PROXY":       "http://10.0.0.1:3128/\U0001F9E6",
+		"RT_PROXY_HTTP":  "http://10.0.0.1:3128/\xe9",
+		"RT_BIND":        "0.0.0.0\uFFFE",
+	} {
 		if _, err := StartupSettings(env(map[string]string{name: value})); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("%s=%s: %v", name, value, err)
 		}
+	}
+	// Worded as the settings table words it for a key, with what it holds;
+	// a global proxy is read as text before it is read as a proxy.
+	for name, value := range map[string]string{
+		"RT_HTTP_CACERT":  "/etc/ssl/certs/\U0001F512.pem",
+		"RT_PROXY_GLOBAL": "socks5://10.0.0.1:1080/\U0001F512",
+	} {
+		_, err := StartupSettings(env(map[string]string{"RT_MAX_PEERS": "77", name: value}))
+		if want := `"` + name + `" contains "` + "\U0001F512" + `" (U+1F512): rtorrent's XML-RPC layer takes no ` +
+			`character beyond U+FFFF, such as an emoji`; err == nil || err.Error() != want {
+			t.Errorf("%v, want %s", err, want)
+		}
+	}
+	if settings, err := StartupSettings(env(map[string]string{"RT_HTTP_CACERT": "/etc/ssl/Café 中文.pem"})); err != nil ||
+		settings["httpCacert"] != "/etc/ssl/Café 中文.pem" {
+		t.Errorf("text within the BMP: %v %v", settings, err)
+	}
+	settings, err := StartupSettings(env(map[string]string{"RT_UPLOAD_RATE": "4194303", "RT_DHT_PORT": "65535"}))
+	if err != nil || settings["uploadRate"] != int64(4194303*1024) || settings["dhtPort"] != int64(65535) {
+		t.Errorf("the highest values: %v %v", settings, err)
 	}
 }

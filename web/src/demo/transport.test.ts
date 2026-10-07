@@ -25,7 +25,7 @@ const server = new DemoServer({
   now: () => Date.now(),
   timers: { set: (run, ms) => setTimeout(run, ms), clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>) },
   seed: 9,
-  version: '0.16.24',
+  version: '0.16.25',
   onPreferences: (preferences) => kept.push(preferences),
 });
 let latency = 2;
@@ -38,7 +38,7 @@ const { api, request, ApiError } = await import('../api.ts');
 
 test('the API is answered with real responses that api.ts reads as it reads the server\'s', async () => {
   const state = await request<StateResponse>('state');
-  assert.equal(state.status.backend.clientVersion, '0.16.24');
+  assert.equal(state.status.backend.clientVersion, '0.16.25');
   const hash = state.torrents[0].hash;
   assert.ok((await api.files(hash)).length > 0);
   assert.equal((await api.trackers(hash)).length, state.torrents[0].trackerCount);

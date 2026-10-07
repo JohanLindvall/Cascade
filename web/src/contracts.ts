@@ -46,6 +46,8 @@ export interface Torrent {
   isActive: boolean;
   isPrivate: boolean;
   isMultiFile: boolean;
+  /** A magnet still fetching its metadata (d.is_meta): its directory cannot be changed until that arrives. */
+  isMeta: boolean;
   hashing: number;
   chunkSize: number;
   chunksDone: number;
@@ -78,6 +80,7 @@ export interface TorrentFile {
 
 export interface Peer {
   id: string;
+  /** p.address as rtorrent answers it: an IPv6 address comes in brackets, "[2001:db8::1]". */
   address: string;
   port: number;
   client: string;
@@ -246,6 +249,8 @@ export interface GlobalSettings {
   preallocate: boolean;
   checkHashOnCompletion: boolean;
   adviseRandomHashing: boolean;
+  useSanitizedName: boolean;
+  allowLegacyUtf8: boolean;
   directory: string;
   sessionDirectory: string;
   bindAddress: string;

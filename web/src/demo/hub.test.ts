@@ -18,7 +18,7 @@ import { Hub } from './hub.ts';
 const START = Date.UTC(2026, 9, 6, 19, 0, 0) + 211;
 
 function demo(clock: ManualClock): DemoServer {
-  return new DemoServer({ now: () => clock.now, timers: clock, seed: 3, version: '0.16.24' });
+  return new DemoServer({ now: () => clock.now, timers: clock, seed: 3, version: '0.16.25' });
 }
 
 function request(method: string, path: string, body?: unknown): DemoRequest {

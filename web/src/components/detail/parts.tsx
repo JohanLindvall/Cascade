@@ -1,35 +1,48 @@
 // SPDX-License-Identifier: MIT
 
 /** Pieces the detail tabs share: flag tags, expandable rows and their key/value blocks. */
-import { useCallback, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useState, type ReactNode } from 'react';
+import { flagsTitle, type Flag } from './flags';
 
-export interface Flag {
-  label: string;
-  title: string;
-  tone?: 'good' | 'warn' | 'bad';
-}
-
+/**
+ * A row's flags, on one line of fixed height (.flags in styles.css), and the
+ * dash for none in the same box, so no flag a poll brings or takes changes
+ * the row's height, not even the first. One title on the box names them all,
+ * those the ellipsis hides too; a title on each tag would show in its place
+ * wherever a tag is hovered. A space parts the tags, drawn zero wide
+ * (.flag-gap): inline tags back to back are one word in the accessible name,
+ * in innerText and in a copy ("bannedsnub").
+ */
 export function Flags({ flags }: { flags: Flag[] }) {
-  if (flags.length === 0) return <span className="faint">—</span>;
   return (
-    <span className="flags">
-      {flags.map((flag) => (
-        <span key={flag.label} className={flag.tone ? `tag ${flag.tone}` : 'tag'} title={flag.title}>
-          {flag.label}
-        </span>
-      ))}
+    <span className="flags" title={flagsTitle(flags)}>
+      {flags.length === 0
+        ? '—'
+        : flags.map((flag, i) => (
+            <Fragment key={flag.label}>
+              {i > 0 && <span className="flag-gap">{' '}</span>}
+              <span className={flag.tone ? `tag ${flag.tone}` : 'tag'}>{flag.label}</span>
+            </Fragment>
+          ))}
     </span>
   );
 }
 
 export const yesNo = (value: boolean) => (value ? 'yes' : 'no');
 
-/** Key/value block shown when a peer or tracker row is expanded. */
-export function MiniKv({ rows }: { rows: Array<[string, ReactNode]> }) {
+/**
+ * Key/value block shown when a peer or tracker row is expanded, as wide as
+ * the pane on screen however wide the table. Every value shows whole, wrapping
+ * where its column is too narrow; a 'wide' row has a line of its own, for a
+ * long value that is read or copied whole: a peer's address, ID and client.
+ * A value that changes with the polls must fit beside its key unwrapped, or
+ * the block grows and shrinks as it changes: expanded.test.ts counts letters.
+ */
+export function MiniKv({ rows }: { rows: Array<[key: string, value: ReactNode, width?: 'wide']> }) {
   return (
     <div className="mini-kv">
-      {rows.map(([key, value]) => (
-        <div key={key}>
+      {rows.map(([key, value, width]) => (
+        <div key={key} className={width}>
           <span>{key}</span>
           <b>{value}</b>
         </div>
@@ -84,7 +97,7 @@ export function RowToggle({ open, onToggle, children }: { open: boolean; onToggl
       <span className="caret" aria-hidden="true">
         {open ? '▾' : '▸'}
       </span>
-      {children}
+      <span className="row-toggle-label">{children}</span>
     </button>
   );
 }

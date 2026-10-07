@@ -56,9 +56,11 @@ var Sections = []string{
 // SectionNotes are shown under a section's heading, where a whole group needs
 // one caveat.
 var SectionNotes = map[string]string{
-	"Bandwidth and slots": "Rates are in KiB/s; 0 means unlimited.",
+	"Bandwidth and slots": "Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.",
 	"Escape hatches": "Settings given as environment variables are applied over XML-RPC at startup rather than " +
-		"written into rtorrent.rc, so changes made in the UI last until the container restarts.",
+		"written into rtorrent.rc, so changes made in the UI last until the container restarts. The torrent-name " +
+		"switches go into rtorrent.rc as well, where the build has them, since rtorrent names its session's " +
+		"torrents before anything else can reach it.",
 }
 
 const rtorrentDefault = "rtorrent default"
@@ -327,7 +329,7 @@ var Options = []Option{
 		Name:    "RT_PROXY_GLOBAL",
 		Setting: "proxyGlobal",
 		Section: "Network",
-		Summary: "Proxy for all traffic (rtorrent 0.16+)",
+		Summary: "Proxy for all traffic, by IPv4 address: socks5://10.0.0.1:1080 (rtorrent 0.16+)",
 		Note:    "unset",
 	},
 	{
@@ -350,7 +352,7 @@ var Options = []Option{
 		Name:    "RT_DHT_PORT",
 		Setting: "dhtPort",
 		Section: "Trackers and DHT",
-		Summary: "DHT UDP port",
+		Summary: "DHT UDP port (read-only on rtorrent 0.16.1+, which takes RT_DHT_OVERRIDE_PORT)",
 		Note:    rtorrentDefault,
 	},
 	{
@@ -364,7 +366,7 @@ var Options = []Option{
 		Name:    "RT_UDP_TRACKERS",
 		Setting: "udpTrackers",
 		Section: "Trackers and DHT",
-		Summary: "Allow UDP trackers, yes/no",
+		Summary: "Allow UDP trackers, yes/no (always on from rtorrent 0.16.12)",
 		Note:    rtorrentDefault,
 	},
 	{
@@ -426,6 +428,20 @@ var Options = []Option{
 		Note:    rtorrentDefault,
 	},
 	{
+		Name:    "RT_USE_SANITIZED_NAME",
+		Setting: "useSanitizedName",
+		Section: "Storage",
+		Summary: "List a torrent under its saved name, a / in it shown as _, yes/no (rtorrent 0.16.22+)",
+		Note:    rtorrentDefault,
+	},
+	{
+		Name:    "RT_ALLOW_LEGACY_UTF8",
+		Setting: "allowLegacyUtf8",
+		Section: "Storage",
+		Summary: "Name torrents, and a multi-file torrent's files, from name.utf-8 and path.utf-8 where a torrent has them, yes/no (rtorrent 0.16.25+)",
+		Note:    rtorrentDefault,
+	},
+	{
 		Name:    "RT_MEMORY_MAX",
 		Setting: "memoryMax",
 		Section: "Storage",
@@ -473,7 +489,7 @@ var Options = []Option{
 		Name:    "RT_MAX_OPEN_FILES",
 		Setting: "maxOpenFiles",
 		Section: "Resource limits",
-		Summary: "Open file handle cap",
+		Summary: "Open file handle cap (read-only on rtorrent 0.16.15+)",
 		Note:    rtorrentDefault,
 	},
 	{
@@ -523,19 +539,19 @@ var Options = []Option{
 	{
 		Name:    "RT_SCGI_SOCKET",
 		Section: "RPC",
-		Summary: "Unix socket rtorrent listens on",
+		Summary: "Unix socket rtorrent listens on, unless RT_SCGI_PORT is set",
 		Default: ptr("/run/rtorrent/rpc.socket"),
 	},
 	{
 		Name:    "RT_SCGI_PORT",
 		Section: "RPC",
-		Summary: "Also listen for SCGI on this TCP port (unauthenticated — keep it private)",
+		Summary: "Listen for SCGI on this TCP port instead of the socket (unauthenticated — keep it private)",
 		Note:    "unset",
 	},
 	{
 		Name:    "RT_SCGI_BIND",
 		Section: "RPC",
-		Summary: "Interface for RT_SCGI_PORT",
+		Summary: "Address RT_SCGI_PORT listens on; 0.0.0.0 lets a published port reach it",
 		Default: ptr("127.0.0.1"),
 	},
 	{
@@ -549,7 +565,7 @@ var Options = []Option{
 		Name:    "CASCADE_SCGI",
 		Section: "RPC",
 		Summary: "Endpoint the web server talks to — a path, or host:port for a remote rtorrent",
-		Note:    "RT_SCGI_SOCKET",
+		Note:    "RT_SCGI_SOCKET, or RT_SCGI_PORT (on 127.0.0.1 for a wildcard RT_SCGI_BIND)",
 	},
 
 	// ------------------------------- web server -------------------------------

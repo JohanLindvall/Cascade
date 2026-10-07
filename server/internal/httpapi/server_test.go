@@ -19,11 +19,13 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/JohanLindvall/Cascade/server/internal/config"
 	"github.com/JohanLindvall/Cascade/server/internal/contracts"
@@ -122,11 +124,11 @@ func (s *stubService) SetFilePriority(_ context.Context, hash string, index int,
 func (s *stubService) AddTracker(_ context.Context, hash, url string, group int64) error {
 	return s.record("addTracker", hash, url, group)
 }
-func (s *stubService) AddTorrentFile(_ context.Context, data []byte, _ contracts.LoadOptions) error {
-	return s.record("addTorrentFile", string(data))
+func (s *stubService) AddTorrentFile(_ context.Context, data []byte, options contracts.LoadOptions) error {
+	return s.record("addTorrentFile", string(data), options)
 }
-func (s *stubService) AddTorrentURL(_ context.Context, url string, _ contracts.LoadOptions) error {
-	return s.record("addTorrentUrl", url)
+func (s *stubService) AddTorrentURL(_ context.Context, url string, options contracts.LoadOptions) error {
+	return s.record("addTorrentUrl", url, options)
 }
 func (s *stubService) Client() rtorrent.Client { return &stubClient{s: s} }
 
@@ -492,6 +494,129 @@ func TestAnAddedTrackerMustBeAnAnnounceURL(t *testing.T) {
 	if len(calls) != 1 || !reflect.DeepEqual(calls[0].args, []any{hash, "udp://tracker.example.org:6969/announce", int64(0)}) {
 		t.Fatalf("%v", calls)
 	}
+}
+
+// Text goes to rtorrent as XML-RPC, which xmlrpc-c refuses outright for a
+// character beyond U+FFFF: a directory change stopped and closed the torrent
+// before the fault came back, and left it stopped. Every field rtorrent is
+// sent as text is a 400 naming it before the service is asked anything — but
+// for a link of an upload, which fails as an item of its own; a label, sent
+// URL-encoded, takes anything.
+func TestTextRtorrentCannotBeSentIsRefusedBeforeTheServiceIsAsked(t *testing.T) {
+	h := boot(t, nil)
+	const emoji = "\U0001F3AC"
+	clapper := `contains "` + emoji + `" (U+1F3AC): rtorrent's XML-RPC layer takes no character beyond U+FFFF, such as an emoji`
+	refused := func(r reply, field, problem string) {
+		t.Helper()
+		if want := `"` + field + `" ` + problem; r.status != 400 || r.body["error"] != want {
+			t.Errorf("%d %s, want %s", r.status, r.raw, want)
+		}
+	}
+	patch := func(body string) reply { return send(t, "PATCH", h.base+"/api/torrents/"+hash, body, nil) }
+	magnet := "magnet:?xt=urn:btih:" + hash
+	refused(patch(`{"priority":3,"directory":"/films `+emoji+`"}`), "directory", clapper)
+	refused(patch(`{"throttle":"slow `+emoji+`"}`), "throttle", clapper)
+	refused(patch(`{"directory":"/films\r\nnew"}`), "directory", "contains a carriage return, which XML reads as a line feed")
+	refused(send(t, "POST", h.base+"/api/torrents/url", `{"url":"`+magnet+`&dn=`+emoji+`"}`, nil), "url", clapper)
+	refused(send(t, "POST", h.base+"/api/torrents/url", `{"url":"`+magnet+`","directory":"/films `+emoji+`"}`, nil),
+		"directory", clapper)
+	refused(send(t, "POST", h.base+"/api/torrents/"+hash+"/trackers", `{"url":"udp://tracker.example.org:6969/`+emoji+`"}`, nil),
+		"url", clapper)
+	refused(send(t, "GET", h.base+"/api/torrents?view="+url.QueryEscape(emoji), "", nil), "view", clapper)
+	// An upload's directory, which every item of it carries, refuses the
+	// batch, its files with it, before any is added.
+	file := []formFile{{"torrents", "a.torrent", "a"}}
+	refused(upload(t, h.base, file, map[string]string{"directory": "/films " + emoji}, nil), "directory", clapper)
+	refused(upload(t, h.base, file, map[string]string{"directory": "/Caf\xe9"}, nil), "directory",
+		"contains a byte that is not UTF-8 (0xE9)")
+	if n := h.service.count(); n != 0 {
+		t.Fatalf("%d calls reached the service: %v", n, h.service.calls)
+	}
+
+	if r := patch(`{"label":"films ` + emoji + `"}`); r.status != 200 {
+		t.Fatalf("%d %s", r.status, r.raw)
+	}
+	wantCall(t, h.service, "setLabel", hash, "films "+emoji)
+	r := upload(t, h.base, file, map[string]string{"directory": "/films/Café 中文", "label": emoji}, nil)
+	if r.status != 200 || r.body["added"] != float64(1) {
+		t.Fatalf("%d %s", r.status, r.raw)
+	}
+	wantCall(t, h.service, "addTorrentFile", "a", contracts.LoadOptions{Start: true, Directory: "/films/Café 中文", Label: emoji})
+}
+
+// A link concerns itself alone, so one rtorrent cannot be sent fails as its
+// own item of the upload's answer, named, before rtorrent is asked, and the
+// rest of the batch is added — as when rtorrent's fault for it came back
+// among the errors. Refusing the whole batch for it lost every file and link
+// beside it.
+func TestALinkRtorrentCannotBeSentFailsOnItsOwn(t *testing.T) {
+	h := boot(t, nil)
+	const emoji = "\U0001F3AC"
+	magnet := "magnet:?xt=urn:btih:" + hash
+	links := "https://example.test/a.torrent\n" + magnet + "&dn=films " + emoji + "\n\n" + magnet + "&dn=fine\r\n" +
+		magnet + "&dn=\xe9"
+	r := upload(t, h.base, []formFile{{"torrents", "a.torrent", "a"}}, map[string]string{"urls": links, "label": "tv"}, nil)
+	want := map[string]any{
+		"added": float64(3),
+		"errors": []any{
+			magnet + "&dn=films " + emoji + `: "urls" contains "` + emoji + `" (U+1F3AC): rtorrent's XML-RPC layer ` +
+				`takes no character beyond U+FFFF, such as an emoji`,
+			// The answer is JSON, which carries the byte as U+FFFD.
+			magnet + "&dn=" + string(utf8.RuneError) + `: "urls" contains a byte that is not UTF-8 (0xE9)`,
+		},
+		"failedFiles": []any{},
+		"failedUrls":  []any{float64(1), float64(3)},
+	}
+	if r.status != 200 || !reflect.DeepEqual(r.body, want) {
+		t.Fatalf("%d %s", r.status, r.raw)
+	}
+	options := contracts.LoadOptions{Start: true, Label: "tv"}
+	wantCall(t, h.service, "addTorrentFile", "a", options)
+	var added []any
+	for _, c := range h.service.callsTo("addTorrentUrl") {
+		added = append(added, c.args...)
+	}
+	if want := []any{"https://example.test/a.torrent", options, magnet + "&dn=fine", options}; !reflect.DeepEqual(added, want) {
+		t.Fatalf("%v", added)
+	}
+	// Nothing else to add: the batch is all failures, answered as such.
+	r = upload(t, h.base, nil, map[string]string{"urls": magnet + "&dn=" + emoji}, nil)
+	if r.status != 200 || r.body["added"] != float64(0) || !reflect.DeepEqual(r.body["failedUrls"], []any{float64(0)}) {
+		t.Fatalf("%d %s", r.status, r.raw)
+	}
+}
+
+// rtorrent strips a directory's trailing slashes, so "/" leaves "", which it
+// reads as "." — the directory it runs in — and a single file went there. An
+// add's empty directory is rtorrent's default: the Add dialog sends none.
+func TestADirectoryIsNeverTheRoot(t *testing.T) {
+	h := boot(t, nil)
+	const root = `"directory" cannot be "/": rtorrent strips a directory's trailing slashes and would put a single file ` +
+		`in ".", the directory it runs in`
+	magnet := "magnet:?xt=urn:btih:" + hash
+	for _, r := range []reply{
+		send(t, "PATCH", h.base+"/api/torrents/"+hash, `{"directory":"/"}`, nil),
+		send(t, "PATCH", h.base+"/api/torrents/"+hash, `{"directory":" // "}`, nil),
+		send(t, "POST", h.base+"/api/torrents/url", `{"url":"`+magnet+`","directory":"/"}`, nil),
+		upload(t, h.base, []formFile{{"torrents", "a.torrent", "a"}}, map[string]string{"directory": "///"}, nil),
+	} {
+		if r.status != 400 || r.body["error"] != root {
+			t.Errorf("%d %s", r.status, r.raw)
+		}
+	}
+	if n := h.service.count(); n != 0 {
+		t.Fatalf("%d calls reached the service", n)
+	}
+	for directory, want := range map[string]string{``: "", `,"directory":""`: "", `,"directory":"  "`: "", `,"directory":"/srv"`: "/srv"} {
+		if r := send(t, "POST", h.base+"/api/torrents/url", `{"url":"`+magnet+`"`+directory+`}`, nil); r.status != 200 {
+			t.Fatalf("%s: %d %s", directory, r.status, r.raw)
+		}
+		wantCall(t, h.service, "addTorrentUrl", magnet, contracts.LoadOptions{Start: true, Directory: want})
+	}
+	if r := send(t, "PATCH", h.base+"/api/torrents/"+hash, `{"directory":"/srv/"}`, nil); r.status != 200 {
+		t.Fatalf("%d %s", r.status, r.raw)
+	}
+	wantCall(t, h.service, "setDirectory", hash, "/srv/")
 }
 
 func TestAMalformedJSONBodyIsA400(t *testing.T) {

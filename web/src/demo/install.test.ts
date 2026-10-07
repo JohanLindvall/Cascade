@@ -15,7 +15,7 @@ const realNow = Date.now;
 let hiddenFor = 0;
 Date.now = () => realNow() + hiddenFor;
 const storage = new Map<string, string>();
-Object.assign(globalThis, { window: globalThis, document: { baseURI: BASE }, __CASCADE_RTORRENT_VERSION__: '0.16.24' });
+Object.assign(globalThis, { window: globalThis, document: { baseURI: BASE }, __CASCADE_RTORRENT_VERSION__: '0.16.25' });
 Object.defineProperty(globalThis, 'localStorage', {
   configurable: true,
   value: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) },

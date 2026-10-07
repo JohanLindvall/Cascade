@@ -47,14 +47,23 @@ vulnerability:
   including `execute.*`, which runs programs as the user rtorrent runs as (`PUID`) inside the
   container, with its volumes. It is on by default, because existing rtorrent tooling talks to
   `/RPC2`; set `CASCADE_ALLOW_RAW_RPC=0` if nothing needs it.
-- **rtorrent's own SCGI socket has no authentication at all.** It is a unix socket inside the
-  container (`RT_SCGI_SOCKET`); whoever reaches it has raw RPC without Cascade in the way. When
-  `CASCADE_SCGI` points Cascade at an rtorrent elsewhere, that link is unauthenticated SCGI over
-  the network.
+- **rtorrent's own SCGI interface has no authentication at all**: whoever reaches it has raw
+  RPC without Cascade in the way. By default it is a unix socket inside the container
+  (`RT_SCGI_SOCKET`), which with the default `RT_UMASK` admits only `PUID` and root.
+  `RT_SCGI_PORT` replaces it with a TCP port on `RT_SCGI_BIND`: `127.0.0.1` unless set, the
+  loopback of the container's network namespace. On a network of its own, no other container and
+  no published port reach it. Every process in that namespace does, whatever its user: all of
+  the host's under `--network host`, and every container sharing it (`--network container:…`, a
+  VPN sidecar). Bound wider, such as `0.0.0.0`, the port is open to the container's network, and
+  once published, to whoever reaches it on the host. When `CASCADE_SCGI` points Cascade at an
+  rtorrent elsewhere, that link is unauthenticated SCGI over the network.
 - **Deleting data is confined** to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and
   `CASCADE_DELETE_ROOTS`, as set when the container starts (a default directory changed in the
-  settings dialog is not added); `CASCADE_ALLOW_DATA_DELETE=0` forbids it altogether. That covers
-  deletion only: a torrent's directory may be any path rtorrent's user can write.
+  settings dialog is not added); `CASCADE_ALLOW_DATA_DELETE=0` forbids it altogether. The check is
+  made on the path as bytes on disk, the same bytes that are then deleted: a name rtorrent can only
+  report by a stand-in (`%E9` or `?` for a byte that is not UTF-8) is resolved first, and refused
+  when it could be more than one path. That covers deletion only: a torrent's directory may be any
+  path rtorrent's user can write.
 - **Tracker secrets are hidden on screen, not from the API.** The UI masks passkeys and
   credentials in tracker URLs, messages and log lines; the API returns them as rtorrent stores
   them, because clients need them.

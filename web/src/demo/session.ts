@@ -20,6 +20,7 @@ import type {
   GameState, GameStats, GlobalSettings, GlobalStatus, LogScopeChange, LogScopeState, Peer, RateSample,
   ThrottleGroup, ThrottleRate, Torrent, TorrentFile, TorrentStatus, Tracker,
 } from '../contracts.ts';
+import { FETCHING_METADATA } from '../dataFolder.ts';
 import { CATALOG, HISTORY, THROTTLES, type CatalogFile, type CatalogTorrent } from './catalog.ts';
 import { buildGame, newlyUnlocked } from './game.ts';
 import { fitComponent } from './pathfit.ts';
@@ -90,6 +91,7 @@ export interface SimFile {
 
 export interface SimPeer {
   id: string;
+  /** As p.address answers it: an IPv6 address in brackets. */
   address: string;
   port: number;
   client: string;
@@ -106,6 +108,8 @@ export interface SimPeer {
   weight: number;
   /** What the peer pulls from the swarm as a whole, bytes/s. */
   swarmRate: number;
+  /** Connected for as long as the torrent runs, not in turn with the rest of the pool. */
+  steady: boolean;
 }
 
 type AnnounceEvent = 'started' | 'completed' | 'updated';
@@ -165,9 +169,15 @@ export interface SimTorrent {
   chunk: number;
   createdAt: number;
   label: string;
-  /** Where the torrent goes: its files' directory, or for a multi-file torrent its own directory's parent. */
+  /** Where the data goes: its file's directory, or the one holding a multi-file torrent's own folder. */
   parent: string;
-  /** parent as of the last open: libtorrent freezes the paths there, so d.base_path follows a move only once reopened. */
+  /**
+   * A multi-file torrent's own folder: its name, fitted as the image's
+   * libtorrent fits one too long for a path, unless d.directory_base.set
+   * named it otherwise. A directory change keeps it; d.directory.set does not.
+   */
+  folder: string;
+  /** d.directory as of the last open: libtorrent freezes the paths there, so d.base_path follows a move only once reopened. */
   frozen: string;
   throttle: string;
   priority: number;
@@ -228,18 +238,48 @@ function wantedLeft(t: SimTorrent): number {
   return left;
 }
 
+/** A name inside a directory, joined the way d.directory.set joins them. */
 function join(parent: string, name: string): string {
-  return parent.endsWith('/') ? `${parent}${name}` : `${parent}/${name}`;
+  return parent === '' || parent.endsWith('/') ? `${parent}${name}` : `${parent}/${name}`;
 }
 
-/** d.directory: a multi-file torrent's own directory, else the one its file is in. */
+/** A directory as rtorrent keeps one, without trailing slashes ("/" stays). */
+function trimDirectory(directory: string): string {
+  return directory.replace(/(.)\/+$/, '$1');
+}
+
+/** d.directory: a multi-file torrent's own folder, else the directory its file is in. */
 export function directoryOf(t: SimTorrent): string {
-  return t.multi ? join(t.parent, t.name) : t.parent;
+  return t.multi ? join(t.parent, t.folder) : t.parent;
 }
 
 /** d.base_path: where the torrent was last opened, and empty until it first is. */
 export function basePathOf(t: SimTorrent): string {
-  return t.everOpened ? join(t.frozen, t.name) : '';
+  if (!t.everOpened) return '';
+  return t.multi ? t.frozen : join(t.frozen, t.name);
+}
+
+/** d.directory.set: the directory the data goes into, a multi-file torrent's folder named after it inside. */
+export function directorySet(t: SimTorrent, directory: string): void {
+  t.parent = trimDirectory(directory);
+  t.folder = fitComponent(t.name);
+}
+
+/**
+ * d.directory_base.set: d.directory itself, a multi-file torrent's folder
+ * named as the path ends. The directory above it is kept without trailing
+ * slashes, as the server reads it (DataDirectory): a root of "/downloads//X"
+ * has its folder in "/downloads".
+ */
+export function directoryBaseSet(t: SimTorrent, root: string): void {
+  const path = trimDirectory(root);
+  if (!t.multi) {
+    t.parent = path;
+    return;
+  }
+  const cut = path.lastIndexOf('/');
+  t.parent = cut < 0 ? '' : trimDirectory(path.slice(0, cut + 1));
+  t.folder = path.slice(cut + 1);
 }
 
 /**
@@ -312,6 +352,11 @@ function asciiHex(text: string): string {
   return [...text].map((c) => c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
 }
 
+/** An address as p.address answers it: rtorrent brackets an IPv6 one itself (command_peer.cc, every release). */
+function peerAddress(address: string): string {
+  return address.includes(':') ? `[${address}]` : address;
+}
+
 function makePeer(rng: Random, seed: boolean): SimPeer {
   let pick = rng.range(0, CLIENT_WEIGHT);
   let client = CLIENTS[0];
@@ -329,7 +374,7 @@ function makePeer(rng: Random, seed: boolean): SimPeer {
   const encrypted = rng.chance(0.7);
   return {
     id: (asciiHex(client[1]) + rng.hex(24)).toUpperCase(),
-    address,
+    address: peerAddress(address),
     port: rng.chance(0.55) ? rng.pick(PORTS) : rng.int(10_000, 65_000),
     client: client[0],
     options: rng.pick(OPTIONS),
@@ -343,7 +388,13 @@ function makePeer(rng: Random, seed: boolean): SimPeer {
     preferred: rng.chance(0.03),
     weight: rng.range(0.3, 1.7),
     swarmRate: rng.range(40 * KiB, 2.2 * MiB),
+    steady: false,
   };
+}
+
+/** A catalogue torrent's steady peer: a leecher, so it stays once the torrent is complete too. */
+function steadyPeer(rng: Random, address: string): SimPeer {
+  return { ...makePeer(rng, false), address: peerAddress(address), steady: true };
 }
 
 /** Piece length as torrent creators pick it: a few thousand pieces at most. */
@@ -538,17 +589,40 @@ export class Session {
     return 50_000;
   }
 
+  /**
+   * dht.port as 0.16.1 and later report it: no longer a setting, but the port
+   * the running DHT has — the listening port, or dht.override_port — and 0
+   * while it is off.
+   */
+  dhtPort(): number {
+    if (this.dhtNodes() === 0) return 0;
+    return this.settings.dhtOverridePort || this.listenPort();
+  }
+
+  /** A setting as its getter reads it: as kept, but for dht.port. */
+  readSetting(key: keyof GlobalSettings): number | boolean | string {
+    return key === 'dhtPort' ? this.dhtPort() : this.settings[key];
+  }
+
   dhtNodes(): number {
     if (this.settings.dhtMode === 'disable' || this.settings.dhtMode === 'off') return 0;
     const at = this.time / 1000 - this.origin;
     return Math.round(262 + 31 * Math.sin(at / 300) + 12 * Math.sin(at / 47 + 1.3));
   }
 
+  /**
+   * dht.statistics as 0.16 answers it. While DHT runs: its counters, the
+   * routing table's size as "nodes" (what the status reads), a bucket for
+   * every eight nodes at most, cycle 1 until the first refreshes, and the
+   * byte counts 0.16 no longer keeps. While it does not: only the mode, the
+   * flag and the throttle name.
+   */
   dhtStatistics(): Record<string, number | string> {
     const nodes = this.dhtNodes();
+    if (nodes === 0) return { active: 0, dht: this.settings.dhtMode, throttle: '' };
     return {
-      active: nodes > 0 ? 1 : 0, buckets: nodes > 0 ? 24 : 0, bytes_read: Math.round(this.sessionDown / 9100),
-      bytes_written: Math.round(this.sessionUp / 15200), cycle: Math.floor((this.time / 1000 - this.startedAt) / 900),
+      active: 1, buckets: Math.ceil(nodes / 7), bytes_read: 0, bytes_written: 0,
+      cycle: Math.max(1, Math.floor((this.time / 1000 - this.startedAt) / 900)),
       dht: this.settings.dhtMode, errors_caught: 2, errors_received: 37, nodes, peers: nodes * 3 + 41, peers_max: 412,
       queries_received: 18_211, queries_sent: 25_904, replies_received: 21_337, throttle: '', torrents: this.all().filter((t) => !t.isPrivate).length,
     };
@@ -625,18 +699,24 @@ export class Session {
     };
   }
 
-  /** The peers connected now: a window over the torrent's pool that slides as peers come and go. */
+  /**
+   * The peers connected now: the steady ones, there since the torrent last
+   * started, then a window over the rest of its pool that slides as peers
+   * come and go.
+   */
   connected(t: SimTorrent, at = this.time / 1000): Array<{ peer: SimPeer; since: number }> {
     const count = this.peerCount(t, at);
     if (count === 0) return [];
     const pool = isComplete(t) ? t.pool.filter((peer) => !peer.seed) : t.pool;
+    const out = pool.filter((peer) => peer.steady).slice(0, count).map((peer) => ({ peer, since: t.activeSince }));
+    const turns = pool.filter((peer) => !peer.steady);
+    const slots = count - out.length;
     const rotate = 53;
     const turn = Math.floor((at - this.origin) / rotate + t.swarm.phase);
-    const out: Array<{ peer: SimPeer; since: number }> = [];
-    for (let i = 0; i < Math.min(count, pool.length); i++) {
+    for (let i = 0; i < Math.min(slots, turns.length); i++) {
       // When the peer joined, back in epoch seconds: its age and totals count from there.
-      const joined = this.origin + (turn + i - count + 1 - t.swarm.phase) * rotate;
-      out.push({ peer: pool[(turn + i) % pool.length], since: Math.max(t.activeSince, Math.floor(joined)) });
+      const joined = this.origin + (turn + i - slots + 1 - t.swarm.phase) * rotate;
+      out.push({ peer: turns[(turn + i) % turns.length], since: Math.max(t.activeSince, Math.floor(joined)) });
     }
     return out;
   }
@@ -859,15 +939,32 @@ export class Session {
   }
 
   /**
-   * Stopped and closed first, as SetDirectory does; the data itself is not
-   * moved. Only d.directory changes: d.base_path follows at the next open.
+   * SetDirectory: the directory the data goes into, as an add names it; a
+   * multi-file torrent's folder keeps its name inside it. A torrent already
+   * there is left alone; any other is stopped and closed first, and the data
+   * itself is not moved. Only d.directory changes: d.base_path follows at the
+   * next open. A magnet still fetching its metadata is refused before
+   * anything stops (refuseDirectoryChange).
    */
   setDirectory(hash: string, directory: string): void {
+    this.refuseDirectoryChange(hash);
     const t = this.get(hash);
+    const parent = trimDirectory(directory);
+    if (parent === t.parent) return;
     const nowS = Math.floor(this.time / 1000);
     this.stop(t, nowS);
     this.close(t, nowS);
-    t.parent = directory.length > 1 ? directory.replace(/\/+$/, '') : directory;
+    t.parent = parent;
+  }
+
+  /**
+   * RefuseDirectoryChange: a 409 for a magnet still fetching its metadata —
+   * the torrent that metadata becomes is loaded with the add's own directory
+   * (materialize), as rtorrent's is. The PATCH route asks it before any field
+   * changes: a 409 must not follow a change.
+   */
+  refuseDirectoryChange(hash: string): void {
+    if (this.get(hash).meta) throw new HttpError(409, FETCHING_METADATA);
   }
 
   /**
@@ -1014,7 +1111,7 @@ export class Session {
     if (t.open) return;
     t.open = true;
     t.everOpened = true;
-    t.frozen = t.parent;
+    t.frozen = directoryOf(t);
     this.info(t, 'download_list: Opening download.', nowS);
     this.info(t, 'download: Opening torrent: flags:fffffffe.', nowS);
     this.info(t, 'file_list: Opening.', nowS);
@@ -1192,8 +1289,9 @@ export class Session {
     t.files = this.layout(files);
     t.size = t.files.reduce((sum, file) => sum + file.size, 0);
     t.chunk = pieceLengthFor(t.size);
-    t.parent = meta.directory || this.settings.directory;
-    t.frozen = t.parent;
+    // The torrent replays the load's d.directory.set, as rtorrent's does.
+    directorySet(t, meta.directory || this.settings.directory);
+    t.frozen = directoryOf(t);
     t.createdAt = nowS - rng.int(3, 2000) * DAY;
     t.everOpened = true;
     this.info(t, 'download_list: Inserting download.', nowS);
@@ -1495,9 +1593,11 @@ export class Session {
     const laid = this.layout(files);
     const size = laid.reduce((sum, file) => sum + file.size, 0);
     const swarmDown = rng.range(0.6, 3.2) * MiB;
+    const folder = fitComponent(name);
     return {
-      hash, name, files: laid, size, multi, isPrivate: false, chunk, createdAt: 0, label: '', parent: DOWNLOAD_DIR,
-      frozen: DOWNLOAD_DIR, throttle: '', priority: 2, maxUploads: this.settings.maxUploads, maxDownloads: this.settings.maxDownloads,
+      hash, name, files: laid, size, multi, isPrivate: false, chunk, createdAt: 0, label: '', parent: DOWNLOAD_DIR, folder,
+      frozen: multi ? join(DOWNLOAD_DIR, folder) : DOWNLOAD_DIR,
+      throttle: '', priority: 2, maxUploads: this.settings.maxUploads, maxDownloads: this.settings.maxDownloads,
       message: '', state: 0, complete: false, open: false, active: false, hashing: 0, check: null, unchecked: null, meta: null, everOpened: false,
       activeSince: 0, addedAt: 0, startedAt: 0, finishedAt: 0, downTotal: 0, upTotal: 0, downRate: 0, upRate: 0,
       peersConnected: 0,
@@ -1514,7 +1614,7 @@ export class Session {
   /** Into the session as a load does it: listed, its trackers added, started when asked. */
   private attach(t: SimTorrent, tiers: string[][], options: AddOptions): void {
     const nowS = Math.floor(this.time / 1000);
-    if (!t.meta) t.parent = options.directory || this.settings.directory;
+    if (!t.meta) directorySet(t, options.directory || this.settings.directory);
     t.label = options.label;
     t.addedAt = nowS;
     t.pool = this.peerPool(t, 0.6);
@@ -1621,6 +1721,7 @@ export class Session {
     }
 
     t.pool = this.peerPool(t, state === 'downloading' ? 0.6 : 0.15);
+    if (entry.steadyPeer) t.pool.unshift(steadyPeer(rng.fork('steady peer'), entry.steadyPeer));
     entry.trackers.forEach((tier, group) => tier.forEach((url) => t.trackers.push(this.makeTracker(t, url, group, false))));
     if (!t.isPrivate) t.trackers.push(this.makeTracker(t, 'dht://', entry.trackers.length, false));
     if (entry.failure) {
@@ -1772,6 +1873,7 @@ export class Session {
       isActive: t.active,
       isPrivate: t.isPrivate,
       isMultiFile: t.multi,
+      isMeta: t.meta !== null,
       hashing: t.hashing,
       chunkSize: t.chunk,
       chunksDone: allChunks ? chunksTotal : Math.max(0, Math.min(chunksTotal - 1, Math.floor(completed / t.chunk))),

@@ -4,8 +4,10 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
+	"path"
 	"strconv"
 
 	"github.com/JohanLindvall/Cascade/server/internal/httperr"
@@ -136,7 +138,7 @@ func (s *Service) removeTorrent(ctx context.Context, hash string, deleteData boo
 		if !s.cfg.AllowDataDelete {
 			return httperr.New(http.StatusForbidden, "deleting torrent data is disabled (CASCADE_ALLOW_DATA_DELETE=0)")
 		}
-		basePath, err := s.client.Call(ctx, "d.base_path", hash)
+		base, err := s.dataPath(ctx, hash)
 		if err != nil {
 			return err
 		}
@@ -144,7 +146,7 @@ func (s *Service) removeTorrent(ctx context.Context, hash string, deleteData boo
 		// left the metadata gone and the data behind — the one combination the
 		// user did not ask for. An empty base path (never started) has nothing
 		// to check or delete.
-		if base := rtorrent.Text(basePath); base != "" {
+		if base != "" {
 			if data, err = prepareDataDeletion(base, s.cfg.DeleteRoots); err != nil {
 				return err
 			}
@@ -259,16 +261,43 @@ func (s *Service) SetTorrentSlots(ctx context.Context, hash string, uploads, dow
 	return err
 }
 
-// SetDirectory moves where a torrent's data is looked for. The data itself
-// is not moved.
+// SetDirectory changes the directory a torrent's data goes into — what an
+// add's directory names: the one a single file is in, or the one holding a
+// multi-file torrent's own folder, which keeps its name on disk (see
+// rtorrent/directory.go). The data itself is not moved. A torrent whose data
+// already goes there is left alone, running or not, so the directory the UI
+// offers changes nothing when it is sent back as it is; a magnet still
+// fetching its metadata is refused (refuseFetchingMetadata, which a PATCH asks
+// before its other fields too: RefuseDirectoryChange). The directory is
+// the API's to check: the root, or one rtorrent cannot be sent, is refused
+// there (validate.Directory).
 func (s *Service) SetDirectory(ctx context.Context, hash, directory string) error {
 	ctx = detached(ctx)
+	// As rtorrent keeps a directory, and as DataDirectory reads the listing's:
+	// without the trailing slashes d.directory.set would keep before the name
+	// it appends ("dir//X").
+	directory = rtorrent.TrimDirectory(directory)
 	return s.torrentWrites.run(hash, func() error {
 		if err := s.caps.Ensure(ctx); err != nil {
 			return err
 		}
 		if !s.caps.Supports("perTorrentDirectory") {
 			return httperr.New(http.StatusNotImplemented, "this rtorrent build does not support changing a torrent directory")
+		}
+		if err := s.refuseFetchingMetadata(ctx, hash); err != nil {
+			return err
+		}
+		questionMarks := rtorrent.QuestionMarksStandIn(s.caps.Info().ClientVersion)
+		where, err := s.placement(ctx, hash, questionMarks)
+		if err != nil {
+			return err
+		}
+		if rtorrent.DataDirectory(where) == directory {
+			return nil
+		}
+		method, value, err := s.directoryCommand(where, directory, questionMarks)
+		if err != nil {
+			return err
 		}
 		// Close before changing paths: rtorrent refuses an open download whose
 		// files were moved, and frozen file paths must be rebuilt on next
@@ -277,12 +306,117 @@ func (s *Service) SetDirectory(ctx context.Context, hash, directory string) erro
 		if err := s.performAction(ctx, hash, "stop"); err != nil {
 			return err
 		}
-		if _, err := s.client.Call(ctx, "d.directory.set", hash, directory); err != nil {
+		if _, err := s.client.Call(ctx, method, hash, value); err != nil {
 			return err
 		}
-		_, err := s.client.Call(ctx, "d.save_full_session", hash)
+		_, err = s.client.Call(ctx, "d.save_full_session", hash)
 		return err
 	})
+}
+
+// FetchingMetadata is why a directory change leaves a magnet alone until its
+// metadata has arrived (refuseFetchingMetadata). The web UI says the same
+// (FETCHING_METADATA in web/src/dataFolder.ts).
+const FetchingMetadata = "this torrent is still fetching its metadata, and once that arrives rtorrent loads it anew " +
+	"into the directory it was added with — a directory changed now would be lost, so wait for the metadata, " +
+	"then change it"
+
+// RefuseDirectoryChange is SetDirectory's refusal of a magnet still fetching
+// its metadata, asked on its own: a PATCH asks it before the first of its
+// fields changes anything, as a 409 must never follow a change — it leaves
+// the stream alone (refusedAsSent in internal/httpapi). A torrent never
+// becomes a download of its metadata again, so SetDirectory, which asks once
+// more in the torrent's queue, cannot refuse what this let through.
+func (s *Service) RefuseDirectoryChange(ctx context.Context, hash string) error {
+	ctx = detached(ctx)
+	if err := s.caps.Ensure(ctx); err != nil {
+		return err
+	}
+	return s.refuseFetchingMetadata(ctx, hash)
+}
+
+// refuseFetchingMetadata is a 409 for a magnet still fetching its metadata,
+// before anything is stopped. What the session holds until the metadata
+// arrives is a download of the metadata alone (d.is_meta, on 0.9.8 as on
+// 0.16.25), and when it is complete rtorrent stops and erases it and loads the
+// torrent from the metadata with the commands the add carried — its
+// d.directory.set among them — so a directory set on it now is lost. The stop
+// and close a change takes held the fetch up besides: started again, 0.16.25
+// left it idle until a recheck.
+func (s *Service) refuseFetchingMetadata(ctx context.Context, hash string) error {
+	if !s.caps.Has("d.is_meta") {
+		return nil
+	}
+	meta, err := s.client.Call(ctx, "d.is_meta", hash)
+	if err != nil {
+		return err
+	}
+	if rtorrent.Number(meta) != 0 {
+		return httperr.New(http.StatusConflict, FetchingMetadata)
+	}
+	return nil
+}
+
+// placement reads what a directory change needs to know of a torrent: its
+// d.is_multi_file and d.directory, and where d.directory may be a stand-in,
+// the base path's bytes and the torrent's name. Each string is a request of
+// its own: rtorrent 0.16.3 to 0.16.6 crash on one xmlrpc-c refuses inside a
+// multicall's answer (see filesPresent). questionMarks is whether this
+// rtorrent's '?' may stand in for a byte (rtorrent.QuestionMarksStandIn).
+func (s *Service) placement(ctx context.Context, hash string, questionMarks bool) (rtorrent.Row, error) {
+	row := rtorrent.Row{}
+	read := func(field string) error {
+		value, err := s.client.Call(ctx, field, hash)
+		row[field] = value
+		return err
+	}
+	for _, field := range []string{"d.is_multi_file", "d.directory"} {
+		if err := read(field); err != nil {
+			return nil, err
+		}
+	}
+	exact := rtorrent.ExactFields["d.base_path"]
+	if rtorrent.MayStandIn(rtorrent.Text(row["d.directory"])) && s.caps.Has(exact) {
+		if err := read(exact); err != nil {
+			return nil, err
+		}
+	}
+	if _, ok := rtorrent.Folder(row, questionMarks); !ok && rtorrent.Number(row["d.is_multi_file"]) != 0 {
+		if name := s.caps.Resolve(rtorrent.ExactFields["d.name"], "d.name"); name != "" {
+			if err := read(name); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return row, nil
+}
+
+// directoryCommand is the command, and its argument, that puts a torrent's
+// data into directory: d.directory.set for a single file; for a multi-file
+// torrent the base setter, given its folder by the name it has inside
+// directory, since d.directory.set would name the folder after the torrent.
+// Where the folder's bytes cannot pass through XML-RPC text either way,
+// d.directory.set still serves a folder named after the torrent, appending
+// the name on rtorrent's side; any other is refused before anything changes.
+func (s *Service) directoryCommand(where rtorrent.Row, directory string, questionMarks bool) (method, value string, err error) {
+	if rtorrent.Number(where["d.is_multi_file"]) == 0 {
+		return "d.directory.set", directory, nil
+	}
+	setter := s.caps.Resolve("d.directory.base.set", "d.directory_base.set")
+	switch folder, ok := rtorrent.Folder(where, questionMarks); {
+	case ok && folder != "" && setter != "":
+		return setter, rtorrent.JoinDirectory(directory, folder), nil
+	// A root with no folder of its own is given one named after the torrent,
+	// as an add names it.
+	case ok && folder == "", !ok && rtorrent.NamedAfterTorrent(where):
+		return "d.directory.set", directory, nil
+	case ok:
+		return "", "", httperr.New(http.StatusNotImplemented,
+			"this rtorrent build has no d.directory_base.set to keep a multi-file torrent's folder with")
+	}
+	return "", "", httperr.Backend(fmt.Sprintf(
+		"cannot keep this torrent's folder, %q: its name cannot be read from rtorrent exactly or sent back as text, "+
+			"and it is not the torrent's own; nothing was changed", path.Base(rtorrent.Text(where["d.directory"]))))
 }
 
 // SetFilePriority sets a file's priority — 0 skip, 1 normal, 2 high — and

@@ -36,6 +36,7 @@ function torrent(over: Partial<Torrent>): Torrent {
     isActive: true,
     isPrivate: false,
     isMultiFile: false,
+    isMeta: false,
     hashing: 0,
     chunkSize: 0,
     chunksDone: 0,

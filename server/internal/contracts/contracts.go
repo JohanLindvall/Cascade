@@ -54,6 +54,7 @@ type Torrent struct {
 	IsActive          bool   `json:"isActive"`
 	IsPrivate         bool   `json:"isPrivate"`
 	IsMultiFile       bool   `json:"isMultiFile"`
+	IsMeta            bool   `json:"isMeta"` // a magnet still fetching its metadata (d.is_meta)
 	Hashing           int64  `json:"hashing"`
 	ChunkSize         int64  `json:"chunkSize"`
 	ChunksDone        int64  `json:"chunksDone"`
@@ -85,7 +86,8 @@ type TorrentFile struct {
 }
 
 type Peer struct {
-	ID        string  `json:"id"`
+	ID string `json:"id"`
+	// p.address as rtorrent answers it: an IPv6 address comes in brackets.
 	Address   string  `json:"address"`
 	Port      int64   `json:"port"`
 	Client    string  `json:"client"`

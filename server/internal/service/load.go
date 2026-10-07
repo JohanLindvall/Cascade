@@ -74,7 +74,12 @@ func (s *Service) loadTorrentFile(ctx context.Context, data []byte, parsed torre
 // load that did nothing. A fetched URL has no hash to ask about beforehand;
 // its wait for a new torrent fails instead, and its message says why it may.
 func (s *Service) refuseLoaded(ctx context.Context, hash string) error {
-	results, err := s.client.MulticallSettled(ctx, []rtorrent.Call{call("d.hash", hash), call("d.name", hash)})
+	// Named as the list names it: exactly, where rtorrent can send the bytes.
+	nameField := "d.name"
+	if exact := rtorrent.ExactFields[nameField]; s.caps.Has(exact) {
+		nameField = exact
+	}
+	results, err := s.client.MulticallSettled(ctx, []rtorrent.Call{call("d.hash", hash), call(nameField, hash)})
 	if err != nil {
 		return err
 	}
@@ -82,8 +87,8 @@ func (s *Service) refuseLoaded(ctx context.Context, hash string) error {
 		return nil
 	}
 	name := hash
-	if results[1].Err == nil && rtorrent.Text(results[1].Value) != "" {
-		name = rtorrent.Text(results[1].Value)
+	if text := rtorrent.TextOf(nameField, results[1].Value); results[1].Err == nil && text != "" {
+		name = text
 	}
 	return httperr.Newf(http.StatusConflict, `"%s" is already loaded`, name)
 }
@@ -260,11 +265,13 @@ func checkLoadOptions(options contracts.LoadOptions) error {
 }
 
 // loadCommands are the commands a load runs on the new torrent: its
-// directory, and its label URL-encoded (see quirk 11).
+// directory, without the trailing slashes d.directory.set would keep before a
+// multi-file torrent's name ("dir//X", see rtorrent/directory.go), and its
+// label URL-encoded (see quirk 11).
 func (s *Service) loadCommands(options contracts.LoadOptions) []any {
 	commands := []any{}
 	if options.Directory != "" {
-		commands = append(commands, `d.directory.set="`+escapeArg(options.Directory)+`"`)
+		commands = append(commands, `d.directory.set="`+escapeArg(rtorrent.TrimDirectory(options.Directory))+`"`)
 	}
 	if options.Label != "" && s.caps.Supports("labels") {
 		commands = append(commands, `d.custom1.set="`+escapeArg(encodeURIComponent(options.Label))+`"`)

@@ -36,10 +36,19 @@ export interface ConfirmOptions extends DialogOptions {
 
 export interface PromptOptions extends DialogOptions {
   label?: string;
+  /** Beneath the input, as its description. */
+  hint?: ReactNode;
   initial?: string;
   placeholder?: string;
   /** Offered as a datalist under the input. */
   suggestions?: string[];
+  /**
+   * What is wrong with the text as typed, or null. It is shown beneath the
+   * input in the hint's place and marks the input invalid, and the dialog
+   * waits to be answered until it is fixed: the text stays as typed, never
+   * coerced into something that would pass.
+   */
+  validate?: (text: string) => string | null;
 }
 
 export interface Dialogs {
@@ -197,6 +206,7 @@ function PromptDialog({
     input.current?.select();
   }, []);
   const suggest = !!options.suggestions?.length;
+  const problem = options.validate?.(value) ?? null;
   return (
     <Modal
       title={options.title}
@@ -208,7 +218,7 @@ function PromptDialog({
           <button className="btn" onClick={() => onSettle(null)}>
             Cancel
           </button>
-          <button className="btn primary" onClick={() => onSettle(value)}>
+          <button className="btn primary" disabled={problem !== null} onClick={() => onSettle(value)}>
             {options.confirmLabel ?? 'OK'}
           </button>
         </>
@@ -218,12 +228,12 @@ function PromptDialog({
         className="prompt-form"
         onSubmit={(event) => {
           event.preventDefault();
-          onSettle(value);
+          if (problem === null) onSettle(value);
         }}
       >
         {options.message && <p className="confirm-message">{options.message}</p>}
         <ItemList items={options.items} />
-        <Field label={options.label ?? options.title}>
+        <Field label={options.label ?? options.title} hint={options.hint} error={problem ?? undefined}>
           <input
             ref={input}
             className="input"

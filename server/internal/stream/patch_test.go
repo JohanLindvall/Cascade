@@ -286,7 +286,7 @@ func BenchmarkDiffListing(b *testing.B) {
 			torrents = append(torrents, fmt.Sprintf(`{"hash":"%040X","name":"torrent %d","status":"seeding","progress":1,`+
 				`"size":%d,"completed":%d,"left":0,"downRate":0,"upRate":%d,"downTotal":%d,"upTotal":%d,"ratio":1.25,`+
 				`"eta":0,"priority":2,"label":"","message":"","directory":"/downloads/t%d","basePath":"/downloads/t%d",`+
-				`"throttle":"","isOpen":true,"isActive":true,"isPrivate":false,"isMultiFile":false,"hashing":0,`+
+				`"throttle":"","isOpen":true,"isActive":true,"isPrivate":false,"isMultiFile":false,"isMeta":false,"hashing":0,`+
 				`"chunkSize":262144,"chunksDone":40,"chunksTotal":40,"peersConnected":0,"peersNotConnected":0,`+
 				`"peersComplete":0,"trackerCount":1,"addedAt":1790000000,"startedAt":1790000000,"finishedAt":1790000000,`+
 				`"createdAt":1780000000}`, i, i, i<<20, i<<20, rate, i<<20, i<<21, i, i))

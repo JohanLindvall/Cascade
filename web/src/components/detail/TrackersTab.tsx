@@ -2,13 +2,15 @@
 
 import { Fragment, memo, useState } from 'react';
 import { api } from '../../api';
-import { duration, relative, until } from '../../format';
+import { announcePeers, duration, relative, until } from '../../format';
 import { redactUrl } from '../../redact';
+import { sentence, unsendable } from '../../rtorrentText';
 import type { Tracker } from '../../types';
 import { useClock } from '../clock';
 import { IconPlus } from '../icons';
 import { useToast } from '../toast';
-import { Flags, MiniKv, NoteRow, RowToggle, useExpanded, yesNo, type Flag } from './parts';
+import { trackerFlags } from './flags';
+import { Flags, MiniKv, NoteRow, RowToggle, useExpanded, yesNo } from './parts';
 
 const COLUMNS = 10;
 
@@ -25,19 +27,10 @@ const TRACKER_EVENTS: Record<number, string> = {
 /** A tracker URL rtorrent can announce to (d.tracker.insert takes anything). */
 const TRACKER_URL = /^(https?|udp):\/\/\S+$/i;
 
-function trackerFlags(tracker: Tracker): Flag[] {
-  const flags: Flag[] = [];
-  if (tracker.busy) flags.push({ label: 'announcing', title: 'Request in flight' });
-  if (tracker.open) flags.push({ label: 'open', title: 'Connection open' });
-  if (!tracker.usable) flags.push({ label: 'unusable', title: 'Not currently usable', tone: 'warn' });
-  if (tracker.extra) flags.push({ label: 'extra', title: 'Added at runtime, not from the torrent' });
-  if (tracker.failures > 0 && tracker.successes === 0) {
-    flags.push({ label: 'failing', title: 'No successful announce yet', tone: 'bad' });
-  }
-  if (flags.length === 0 && tracker.successes > 0) {
-    flags.push({ label: 'ok', title: 'Announced successfully', tone: 'good' });
-  }
-  return flags;
+/** Why rtorrent cannot be sent a URL, as the server's 400 says it, or null. */
+function urlProblem(url: string): string | null {
+  const problem = unsendable(url);
+  return problem === null ? null : sentence(problem);
 }
 
 /** The torrent's trackers, each one switchable; a row expands to its announce history. Memoized, as FilesTab. */
@@ -134,11 +127,20 @@ export const TrackersTab = memo(function TrackersTab({
                           ['Next retry', tracker.failures > 0 ? until(tracker.nextFailure) : '—'],
                           ['Announce interval', duration(tracker.interval)],
                           ['Min interval', duration(tracker.minInterval)],
-                          ['Peers last announce', `${tracker.sumPeers} (${tracker.newPeers} new)`],
+                          // The row's own "200 +37": beside this key, the longest, retro's
+                          // narrowest column leaves 11 letters, and a value that wrapped would
+                          // make the block grow and shrink as the count changed.
+                          ['Peers last announce', announcePeers(tracker.sumPeers, tracker.newPeers)],
                           ['Scrapes', String(tracker.scrapes)],
                           ['Last scrape', relative(tracker.lastScrape)],
                           ['Scrapable', yesNo(tracker.canScrape)],
                           ['Usable', yesNo(tracker.usable)],
+                          // With Usable and the OK / fail column, the State cell's
+                          // tags in words: the cell may have room for only the first
+                          // of them, and a touch screen shows no title.
+                          ['Announcing', yesNo(tracker.busy)],
+                          ['Connection open', yesNo(tracker.open)],
+                          ['Added at runtime', yesNo(tracker.extra)],
                         ]}
                       />
                     </td>
@@ -161,7 +163,9 @@ function AddTracker({ hash, onAdded }: { hash: string; onAdded: () => void }) {
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-  const valid = TRACKER_URL.test(url.trim());
+  // Text rtorrent cannot be sent is refused by the server too, named.
+  const problem = urlProblem(url.trim());
+  const valid = TRACKER_URL.test(url.trim()) && problem === null;
 
   const add = async () => {
     if (!valid || busy) return;
@@ -191,6 +195,7 @@ function AddTracker({ hash, onAdded }: { hash: string; onAdded: () => void }) {
         placeholder="Add a tracker — http(s):// or udp:// announce URL"
         aria-label="Tracker announce URL"
         aria-invalid={(url.trim() !== '' && !valid) || undefined}
+        title={problem ?? undefined}
         value={url}
         disabled={busy}
         onChange={(event) => setUrl(event.target.value)}

@@ -3,16 +3,21 @@
 /**
  * The global settings as the server's table has them
  * (server/internal/rtorrent/settings.go), resolved against the release the
- * demo presents, 0.16.24: each key's getter and setter there, and how its
+ * demo presents, 0.16.25: each key's getter and setter there, and how its
  * value is checked. A key with no getter is not reported, one with no setter
  * is not supported, and the dialog greys it out as it does against a real
  * install. The REST settings routes and the console's commands both go
  * through it, so a value set in one reads back in the other.
  */
 import type { GlobalSettings } from '../contracts.ts';
-import { bool, int, text } from './validate.ts';
+import { MAX_RATE, appliedRate } from '../settings.ts';
+import { HttpError, bool, int, rtorrentString } from './validate.ts';
 
-export type SettingKind = 'uint' | 'int' | 'bool' | 'string' | 'flags';
+/**
+ * As the server's kinds: 'rate' is a global rate rtorrent keeps in whole KiB/s,
+ * 'port' a 16-bit port, 'proxy' the global proxy's URL, checked by proxyHostRefused.
+ */
+export type SettingKind = 'uint' | 'int' | 'rate' | 'port' | 'bool' | 'string' | 'flags' | 'proxy';
 export type SettingKey = keyof GlobalSettings;
 type SettingValue = number | boolean | string;
 
@@ -30,8 +35,8 @@ const both = (key: SettingKey, command: string, kind: SettingKind) => spec(key, 
 
 /** In the table's order, which is also the order a patch is checked and applied in. */
 export const SETTINGS: readonly SettingSpec[] = [
-  both('downloadRate', 'throttle.global_down.max_rate', 'uint'),
-  both('uploadRate', 'throttle.global_up.max_rate', 'uint'),
+  both('downloadRate', 'throttle.global_down.max_rate', 'rate'),
+  both('uploadRate', 'throttle.global_up.max_rate', 'rate'),
   both('maxUploads', 'throttle.max_uploads', 'uint'),
   both('minUploads', 'throttle.min_uploads', 'uint'),
   both('maxDownloads', 'throttle.max_downloads', 'uint'),
@@ -44,7 +49,9 @@ export const SETTINGS: readonly SettingSpec[] = [
   both('minPeers', 'throttle.min_peers.normal', 'uint'),
   both('maxPeersSeed', 'throttle.max_peers.seed', 'int'),
   both('minPeersSeed', 'throttle.min_peers.seed', 'int'),
-  both('maxOpenFiles', 'network.max_open_files', 'uint'),
+  // The setter keeps its name, but from 0.16.15 it only warns (the console
+  // keeps it so) and the server's probe drops it, so the dialog greys this out.
+  spec('maxOpenFiles', 'network.max_open_files', null, 'uint'),
   both('maxOpenSockets', 'network.max_open_sockets', 'uint'),
   // 0.16 dropped network.http.max_open; the table reads its successor, whose
   // .set only warns (the console keeps it so), so the dialog greys this out.
@@ -62,15 +69,22 @@ export const SETTINGS: readonly SettingSpec[] = [
   spec('portOpen', null, null, 'bool'),
   // Write-only, as on the server: rtorrent has no getter that round-trips them.
   spec('dhtMode', null, 'dht.mode.set', 'string'),
-  both('dhtPort', 'dht.port', 'uint'),
-  both('dhtOverridePort', 'dht.override_port', 'uint'),
+  // From 0.16.1 dht.port.set is a stub (the console keeps it so) and dht.port
+  // the port the running DHT has, which the session reports (Session.dhtPort).
+  spec('dhtPort', 'dht.port', null, 'port'),
+  both('dhtOverridePort', 'dht.override_port', 'port'),
   both('pex', 'protocol.pex', 'bool'),
-  both('udpTrackers', 'trackers.use_udp', 'bool'),
+  // Always on from 0.16.12, whose setter is a stub the console keeps.
+  spec('udpTrackers', 'trackers.use_udp', null, 'bool'),
   both('trackersNumwant', 'trackers.numwant', 'int'),
   spec('encryption', null, 'protocol.encryption.set', 'flags'),
   both('preallocate', 'system.file.allocate', 'bool'),
   both('checkHashOnCompletion', 'pieces.hash.on_completion', 'bool'),
   both('adviseRandomHashing', 'system.files.advise_random.hashing', 'bool'),
+  // The torrent-name switches of 0.16.22 and 0.16.25. The demo names no
+  // torrent with a slash or a legacy encoding, so they change no name here.
+  both('useSanitizedName', 'system.torrent_name.use_sanitized', 'bool'),
+  both('allowLegacyUtf8', 'system.file_name.allow_legacy_utf8', 'bool'),
   both('directory', 'directory.default', 'string'),
   // A running rtorrent cannot move its session: reported, never set.
   spec('sessionDirectory', 'session.path', null, 'string'),
@@ -80,7 +94,7 @@ export const SETTINGS: readonly SettingSpec[] = [
   both('localAddress', 'network.local_address', 'string'),
   both('proxyAddress', 'network.http.proxy_address', 'string'),
   both('proxyHttp', 'network.proxy.http', 'string'),
-  both('proxyGlobal', 'network.proxy.global', 'string'),
+  both('proxyGlobal', 'network.proxy.global', 'proxy'),
   both('httpCapath', 'network.http.capath', 'string'),
   both('httpCacert', 'network.http.cacert', 'string'),
   both('sslVerifyPeer', 'network.http.ssl_verify_peer', 'bool'),
@@ -92,7 +106,7 @@ export const SETTINGS: readonly SettingSpec[] = [
   both('blockOutgoing', 'network.block.outgoing', 'bool'),
 ];
 
-/** What a fresh session reports: 0.16.24's own defaults, with an upload limit set. */
+/** What a fresh session reports: 0.16.25's own defaults, with an upload limit set. */
 export function defaultSettings(): GlobalSettings {
   return {
     downloadRate: 0,
@@ -123,7 +137,8 @@ export function defaultSettings(): GlobalSettings {
     portRandom: false,
     portOpen: true,
     dhtMode: 'auto',
-    dhtPort: 6881,
+    // Not kept: dht.port reads the running DHT's (Session.readSetting).
+    dhtPort: 0,
     dhtOverridePort: 0,
     pex: true,
     udpTrackers: true,
@@ -132,6 +147,8 @@ export function defaultSettings(): GlobalSettings {
     preallocate: false,
     checkHashOnCompletion: true,
     adviseRandomHashing: false,
+    useSanitizedName: true,
+    allowLegacyUtf8: true,
     directory: '/downloads',
     sessionDirectory: '/config/session/',
     bindAddress: '',
@@ -160,23 +177,51 @@ export function coerce(kind: SettingKind, value: unknown, key: string): SettingV
       return int(value, key, 0, Number.MAX_SAFE_INTEGER);
     case 'int':
       return int(value, key, -1, Number.MAX_SAFE_INTEGER);
+    case 'rate':
+      return appliedRate(int(value, key, 0, MAX_RATE));
+    case 'port':
+      return int(value, key, 0, 65_535);
     case 'bool':
       return bool(value, key);
     case 'flags': {
       // rtorrent takes one argument per flag, which the setting keeps joined.
-      const flags = text(value, key, true).split(',').map((flag) => flag.trim()).filter(Boolean);
+      const flags = rtorrentString(value, key, true).split(',').map((flag) => flag.trim()).filter(Boolean);
       return flags.length === 0 ? 'none' : flags.join(',');
     }
     case 'string':
-      return text(value, key, true);
+      return rtorrentString(value, key, true);
+    case 'proxy': {
+      const url = rtorrentString(value, key, true);
+      if (proxyHostRefused(url)) {
+        throw new HttpError(400, `"${key}" must give the proxy by its IPv4 address: rtorrent crashes on a host name or an IPv6 address there`);
+      }
+      return url;
+    }
   }
+}
+
+/**
+ * CheckProxyHost in server/internal/rtorrent/settings.go: a global proxy whose
+ * host is not an IPv4 address. network.proxy.global.set looks the host up as
+ * a numeric address and, finding none, goes on with no address and crashes —
+ * on a host name, and on an IPv6 address, which curl hands over in its
+ * brackets (0.16.24 and 0.16.25, measured). The server refuses those before
+ * they are sent; anything else wrong with a URL is rtorrent's to refuse.
+ */
+function proxyHostRefused(url: string): boolean {
+  const match = /^[A-Za-z][A-Za-z0-9+.-]*:\/*([^/?#]*)/.exec(url);
+  if (!match) return false;
+  let host = match[1].slice(match[1].lastIndexOf('@') + 1);
+  const colon = host.lastIndexOf(':');
+  if (colon >= 0 && !host.endsWith(']')) host = host.slice(0, colon);
+  return host !== '' && (host.includes(':') || !isIPv4(host));
 }
 
 const MiB = 1024 * 1024;
 const DHT_MODES = ['disable', 'off', 'auto', 'on'];
 const ENCRYPTION_MODES = ['deny', 'allow', 'prefer', 'require'];
 const HTTP_PROXY_SCHEMES = ['http', 'https', 'socks4', 'socks4a', 'socks5', 'socks5h'];
-/** The demo has no resolver: only what a container's /etc/hosts answers, in the order 0.16.24 got it. */
+/** The demo has no resolver: only what a container's /etc/hosts answers, in the order 0.16.24 and 0.16.25 got it. */
 const HOSTS: Record<string, string[]> = { localhost: ['::1', '127.0.0.1'] };
 
 /**
@@ -313,8 +358,10 @@ function httpProxyRefusal(value: string): string | null {
 
 /**
  * network.proxy.global.set, in ProxyManager::set_proxy_url's order. "" clears
- * it. 0.16.24 dies on a host that is not an address literal instead of
- * refusing it; the demo answers with the refusal the code means to give.
+ * it. 0.16.24 and 0.16.25 die on a host that is not an IPv4 address — a name,
+ * or an IPv6 address, which curl hands over in its brackets — instead of
+ * refusing it. The settings route never sends one (proxyHostRefused); the
+ * console answers with the refusal the code means to give.
  */
 function globalProxyRefusal(value: string): string | null {
   if (value === '') return null;
@@ -323,13 +370,12 @@ function globalProxyRefusal(value: string): string | null {
   if (url.host === '') return 'Proxy address must include a host.';
   if (url.port === 0) return 'Proxy address must include a port.';
   if (url.rest !== '' && url.rest !== '/') return 'Proxy address must not include a path, query, or fragment.';
-  const host = url.host.replace(/^\[(.*)\]$/, '$1');
-  if (!isIPv4(host) && ipv6(host) === null) return `Proxy address numeric lookup failed: ${url.host}`;
+  if (!isIPv4(url.host)) return `Proxy address numeric lookup failed: ${url.host}`;
   if (url.scheme === 'http') {
     return url.user || url.password ? "Proxy address for 'http://' must not include a user or password." : null;
   }
   if (url.scheme === 'socks5' || url.scheme === 'socks5h') {
-    // As 0.16.24 has it: a user with a password is refused, under the other message.
+    // As 0.16.24 and 0.16.25 have it: a user with a password is refused, under the other message.
     if (url.user && url.password) return `Proxy address for '${url.scheme}://' must not include a password without a user.`;
     return null;
   }
@@ -338,9 +384,9 @@ function globalProxyRefusal(value: string): string | null {
 
 /**
  * What rtorrent itself refuses of a value the checks above let through, in
- * its own words (taken from 0.16.24 and its sources), or null for one it
- * takes. The settings route reports it as the server reports a faulting
- * setter: a 502 naming the command.
+ * its own words (taken from 0.16.25, which words them as 0.16.24 did, and
+ * its sources), or null for one it takes. The settings route reports it as
+ * the server reports a faulting setter: a 502 naming the command.
  */
 export function refusal(key: SettingKey, value: SettingValue): string | null {
   const n = Number(value);
@@ -368,6 +414,13 @@ export function refusal(key: SettingKey, value: SettingValue): string | null {
     case 'xmlrpcSizeLimit':
       if (n > 64 * MiB) return 'XMLRPC size limit cannot exceed the SCGI content size limit.';
       return n < 1024 ? 'XMLRPC size limit is too small to hold a request.' : null;
+    // 0.16.25's range checks, of what reaches them from the console: the
+    // settings route holds both inside them already.
+    case 'downloadRate':
+    case 'uploadRate':
+      return n < 0 || n > 4_294_967_294 ? 'Throttle rate must be between 0 and 4294967294.' : null;
+    case 'dhtOverridePort':
+      return n < 0 || n > 65_535 ? 'Invalid DHT override port number.' : null;
     case 'bindAddress':
     case 'bindAddressV4':
     case 'bindAddressV6':
@@ -393,6 +446,9 @@ export function applySetting(settings: GlobalSettings, key: SettingKey, value: S
   if (key === 'portRange') {
     const [first, last] = portRange(String(value)) as [number, number];
     settings.portRange = `${first}-${last}`;
+  } else if (key === 'downloadRate' || key === 'uploadRate') {
+    // Kept in whole KiB/s, the fraction dropped: the settings route rounds up first.
+    settings[key] = Math.floor(Number(value) / 1024) * 1024;
   } else if (key === 'proxyAddress' || key === 'proxyHttp') {
     // 0.16 made network.http.proxy_address an alias of network.proxy.http: one value.
     settings.proxyAddress = settings.proxyHttp = String(value);

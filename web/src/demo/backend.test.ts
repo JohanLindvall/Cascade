@@ -4,11 +4,13 @@
  * The simulated server route by route: the shapes the UI reads, the checks the
  * Go server makes and the words it refuses with, and rtorrent's own faults
  * relayed as the server relays them — a 502 with the fault, or a bulk route's
- * per-hash error. The messages here were taken from a running 0.16.24.
+ * per-hash error. The messages here were taken from a running 0.16.25, which
+ * words them as 0.16.24 did but for the value checks it added.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LogScopeChange, StateResponse, Torrent, TorrentFile, Tracker, UploadResult } from '../contracts.ts';
+import { FETCHING_METADATA, dataFolder, sharedDataFolder } from '../dataFolder.ts';
 import { DEFAULT_PREFERENCES } from '../preferences.ts';
 import { DEFAULT_POLL_MS, DemoServer, type DemoRequest, type DemoResponse, type UploadPart } from './backend.ts';
 import { ManualClock, torrentFile } from './fixtures.ts';
@@ -20,7 +22,7 @@ function setup() {
   const clock = new ManualClock(START);
   const saved: unknown[] = [];
   const server = new DemoServer({
-    now: () => clock.now, timers: clock, seed: 5, version: '0.16.24', onPreferences: (prefs) => saved.push(prefs),
+    now: () => clock.now, timers: clock, seed: 5, version: '0.16.25', onPreferences: (prefs) => saved.push(prefs),
   });
   const call = (method: string, path: string, body?: unknown, query = ''): DemoResponse => server.handle({
     method,
@@ -59,11 +61,13 @@ test('the state: the real contract, the demo policy, the release from the Docker
   assert.deepEqual(state.status.policy, { rawRpc: true, deleteData: true });
   assert.equal(state.status.statePollMs, DEFAULT_POLL_MS);
   assert.equal(state.status.statePollDefaultMs, DEFAULT_POLL_MS);
-  assert.equal(state.status.backend.clientVersion, '0.16.24');
-  assert.equal(state.status.backend.libraryVersion, '0.16.24');
-  // What a real 0.16.24 has no working setter for, so the dialog greys out or hides the same controls.
+  assert.equal(state.status.backend.clientVersion, '0.16.25');
+  assert.equal(state.status.backend.libraryVersion, '0.16.25');
+  // What a real 0.16.25 has no working setter for, so the dialog greys out or hides the same controls.
   const { supports } = state.status.backend;
-  assert.deepEqual(Object.keys(supports).filter((key) => !supports[key]).sort(), ['maxHttpOpen', 'portOpen', 'sessionDirectory']);
+  assert.deepEqual(Object.keys(supports).filter((key) => !supports[key]).sort(), [
+    'dhtPort', 'maxHttpOpen', 'maxOpenFiles', 'portOpen', 'sessionDirectory', 'udpTrackers',
+  ]);
   assert.equal(state.status.backend.methodCount, ok<{ methods: string[] }>('GET', 'rpc/methods').methods.length);
   assert.equal(state.status.downloadDir, '/downloads');
   assert.equal(state.game.enabled, true);
@@ -191,6 +195,159 @@ test('a torrent\'s fields: priority, label, throttle group, directory, slots, fi
   assert.equal(named('Sintel').trackerCount, count + 1);
 });
 
+test('a directory change takes the directory the data goes into, as an add does', () => {
+  const { ok, named, torrents } = setup();
+  const rpc = (method: string, ...params: unknown[]) => ok('POST', 'rpc', { method, params });
+  const bunny = named('Big Buck Bunny');
+  const ubuntu = named('ubuntu');
+  const byHash = new Map(torrents().map((t) => [t.hash, t]));
+  // A multi-file torrent's folder is inside it, so the two share one.
+  assert.equal(bunny.directory, '/downloads/Big Buck Bunny');
+  assert.equal(sharedDataFolder(byHash, [bunny.hash, ubuntu.hash]), '/downloads');
+
+  // What the prompt offers, sent back as it is: nothing changes, nothing even stops.
+  for (const before of [bunny, ubuntu]) {
+    ok('PATCH', `torrents/${before.hash}`, { directory: dataFolder(before) });
+    const after = named(before.name);
+    assert.deepEqual([after.directory, after.status], [before.directory, before.status]);
+  }
+
+  // A new one: the file goes into it, the multi-file torrent's folder inside it.
+  for (const t of [bunny, ubuntu]) ok('PATCH', `torrents/${t.hash}`, { directory: '/media/new/' });
+  assert.equal(named('ubuntu').directory, '/media/new');
+  const moved = named('Big Buck Bunny');
+  assert.deepEqual([moved.directory, moved.status], ['/media/new/Big Buck Bunny', 'stopped']);
+  // libtorrent froze the paths when it last opened the torrent; they move with the next open.
+  assert.equal(moved.basePath, '/downloads/Big Buck Bunny');
+  ok('POST', `torrents/${bunny.hash}/action/start`);
+  assert.equal(named('Big Buck Bunny').basePath, '/media/new/Big Buck Bunny');
+
+  // A folder named otherwise, as d.directory_base.set leaves one, keeps its name.
+  const cosmos = named('Cosmos');
+  rpc('d.directory_base.set', cosmos.hash, '/downloads/Cosmos/');
+  assert.equal(named('Cosmos').directory, '/downloads/Cosmos');
+  ok('PATCH', `torrents/${cosmos.hash}`, { directory: dataFolder(named('Cosmos')) });
+  assert.equal(named('Cosmos').directory, '/downloads/Cosmos');
+  ok('PATCH', `torrents/${cosmos.hash}`, { directory: '/media/films' });
+  assert.equal(named('Cosmos').directory, '/media/films/Cosmos');
+  ok('POST', `torrents/${cosmos.hash}/action/start`);
+  assert.deepEqual(rpc('d.base_filename', cosmos.hash), { ok: true, result: 'Cosmos' });
+  ok('POST', `torrents/${cosmos.hash}/action/stop`);
+  // d.directory.set names it after the torrent again, inside what it is given:
+  // given d.directory, the torrent's own folder, it nests.
+  rpc('d.directory.set', cosmos.hash, named('Cosmos').directory);
+  assert.equal(named('Cosmos').directory, '/media/films/Cosmos/Cosmos Laundromat (2015)');
+});
+
+test('a directory change reads the directory above a folder without trailing slashes, as the server does', () => {
+  const { ok, named } = setup();
+  const rpc = (method: string, ...params: unknown[]) => ok('POST', 'rpc', { method, params });
+  // Typed with a doubled trailing slash, the directory is sent without it.
+  const bunny = named('Big Buck Bunny');
+  ok('PATCH', `torrents/${bunny.hash}`, { directory: '/media/new//' });
+  assert.equal(named('Big Buck Bunny').directory, '/media/new/Big Buck Bunny');
+  // A root set with one leaves its folder in the directory without it: what
+  // the prompt offers changes nothing, and a running torrent keeps running.
+  const cosmos = named('Cosmos');
+  ok('POST', `torrents/${cosmos.hash}/action/stop`);
+  rpc('d.directory_base.set', cosmos.hash, '/downloads//Cosmos');
+  ok('POST', `torrents/${cosmos.hash}/action/start`);
+  const before = named('Cosmos');
+  assert.notEqual(before.status, 'stopped');
+  assert.equal(dataFolder(before), '/downloads');
+  ok('PATCH', `torrents/${cosmos.hash}`, { directory: dataFolder(before) });
+  const after = named('Cosmos');
+  assert.deepEqual([after.directory, after.status], [before.directory, before.status]);
+});
+
+const CLAPPER = '🎬';
+const BEYOND = `contains "${CLAPPER}" (U+1F3AC): rtorrent's XML-RPC layer takes no character beyond U+FFFF, such as an emoji`;
+const ROOT = '"directory" cannot be "/": rtorrent strips a directory\'s trailing slashes and would put a single file in ".", the directory it runs in';
+
+test('a directory change refuses what rtorrent cannot take before the torrent stops: an emoji, the root', () => {
+  const { ok, refused, named } = setup();
+  const before = named('ubuntu');
+  assert.equal(before.status, 'seeding');
+  refused('PATCH', `torrents/${before.hash}`, { priority: 0, directory: `/media/films ${CLAPPER}` }, 400, `"directory" ${BEYOND}`);
+  refused('PATCH', `torrents/${before.hash}`, { directory: '/' }, 400, ROOT);
+  refused('PATCH', `torrents/${before.hash}`, { directory: ' // ' }, 400, ROOT);
+  refused('PATCH', `torrents/${before.hash}`, { directory: '/media\r\nfilms' }, 400, '"directory" contains a carriage return, which XML reads as a line feed');
+  refused('PATCH', `torrents/${before.hash}`, { throttle: `slow ${CLAPPER}` }, 400, `"throttle" ${BEYOND}`);
+  const after = named('ubuntu');
+  assert.deepEqual([after.status, after.directory, after.priority], [before.status, before.directory, before.priority]);
+  // A label goes URL-encoded, whatever it holds.
+  ok('PATCH', `torrents/${before.hash}`, { label: `linux ${CLAPPER}` });
+  assert.equal(named('ubuntu').label, `linux ${CLAPPER}`);
+});
+
+test('a magnet still fetching its metadata keeps the directory it was added with: refused, running on', () => {
+  const { ok, refused, named, clock } = setup();
+  ok('POST', 'torrents/url', { url: 'magnet:?xt=urn:btih:89abcdef0123456789abcdef0123456789abcdef&dn=open-movie.mkv', directory: '/downloads/fromadd' });
+  const meta = named('89ABCDEF0123456789ABCDEF0123456789ABCDEF.meta');
+  assert.deepEqual([meta.isMeta, meta.status], [true, 'downloading']);
+  refused('PATCH', `torrents/${meta.hash}`, { directory: '/media' }, 409, FETCHING_METADATA);
+  assert.deepEqual([named(meta.name).status, named(meta.name).directory], [meta.status, meta.directory]);
+  // Refused before the fields ahead of it change: a 409 must not follow a change, which no page would be told of.
+  refused('PATCH', `torrents/${meta.hash}`, { priority: 0, label: 'changed', throttle: 'slow', directory: '/media' }, 409,
+    FETCHING_METADATA);
+  const still = named(meta.name);
+  assert.deepEqual([still.priority, still.label, still.throttle, still.status, still.directory],
+    [meta.priority, meta.label, meta.throttle, meta.status, meta.directory]);
+  assert.notEqual(meta.priority, 0);
+  // Once the metadata is in, rtorrent has loaded the torrent with the add's directory, and it moves.
+  clock.advance(8000);
+  const fetched = named('open-movie.mkv');
+  assert.deepEqual([fetched.hash, fetched.isMeta, fetched.directory], [meta.hash, false, '/downloads/fromadd']);
+  ok('PATCH', `torrents/${fetched.hash}`, { directory: '/media' });
+  assert.deepEqual([named('open-movie.mkv').directory, named('open-movie.mkv').status], ['/media', 'stopped']);
+});
+
+test('an add refuses a directory rtorrent cannot take for the whole batch, a link for itself alone', () => {
+  const { ok, call, refused, upload, torrents, named } = setup();
+  const count = torrents().length;
+  const file = { name: 'torrents', filename: 'held.torrent', data: torrentFile({ name: 'held.iso', length: 20_000 }) };
+  const magnet = 'magnet:?xt=urn:btih:1123456789abcdef0123456789abcdef01234567';
+  for (const [parts, error] of [
+    [[file, { name: 'directory', value: `/downloads/${CLAPPER}` }], `"directory" ${BEYOND}`],
+    [[file, { name: 'directory', value: '/' }], ROOT],
+  ] as Array<[UploadPart[], string]>) {
+    const answer = upload(parts);
+    assert.deepEqual([answer.status, answer.body], [400, { error }]);
+  }
+  assert.equal(torrents().length, count, 'a refused batch added something');
+  refused('POST', 'torrents/url', { url: `${magnet}&dn=${CLAPPER}` }, 400, `"url" ${BEYOND}`);
+  refused('POST', 'torrents/url', { url: magnet, directory: '//' }, 400, ROOT);
+  const hash = named('ubuntu').hash;
+  refused('POST', `torrents/${hash}/trackers`, { url: `udp://tracker.example.org:6969/${CLAPPER}` }, 400, `"url" ${BEYOND}`);
+  const view = call('GET', 'torrents', undefined, `view=${encodeURIComponent(CLAPPER)}`);
+  assert.deepEqual([view.status, view.body], [400, { error: `"view" ${BEYOND}` }]);
+  assert.equal(torrents().length, count);
+  // No directory, or an empty one, is rtorrent's default.
+  const added = upload([file, { name: 'directory', value: '' }, { name: 'start', value: '0' }]);
+  assert.deepEqual((added.body as UploadResult).errors, []);
+  assert.equal(named('held.iso').directory, '/downloads');
+  ok('POST', 'torrents/url', { url: `${magnet}&dn=quiet.iso`, directory: '  ', start: false });
+  assert.equal(named('1123456789ABCDEF0123456789ABCDEF01234567.meta').directory, '/config/session');
+  // A link concerns itself alone: one rtorrent cannot be sent fails as its own item, and the rest are added.
+  const beside = { name: 'torrents', filename: 'beside.torrent', data: torrentFile({ name: 'beside.iso', length: 30_000 }) };
+  const clapped = `magnet:?xt=urn:btih:2123456789abcdef0123456789abcdef01234567&dn=films ${CLAPPER}`;
+  const fine = 'magnet:?xt=urn:btih:3123456789abcdef0123456789abcdef01234567&dn=fine.iso';
+  const mixed = upload([beside, { name: 'urls', value: `${clapped}\n\n${fine}` }, { name: 'start', value: '0' }]);
+  assert.deepEqual([mixed.status, mixed.body],
+    [200, { added: 2, errors: [`${clapped}: "urls" ${BEYOND}`], failedFiles: [], failedUrls: [0] }]);
+  assert.equal(named('beside.iso').status, 'stopped');
+  assert.equal(named('3123456789ABCDEF0123456789ABCDEF01234567.meta').isMeta, true);
+  assert.ok(!torrents().some((t) => t.hash === '2123456789ABCDEF0123456789ABCDEF01234567'), 'the link refused was added');
+});
+
+test('a setting\'s text rtorrent cannot take is refused by name, and the patch with it', () => {
+  const { ok, refused } = setup();
+  const before = ok<Record<string, unknown>>('GET', 'settings');
+  refused('POST', 'settings', { pex: !before.pex, directory: `/downloads/${CLAPPER}` }, 400, `"directory" ${BEYOND}`);
+  refused('POST', 'settings', { encryption: `allow_incoming,${CLAPPER}` }, 400, `"encryption" ${BEYOND}`);
+  assert.deepEqual(ok('GET', 'settings'), before);
+});
+
 test('removing: the data goes only from inside the data roots, refused before the torrent is erased', () => {
   const { ok, named, torrents } = setup();
   const before = ok<StateResponse>('GET', 'state');
@@ -291,7 +448,7 @@ test('settings: every readable one reported, a bad value refused by name, a good
   assert.equal(settings.sessionDirectory, '/config/session/');
   assert.ok(!('portOpen' in settings), '0.16 has no network.port_open');
   assert.equal(settings.maxHttpOpen, 32);
-  refused('POST', 'settings', { maxPeers: 10, downloadRate: -5 }, 400, '"downloadRate" must be a whole number from 0 to 9007199254740991');
+  refused('POST', 'settings', { maxPeers: 10, downloadRate: -5 }, 400, '"downloadRate" must be a whole number from 0 to 4294966272');
   assert.equal(ok<Record<string, unknown>>('GET', 'settings').maxPeers, 200, 'a refused patch applied part of itself');
   const updated = ok<Record<string, unknown>>('POST', 'settings', { downloadRate: 1048576, pex: 'off', encryption: 'require, require_RC4', sessionDirectory: '/x' });
   assert.equal(updated.downloadRate, 1048576);
@@ -302,14 +459,69 @@ test('settings: every readable one reported, a bad value refused by name, a good
   // What rtorrent refuses itself is its fault, relayed with the command that raised it.
   refused('POST', 'settings', { encryption: 'bogus' }, 502, "protocol.encryption.set: Invalid encryption option: 'bogus'");
   refused('POST', 'settings', { portRange: '6881' }, 502, 'network.listen.port.range.set: Invalid port_range argument.');
-  // A key the release has no working setter for is skipped, as the server's table skips it.
-  ok('POST', 'settings', { maxHttpOpen: 40, portOpen: false });
+  // A key the release has no working setter for is skipped, as the server's table skips it —
+  // the open-file limit, the DHT port and the UDP tracker switch included, whose setters
+  // 0.16.15, 0.16.1 and 0.16.12 still list but ignore.
+  ok('POST', 'settings', { maxHttpOpen: 40, portOpen: false, maxOpenFiles: 1234, dhtPort: 7000, udpTrackers: false });
   const after = ok<Record<string, unknown>>('GET', 'settings');
   assert.equal(after.maxHttpOpen, 32);
+  assert.equal(after.maxOpenFiles, 128);
+  assert.equal(after.dhtPort, 50_000, 'the running DHT has the listening port');
+  assert.equal(after.udpTrackers, true);
   assert.ok(!('portOpen' in after));
 });
 
-test('settings: what 0.16.24 refuses, in its words, and what it takes, as it reads it back', () => {
+test('settings: the torrent-name switches of 0.16.22 and 0.16.25, on by default, set alike from the dialog and the console', () => {
+  const { ok, call } = setup();
+  const rpc = (method: string, params: unknown[]) => ok<{ ok: boolean; result?: unknown; fault?: { code: number; message: string } }>(
+    'POST', 'rpc', { method, params });
+  const { supports } = ok<StateResponse>('GET', 'state').status.backend;
+  assert.equal(supports.useSanitizedName, true);
+  assert.equal(supports.allowLegacyUtf8, true);
+  const settings = ok<Record<string, unknown>>('GET', 'settings');
+  assert.deepEqual([settings.useSanitizedName, settings.allowLegacyUtf8], [true, true]);
+  const updated = ok<Record<string, unknown>>('POST', 'settings', { useSanitizedName: false, allowLegacyUtf8: 'off' });
+  assert.deepEqual([updated.useSanitizedName, updated.allowLegacyUtf8], [false, false]);
+  assert.equal(call('POST', 'settings', { allowLegacyUtf8: 2 }).status, 400);
+  assert.deepEqual(rpc('system.file_name.allow_legacy_utf8', ['']), { ok: true, result: 0 });
+  // rtorrent keeps any value but 0 as on.
+  assert.deepEqual(rpc('system.file_name.allow_legacy_utf8.set', ['', 2]), { ok: true, result: 0 });
+  assert.deepEqual(rpc('system.file_name.allow_legacy_utf8', ['']), { ok: true, result: 1 });
+  assert.equal(ok<Record<string, unknown>>('GET', 'settings').allowLegacyUtf8, true);
+  // In 0.16.25's words: a value that is not one, one with a sign 0.16.25 no longer reads, and none at all.
+  assert.deepEqual(rpc('system.file_name.allow_legacy_utf8.set', ['', 'abc']).fault, { code: -503, message: 'Not a value.' });
+  assert.deepEqual(rpc('system.torrent_name.use_sanitized.set', ['', '+1']).fault, { code: -503, message: 'Not a value.' });
+  assert.deepEqual(rpc('system.torrent_name.use_sanitized.set', ['']).fault, {
+    code: -503, message: 'Wrong object type: expected: value actual: none',
+  });
+  assert.deepEqual(rpc('system.torrent_name.use_sanitized', ['']), { ok: true, result: 0 });
+});
+
+test('settings: a global rate is kept in whole KiB/s under 4 GiB/s and a DHT port in 16 bits, as 0.16.25 checks them', () => {
+  const { ok, refused } = setup();
+  const rpc = (method: string, params: unknown[]) => ok<{ ok: boolean; result?: unknown; fault?: { code: number; message: string } }>(
+    'POST', 'rpc', { method, params });
+  const setting = (key: string) => ok<Record<string, unknown>>('GET', 'settings')[key];
+  // Rounded up to whole KiB/s, where rtorrent would drop 800 B/s to 0: unlimited.
+  assert.equal(ok<Record<string, unknown>>('POST', 'settings', { downloadRate: 800 }).downloadRate, 1024);
+  assert.equal(ok<Record<string, unknown>>('POST', 'settings', { uploadRate: 1025 }).uploadRate, 2048);
+  assert.equal(ok<Record<string, unknown>>('POST', 'settings', { downloadRate: 4_294_966_272 }).downloadRate, 4_294_966_272);
+  refused('POST', 'settings', { downloadRate: 4_294_966_273 }, 400, '"downloadRate" must be a whole number from 0 to 4294966272');
+  refused('POST', 'settings', { dhtOverridePort: 65_536 }, 400, '"dhtOverridePort" must be a whole number from 0 to 65535');
+  // The console reaches rtorrent's own checks and its truncation to whole KiB/s.
+  assert.deepEqual(rpc('throttle.global_down.max_rate.set', ['', 4_294_967_295]).fault, {
+    code: -503, message: 'Throttle rate must be between 0 and 4294967294.',
+  });
+  assert.deepEqual(rpc('throttle.global_down.max_rate.set', ['', 4_294_967_294]), { ok: true, result: 0 });
+  assert.deepEqual(rpc('throttle.global_down.max_rate', ['']), { ok: true, result: 4_294_966_272 });
+  assert.deepEqual(rpc('throttle.global_up.max_rate.set', ['', 1000]), { ok: true, result: 0 });
+  assert.equal(setting('uploadRate'), 0, 'rtorrent drops a fraction of a KiB, down to unlimited');
+  assert.deepEqual(rpc('dht.override_port.set', ['', 65_536]).fault, { code: -503, message: 'Invalid DHT override port number.' });
+  assert.deepEqual(rpc('dht.override_port.set', ['', 6882]), { ok: true, result: 0 });
+  assert.equal(setting('dhtOverridePort'), 6882);
+});
+
+test('settings: what 0.16.25 refuses, in its words, and what it takes, as it reads it back', () => {
   const { ok, refused } = setup();
   const before = ok<Record<string, unknown>>('GET', 'settings');
   const cases: Array<[Record<string, unknown>, string]> = [
@@ -337,11 +549,18 @@ test('settings: what 0.16.24 refuses, in its words, and what it takes, as it rea
     [{ proxyGlobal: 'bogus' }, 'network.proxy.global.set: Proxy address must include a scheme.'],
     [{ proxyGlobal: 'http://10.0.0.1' }, 'network.proxy.global.set: Proxy address must include a port.'],
     [{ proxyGlobal: 'ftp://10.0.0.1:21' }, 'network.proxy.global.set: Unsupported proxy scheme: ftp'],
-    // 0.16.24 dies on a host name here; the demo gives the refusal its code means.
-    [{ proxyGlobal: 'http://proxy.example.org:3128' }, 'network.proxy.global.set: Proxy address numeric lookup failed: proxy.example.org'],
     [{ dhtMode: 'bogus' }, 'dht.mode.set: Invalid dht mode: bogus'],
   ];
   for (const [body, error] of cases) assert.equal(refused('POST', 'settings', body, 502, error).faultCode, -503);
+  // 0.16.24 and 0.16.25 die on a global proxy named by host or by IPv6 address,
+  // so the server refuses one before it is sent; the console, which sends it,
+  // gives the refusal rtorrent's code means.
+  const crashes = '"proxyGlobal" must give the proxy by its IPv4 address: rtorrent crashes on a host name or an IPv6 address there';
+  for (const proxyGlobal of ['http://proxy.example.org:3128', 'socks5://[::1]:1080', 'http:///localhost:3128']) {
+    refused('POST', 'settings', { proxyGlobal }, 400, crashes);
+  }
+  const viaConsole = ok<{ fault?: { message: string } }>('POST', 'rpc', { method: 'network.proxy.global.set', params: ['', 'socks5://[::1]:1080'] });
+  assert.equal(viaConsole.fault?.message, 'Proxy address numeric lookup failed: [::1]');
   assert.deepEqual(ok('GET', 'settings'), before, 'a refused value was kept');
 
   const taken = ok<Record<string, unknown>>('POST', 'settings', {
@@ -367,6 +586,24 @@ test('settings: a patch is one multicall — every setter runs, and the first re
   refused('POST', 'settings', { syncTimeout: 4000, memoryMax: 1, pex: false }, 502,
     'pieces.memory.max.set: set_max_memory_usage: memory limit too low, must be at least 512 MB : 1');
   assert.equal(ok<Record<string, unknown>>('GET', 'settings').pex, false);
+});
+
+test('dht.statistics: the shape 0.16 answers, and the routing table size the status reports from it', () => {
+  const { ok } = setup();
+  const statistics = () => ok<{ ok: boolean; result: Record<string, unknown> }>('POST', 'rpc', { method: 'dht.statistics' }).result;
+  const running = statistics();
+  assert.deepEqual(Object.keys(running).sort(), [
+    'active', 'buckets', 'bytes_read', 'bytes_written', 'cycle', 'dht', 'errors_caught', 'errors_received', 'nodes', 'peers',
+    'peers_max', 'queries_received', 'queries_sent', 'replies_received', 'throttle', 'torrents',
+  ]);
+  assert.equal(running.active, 1);
+  assert.ok(Number(running.nodes) > 0 && Number(running.nodes) <= 8 * Number(running.buckets));
+  assert.deepEqual([running.bytes_read, running.bytes_written], [0, 0], '0.16 no longer counts them');
+  assert.equal(ok<StateResponse>('GET', 'state').status.dhtNodes, running.nodes);
+  // Stopped, rtorrent leaves the counters out, and the status reads no nodes.
+  ok('POST', 'settings', { dhtMode: 'off' });
+  assert.deepEqual(statistics(), { active: 0, dht: 'off', throttle: '' });
+  assert.equal(ok<StateResponse>('GET', 'state').status.dhtNodes, 0);
 });
 
 test('throttle groups: names checked, rates rounded up to whole KiB/s, unknown ones a 404', () => {
@@ -411,7 +648,7 @@ test('the API console: commands that answer from the session, rtorrent\'s faults
   const methods = ok<{ methods: string[] }>('GET', 'rpc/methods').methods;
   assert.deepEqual(methods, [...methods].sort());
   assert.deepEqual(rpc('system.listMethods'), { ok: true, result: methods });
-  assert.deepEqual(rpc('system.client_version'), { ok: true, result: '0.16.24' });
+  assert.deepEqual(rpc('system.client_version'), { ok: true, result: '0.16.25' });
   assert.deepEqual(rpc('system.listMethodz'), { ok: false, fault: { code: -506, message: "Method 'system.listMethodz' not defined" } });
   const ubuntu = named('ubuntu');
   assert.deepEqual(rpc('d.name', [ubuntu.hash]), { ok: true, result: ubuntu.name });
@@ -441,12 +678,29 @@ test('the API console: commands that answer from the session, rtorrent\'s faults
   assert.equal(fault('log.add_output', ['', 'dht_debug', 'cascade']), "invalid option name : enum:11 name:'dht_debug'");
   assert.equal(fault('protocol.encryption.set', ['']), 'No encryption options specified.');
   assert.equal(fault('network.listen.port.range.set', ['', '70000-70001']), 'Port range out-of-bounds.');
-  // 0.16 keeps the old HTTP limit's setter as one that only warns, and has no port_open at all.
+  // 0.16 keeps the old HTTP limit's setter and the open-file limit's as ones that only warn,
+  // and has no port_open at all.
   assert.deepEqual(rpc('network.http.max_total_connections.set', ['', 40]), { ok: true, result: 0 });
   assert.equal(rpc('network.http.max_total_connections').result, 32);
   assert.ok(ok<{ lines: string[] }>('GET', 'log', undefined, 'lines=5').lines.some((line) =>
     / W network\.http\.max_total_connections\.set is deprecated, use system\.sockets\.http\.min_alloc\.set instead\.$/.test(line)));
+  assert.deepEqual(rpc('network.max_open_files.set', ['', 1234]), { ok: true, result: 0 });
+  assert.equal(rpc('network.max_open_files').result, 128);
+  assert.ok(ok<{ lines: string[] }>('GET', 'log', undefined, 'lines=5').lines.some((line) =>
+    / W network\.max_open_files\.set is deprecated, use system\.sockets\.files\.min_alloc\.set instead\.$/.test(line)));
+  assert.equal(fault('network.max_open_files.set', ['', 'abc']), 'Not a value.');
   assert.equal(rpc('network.port_open').fault?.code, -506);
+  // And the DHT port's and the UDP tracker switch's, which take a value and change nothing: dht.port
+  // is the running DHT's (the listening port, 0 while DHT is off), and UDP trackers stay on.
+  assert.deepEqual(rpc('dht.port.set', ['', 7000]), { ok: true, result: 0 });
+  assert.equal(rpc('dht.port').result, 50_000);
+  assert.equal(fault('dht.port.set', ['', 'abc']), 'Not a value.');
+  assert.deepEqual(rpc('trackers.use_udp.set', ['', 0]), { ok: true, result: 0 });
+  assert.equal(rpc('trackers.use_udp').result, 1);
+  assert.ok(ok<{ lines: string[] }>('GET', 'log', undefined, 'lines=5').lines.some((line) =>
+    / E trackers\.use_udp\.set is no longer supported$/.test(line)));
+  rpc('dht.mode.set', ['', 'off']);
+  assert.equal(rpc('dht.port').result, 0);
   // rtorrent keeps a priority's low two bits.
   rpc('d.priority.set', [ubuntu.hash, 9]);
   assert.equal(named('ubuntu').priority, 1);

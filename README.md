@@ -50,8 +50,8 @@ without it, any web page you visit could reach Cascade
   per-torrent throttling, file priorities, tracker management, peers, labels, plus a raw API
   console and an XML-RPC passthrough for anything the UI does not wrap. The settings dialog
   covers the full tunable surface: slots, peer ranges, ports, binds, proxies, encryption,
-  DHT, tracker TLS verification, disk preload/sync, socket buffers and resource limits —
-  each control greyed out when the running rtorrent lacks it.
+  DHT, tracker TLS verification, disk preload/sync, how torrents and files are named, socket
+  buffers and resource limits — each control greyed out when the running rtorrent lacks it.
 - **Drop torrents anywhere** — drag `.torrent` files onto the window and they are added and
   started on the spot, no dialog in the way.
 - **Lightly gamified** — a level and a set of badges earned from real transfer totals, with a
@@ -206,6 +206,9 @@ older backends keep working:
 | Listening port | `network.port_range` | `network.listen.port.range` |
 | Scheduler | `schedule2` | `schedule` (the string form, which all versions accept) |
 | HTTP connections | `network.http.max_open` (writable) | `network.http.max_total_connections` (read-only) |
+| Open files | `network.max_open_files` (writable) | `network.max_open_files` (read-only from 0.16.15, whose setter only logs a warning) |
+| DHT port | `dht.port` (writable) | `dht.port` (from 0.16.1 the port the running DHT has, read-only; `dht.override_port` sets it) |
+| UDP trackers | `trackers.use_udp` (writable) | `trackers.use_udp` (always on from 0.16.12, whose setter only logs an error) |
 | Proxy | `network.proxy_address` | `network.proxy.global` / `network.proxy.http` |
 
 0.16 also adds options Cascade now exposes when present: per-host HTTP connection limits, a global
@@ -215,6 +218,34 @@ blocking, and a random-access hint for hashing. On older backends unsupported co
 0.16.24 dropped rtorrent's `address%device` form of a bind address in favour of separate
 `network.bind_device` commands, so from that release `RT_BIND`, `RT_BIND_IPV4` and `RT_BIND_IPV6`
 take a plain address.
+
+Two switches decide what rtorrent calls a torrent and its files, under **Torrent & file names** in
+the settings dialog. 0.16.22 loads a torrent with a `/` in its name, which earlier releases
+refused, and saves the `/` as `_` (`system.file_name.replace_slash`);
+`system.torrent_name.use_sanitized` (`RT_USE_SANITIZED_NAME`) picks whether the list shows that
+name or the torrent's own. 0.16.25 names a torrent from the `name.utf-8` that older torrent makers
+wrote beside a name in a legacy encoding, and a multi-file torrent's directory and files from it and
+`path.utf-8`, unless `system.file_name.allow_legacy_utf8` (`RT_ALLOW_LEGACY_UTF8`) is off; a
+single-file torrent's file keeps its legacy name either way. rtorrent applies both as it loads a
+torrent — the session's too, at every start — so the two variables also go into the generated
+`rtorrent.rc`, and a change made in the dialog reaches only the torrents added after it, until
+rtorrent restarts. The legacy switch decides where a multi-file torrent's files are saved (for a
+single-file torrent only the name the list shows): choose it before adding torrents that carry both
+names, and keep it. Cascade's own upload check still refuses a `/` in a torrent's name, as rtorrent
+did before 0.16.22; the watch directory, magnet links and URLs reach rtorrent's handling.
+
+0.16.25 refuses values it used to narrow: a global rate over 4294967294 bytes/s, which earlier
+releases, 0.9.8 included, wrapped around in 32 bits (4 GiB/s read back as 0, unlimited), and a DHT
+override port past 65535, which earlier 0.16 releases cut to 16 bits. Every release also keeps the
+global rates in whole KiB/s and drops the fraction, so a limit of 800 B/s became unlimited too.
+Cascade holds the global rates under 4 GiB/s and rounds them up to whole KiB/s, as it does a
+throttle group's, and the DHT ports to 65535, refusing anything past them by name on every release
+(0.9.8 refuses a rate between 1 GiB/s and 4 GiB/s itself).
+
+The global proxy (`network.proxy.global`, from 0.16.16) wants its proxy by IPv4 address, scheme and
+port included — `socks5://10.0.0.1:1080`. Given a host name or an IPv6 address, rtorrent 0.16.24
+and 0.16.25 crash rather than refuse it, and `RT_PROXY_GLOBAL` set to one crashed rtorrent at every
+start, so Cascade refuses those before they are sent.
 
 ## Configuration
 
@@ -234,10 +265,15 @@ actually reads.
 A value that does not parse stops the container at start, with a message naming the variable,
 rather than quietly becoming a default. Every on/off option — the `Set 0`/`Set 1` switches and
 the rtorrent settings marked yes/no — takes `1`, `true`, `yes` or `on` and `0`, `false`, `no` or
-`off`, in any case. `RT_UMASK` is octal, as `umask` reads it (`22` means `0022`), and
-`RT_WATCH_INTERVAL` takes seconds or a time such as `00:00:10`. With your own `RT_CONFIG_FILE`
-kept, what only the generated `rtorrent.rc` would carry — the umask, the watch interval, the
-random-port switch, the SCGI port — is ignored rather than checked.
+`off`, in any case. `RT_UMASK` is octal, as `umask` reads it (`22` means `0022`),
+`RT_WATCH_INTERVAL` takes seconds or a time such as `00:00:10`, and `RT_SCGI_PORT` is decimal
+(`05000` is port 5000). With your own `RT_CONFIG_FILE` kept, what only the generated `rtorrent.rc`
+would carry — the umask, the watch interval, the random-port switch — is ignored rather than
+checked. The SCGI settings are not: Cascade waits for your rc to open the socket at
+`RT_SCGI_SOCKET` or, when `RT_SCGI_PORT` is set, that port on `RT_SCGI_BIND`, and connects to the
+one it opened. Earlier releases ignored `RT_SCGI_PORT` and `RT_SCGI_BIND` with a kept rc; now that
+they are read, a leftover `RT_SCGI_PORT` that is not a port, or a bind beside it that is not an
+address, stops the start until it is corrected or unset.
 
 <!-- generated: options -->
 ### Paths and identity
@@ -262,7 +298,7 @@ random-port switch, the SCGI port — is ignored rather than checked.
 
 ### Bandwidth and slots
 
-Rates are in KiB/s; 0 means unlimited.
+Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -299,7 +335,7 @@ Rates are in KiB/s; 0 means unlimited.
 | `RT_BIND_IPV6` | unset | IPv6 bind address (rtorrent 0.16+) |
 | `RT_PROXY` | unset | HTTP proxy for tracker announces |
 | `RT_PROXY_HTTP` | unset | Proxy for all HTTP traffic (rtorrent 0.16+) |
-| `RT_PROXY_GLOBAL` | unset | Proxy for all traffic (rtorrent 0.16+) |
+| `RT_PROXY_GLOBAL` | unset | Proxy for all traffic, by IPv4 address: socks5://10.0.0.1:1080 (rtorrent 0.16+) |
 | `RT_BLOCK_OUTGOING` | rtorrent default | yes refuses outgoing connections (rtorrent 0.16+) |
 
 ### Trackers and DHT
@@ -307,9 +343,9 @@ Rates are in KiB/s; 0 means unlimited.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `RT_DHT` | rtorrent default | disable, off, auto or on |
-| `RT_DHT_PORT` | rtorrent default | DHT UDP port |
+| `RT_DHT_PORT` | rtorrent default | DHT UDP port (read-only on rtorrent 0.16.1+, which takes RT_DHT_OVERRIDE_PORT) |
 | `RT_DHT_OVERRIDE_PORT` | rtorrent default | Announce a different DHT port (rtorrent 0.16+) |
-| `RT_UDP_TRACKERS` | rtorrent default | Allow UDP trackers, yes/no |
+| `RT_UDP_TRACKERS` | rtorrent default | Allow UDP trackers, yes/no (always on from rtorrent 0.16.12) |
 | `RT_TRACKER_NUMWANT` | rtorrent default | Peers requested per announce (-1 leaves it to the tracker) |
 | `RT_HTTP_CAPATH` | unset | Directory of CA certificates for tracker TLS |
 | `RT_HTTP_CACERT` | unset | CA bundle file for tracker TLS |
@@ -323,6 +359,8 @@ Rates are in KiB/s; 0 means unlimited.
 | `RT_PREALLOCATE` | rtorrent default | Preallocate files, yes/no |
 | `RT_HASH_ON_COMPLETION` | rtorrent default | Re-verify on completion, yes/no |
 | `RT_ADVISE_RANDOM_HASHING` | rtorrent default | Random-access hint while hashing, yes/no (rtorrent 0.16+) |
+| `RT_USE_SANITIZED_NAME` | rtorrent default | List a torrent under its saved name, a / in it shown as _, yes/no (rtorrent 0.16.22+) |
+| `RT_ALLOW_LEGACY_UTF8` | rtorrent default | Name torrents, and a multi-file torrent's files, from name.utf-8 and path.utf-8 where a torrent has them, yes/no (rtorrent 0.16.25+) |
 | `RT_MEMORY_MAX` | rtorrent default | Piece memory cap, bytes |
 | `RT_MAX_FILE_SIZE` | rtorrent default | Largest accepted file, bytes |
 | `RT_SYNC_TIMEOUT` | rtorrent default | Piece disk-sync timeout, seconds |
@@ -334,7 +372,7 @@ Rates are in KiB/s; 0 means unlimited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `RT_MAX_OPEN_FILES` | rtorrent default | Open file handle cap |
+| `RT_MAX_OPEN_FILES` | rtorrent default | Open file handle cap (read-only on rtorrent 0.16.15+) |
 | `RT_MAX_OPEN_SOCKETS` | rtorrent default | Open socket cap |
 | `RT_MAX_HTTP_OPEN` | rtorrent default | Concurrent HTTP requests (read-only on rtorrent 0.16+) |
 | `RT_HTTP_MAX_HOST` | rtorrent default | HTTP connections per host (rtorrent 0.16+) |
@@ -346,11 +384,11 @@ Rates are in KiB/s; 0 means unlimited.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `RT_SCGI_SOCKET` | `/run/rtorrent/rpc.socket` | Unix socket rtorrent listens on |
-| `RT_SCGI_PORT` | unset | Also listen for SCGI on this TCP port (unauthenticated — keep it private) |
-| `RT_SCGI_BIND` | `127.0.0.1` | Interface for RT_SCGI_PORT |
+| `RT_SCGI_SOCKET` | `/run/rtorrent/rpc.socket` | Unix socket rtorrent listens on, unless RT_SCGI_PORT is set |
+| `RT_SCGI_PORT` | unset | Listen for SCGI on this TCP port instead of the socket (unauthenticated — keep it private) |
+| `RT_SCGI_BIND` | `127.0.0.1` | Address RT_SCGI_PORT listens on; 0.0.0.0 lets a published port reach it |
 | `RT_XMLRPC_SIZE_LIMIT` | `16777216` | Max XML-RPC request size, bytes (raises the .torrent upload ceiling) |
-| `CASCADE_SCGI` | RT_SCGI_SOCKET | Endpoint the web server talks to — a path, or host:port for a remote rtorrent |
+| `CASCADE_SCGI` | RT_SCGI_SOCKET, or RT_SCGI_PORT (on 127.0.0.1 for a wildcard RT_SCGI_BIND) | Endpoint the web server talks to — a path, or host:port for a remote rtorrent |
 
 ### Web server
 
@@ -372,7 +410,7 @@ Rates are in KiB/s; 0 means unlimited.
 
 ### Escape hatches
 
-Settings given as environment variables are applied over XML-RPC at startup rather than written into rtorrent.rc, so changes made in the UI last until the container restarts.
+Settings given as environment variables are applied over XML-RPC at startup rather than written into rtorrent.rc, so changes made in the UI last until the container restarts. The torrent-name switches go into rtorrent.rc as well, where the build has them, since rtorrent names its session's torrents before anything else can reach it.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -591,9 +629,22 @@ index that is not a number, a tracker that is not an announce URL — is answere
 naming the field. Adding a torrent the session already holds — a `.torrent` or a magnet
 with the same info hash — is a `409` naming it rather than a success: rtorrent would drop the load,
 and its label and directory, without a word. In an upload batch it is one of the per-file
-`errors`. Bulk routes validate every hash before applying anything, normalize case and
-deduplicate, then return runtime failures by hash in `errors`. Numeric settings reject null,
-booleans, fractions, unsafe integers and malformed strings; a typo cannot become unlimited.
+`errors`. Removing a torrent with its data is a `409`, before anything is removed, when the path
+of that data cannot be pinned down on disk (see *Notes and limitations*). Bulk routes validate
+every hash before applying anything, normalize case and deduplicate, then return runtime failures
+by hash in `errors`. Numeric settings reject null, booleans, fractions, unsafe integers and
+malformed strings; a typo cannot become unlimited.
+
+Text rtorrent cannot be sent is a `400` naming the field as well, in any field that reaches it as
+text — a `directory`, a link in `url`, a tracker's `url`, a `throttle` group, a setting, a `view`:
+rtorrent's XML-RPC layer takes no character beyond U+FFFF, an emoji among them, and XML none of
+U+FFFE, U+FFFF, a carriage return (it would arrive as a line feed) or bytes that are not UTF-8.
+Such a value used to reach rtorrent and fail with a `502` — after a directory change had already
+stopped the torrent; now nothing is asked of rtorrent. In an upload, such a `directory` refuses the
+whole batch, while such a link in `urls` fails on its own, named in `errors` and counted in
+`failedUrls`, and the rest are added. As an `RT_*` setting it stops the start, by the variable's
+name. A `label` takes anything: it is stored URL-encoded. The API console and `/RPC2` pass text
+through as given, and answer with rtorrent's fault.
 
 Uploads accept up to 50 files and URLs combined. `CASCADE_MAX_UPLOAD_MB` bounds the combined
 file bytes in a batch. The response contains `added`, `errors`, `failedFiles` and `failedUrls`;
@@ -601,7 +652,14 @@ the last two are zero-based indices into the submitted files and non-empty URL l
 dialog keeps failed items for retry and removes successful ones. Uploaded v1 and hybrid torrents
 are structurally validated before loading; v2-only torrents are rejected with an explanation. A
 `directory` with a control character in it (a line break, say) is refused: it would reach
-rtorrent inside a command.
+rtorrent inside a command. A torrent's `directory` in a `PATCH` names the same thing as an
+upload's: the directory its data goes into, a multi-file torrent's own folder inside it (see
+*Notes and limitations*). Changing the `directory` of a magnet still fetching its metadata is a
+`409`, before any other field of the `PATCH` is changed: rtorrent loads the torrent anew once the
+metadata arrives, into the directory it was added with, and a change made before then would be
+lost. Neither directory may be `/` — a `400`: rtorrent strips a directory's trailing slashes, and
+the empty path that leaves is `.`, the directory rtorrent runs in, where a single file would go. An
+upload's empty `directory`, or none, is rtorrent's default.
 
 A change, once sent, is carried through even if the client goes away, `/RPC2` included: a closed
 tab does not leave a torrent stopped halfway through a throttle change.
@@ -633,10 +691,19 @@ answers in JSON). Either refuses a whole number outside the 64-bit range with a 
 rtorrent crashes on such an `<i8>` rather than faulting, and refuses `<double>` altogether, so
 there is nothing safe to send.
 
-To expose rtorrent's own SCGI socket instead, set `RT_SCGI_PORT=5000` and
-`RT_SCGI_BIND=0.0.0.0`, then publish the port. **SCGI is unauthenticated** — anyone who reaches
-it has full control of rtorrent and can run commands in the container, with its volumes, through
-`execute`. Keep it on a private network, or prefer `/RPC2`, which sits behind Basic auth.
+To expose rtorrent's own SCGI interface instead, set `RT_SCGI_PORT=5000` and
+`RT_SCGI_BIND=0.0.0.0`, then publish the port (`-p 127.0.0.1:5000:5000` keeps it to the host).
+rtorrent takes a single SCGI listener, so the port replaces the unix socket rather than joining
+it, and Cascade follows it there — over `127.0.0.1:5000` for a wildcard bind like this one, unless
+`CASCADE_SCGI` says otherwise. The bind defaults to `127.0.0.1`, the loopback, which a published
+port does not reach — it arrives on the container's own address — hence `0.0.0.0`, which also
+opens the port to the container's network. Even the loopback is shared by everything in the
+container's network namespace, whatever its user: the host's processes under `--network host`,
+and every container joined to it with `--network container:…`, such as a VPN sidecar; the unix
+socket, with the default umask, admits only `PUID` and root. **SCGI is unauthenticated** — anyone
+who reaches it has full control of rtorrent and can run commands in the container, with its
+volumes, through `execute`. Keep it on a private network, or prefer `/RPC2`, which sits behind
+Basic auth.
 
 ### The state stream
 
@@ -679,15 +746,48 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
   extension, and appends `~` plus a short hash of the original to distinguish long names;
   the torrent keeps its own names in the list and the Files tab, which notes *on disk as …*
   where the two differ.
+- Names are bytes to rtorrent, but XML-RPC text has to be UTF-8 — and through xmlrpc-c, the RPC
+  layer the image builds with, UTF-8 within the Basic Multilingual Plane, which leaves out emoji.
+  For a name that is not, such as a Latin-1 `Café.bin` from an old torrent, rtorrent sends a
+  stand-in: `Caf%E9.bin` from 0.16.7, `Caf?.bin` before 0.16.3. Releases 0.16.3 to 0.16.6 garble
+  that stand-in into text XML-RPC cannot carry either, so they cannot report such a name at all:
+  asked for it alone, rtorrent answers with an error, and asked for a list that holds it — the
+  torrent list among them — rtorrent crashes. From rtorrent 0.16.13 Cascade asks for the bytes
+  instead and shows the name as it is, emoji included, with `�` for a byte that is not UTF-8; on
+  older releases the UI shows the stand-in.
 - Global settings changed in the UI are not persisted to `rtorrent.rc`; the environment is the
   source of truth on restart.
-- "Change directory" stops the torrent and updates its saved path. Move already-downloaded files
-  yourself, then use **Recheck & restart** before transferring at the new location.
+- "Change directory" takes the directory the data goes into, as the Add dialog does: a single
+  file goes into it, and a multi-file torrent's own folder inside it, under the name that folder
+  already has. It offers the directory the selected torrents' data shares; a torrent already there
+  is left alone, and any other is stopped and its saved path changed. Move already-downloaded
+  files yourself, then use **Recheck & restart** before transferring at the new location — the
+  details' *Base path* follows once the torrent opens there. A folder name rtorrent cannot report
+  exactly or be sent as text (see above: one that is not UTF-8, or holds an emoji — and before
+  rtorrent 0.16.3 one with a `?`, which may stand for such a byte) is kept as well when it is the
+  torrent's own name; any other such folder fails the change with a `502` before anything is
+  touched. A magnet still fetching its metadata keeps the directory it was added with — rtorrent
+  loads the torrent anew, with the add's directory, when the metadata arrives — so "Change
+  directory" leaves it out and says so; change it once the metadata is in. A destination rtorrent
+  cannot be sent (one with an emoji in it) or `/` is refused before the torrent is touched, in the
+  prompt as in the API.
 - Deleting torrent data is confined to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and any
   `CASCADE_DELETE_ROOTS`. Paths are checked before removing metadata, and deletion stays anchored
-  to an open root directory even if symlinks change. A root itself cannot be deleted.
-- Completion moves use the actual on-disk filename, refuse existing destinations, and reopen
-  the torrent at its new location. A failed move leaves the source data in place.
+  to an open root directory even if symlinks change. A root itself cannot be deleted. A path
+  rtorrent can only report by a stand-in (see above) is taken as bytes from rtorrent 0.16.13 on;
+  on an older release it is matched against the disk, and when more than one path fits, or
+  rtorrent cannot confirm that the one that fits holds the torrent's files, the delete is refused
+  with a `409` before anything is removed. On 0.16.3 to 0.16.6, which cannot report such a path,
+  it fails with a `502`, also before anything is removed. A file that happens to be called
+  `Caf%E9.bin` is never taken for the torrent's `Café.bin`.
+- Completion moves (`RT_COMPLETED_DIR`) take the data under the name it has on disk, refuse an
+  existing destination, and reopen the torrent pointing at exactly what they moved: a single file
+  goes into the directory, and a multi-file torrent's folder keeps its name there, byte for byte —
+  even when that is not the torrent's own, as for a folder "Change directory" kept from another
+  tool, which used to be looked for under the torrent's name and found missing. A failed move
+  leaves the source data in place. Only a download rtorrent finishes is moved: a torrent whose
+  data was already on disk when it was added, and that its first hash check found complete, stays
+  where it is.
 - Throttle groups cannot be removed from a running rtorrent — deleting one sets it to unlimited
   and drops it from the UI list.
 - rtorrent runs inside a detached `screen` session, so `docker exec -it cascade cascade-attach`
@@ -739,9 +839,11 @@ three run inside every image build, so a red test fails the build exactly as a t
 `docker/api-smoke.py` (Python 3's standard library only) exercises a running container against
 the rtorrent inside it: readiness, the `/RPC2` passthrough, validation and error shapes, the
 cross-site guard, compression and cache headers, setting and throttle round trips in rtorrent's
-own units, the state stream, and the long file name patch. It restores what it changes, but
-point it at a disposable container — `make smoke` makes one and removes it even when a check
-fails, and CI and the release run the same script against every image they build:
+own units, the state stream, the long file name patch, and deleting the data of a torrent whose
+name is not UTF-8 (which looks at the container's disk, so it needs the container's name). It
+restores what it changes, but point it at a disposable container — `make smoke` makes one and
+removes it even when a check fails, and CI and the release run the same script against every
+image they build:
 
 ```bash
 python3 docker/api-smoke.py http://127.0.0.1:18080 [container-name]

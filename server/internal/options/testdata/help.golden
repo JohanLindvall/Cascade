@@ -53,7 +53,7 @@ PATHS AND IDENTITY
   RT_SESSION_LOCK_KEEP       Set 1 to keep a leftover rtorrent.lock instead of clearing it [0]
 
 BANDWIDTH AND SLOTS
-  Rates are in KiB/s; 0 means unlimited.
+  Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
   RT_DOWNLOAD_RATE           Global download limit [rtorrent default]
   RT_UPLOAD_RATE             Global upload limit [rtorrent default]
   RT_MAX_UPLOADS             Upload slots per torrent [rtorrent default]
@@ -82,15 +82,18 @@ NETWORK
   RT_BIND_IPV6               IPv6 bind address (rtorrent 0.16+) [unset]
   RT_PROXY                   HTTP proxy for tracker announces [unset]
   RT_PROXY_HTTP              Proxy for all HTTP traffic (rtorrent 0.16+) [unset]
-  RT_PROXY_GLOBAL            Proxy for all traffic (rtorrent 0.16+) [unset]
+  RT_PROXY_GLOBAL            Proxy for all traffic, by IPv4 address: socks5://10.0.0.1:1080
+                             (rtorrent 0.16+) [unset]
   RT_BLOCK_OUTGOING          yes refuses outgoing connections (rtorrent 0.16+) [rtorrent
                              default]
 
 TRACKERS AND DHT
   RT_DHT                     disable, off, auto or on [rtorrent default]
-  RT_DHT_PORT                DHT UDP port [rtorrent default]
+  RT_DHT_PORT                DHT UDP port (read-only on rtorrent 0.16.1+, which takes
+                             RT_DHT_OVERRIDE_PORT) [rtorrent default]
   RT_DHT_OVERRIDE_PORT       Announce a different DHT port (rtorrent 0.16+) [rtorrent default]
-  RT_UDP_TRACKERS            Allow UDP trackers, yes/no [rtorrent default]
+  RT_UDP_TRACKERS            Allow UDP trackers, yes/no (always on from rtorrent 0.16.12)
+                             [rtorrent default]
   RT_TRACKER_NUMWANT         Peers requested per announce (-1 leaves it to the tracker)
                              [rtorrent default]
   RT_HTTP_CAPATH             Directory of CA certificates for tracker TLS [unset]
@@ -103,6 +106,11 @@ STORAGE
   RT_HASH_ON_COMPLETION      Re-verify on completion, yes/no [rtorrent default]
   RT_ADVISE_RANDOM_HASHING   Random-access hint while hashing, yes/no (rtorrent 0.16+) [rtorrent
                              default]
+  RT_USE_SANITIZED_NAME      List a torrent under its saved name, a / in it shown as _, yes/no
+                             (rtorrent 0.16.22+) [rtorrent default]
+  RT_ALLOW_LEGACY_UTF8       Name torrents, and a multi-file torrent's files, from name.utf-8
+                             and path.utf-8 where a torrent has them, yes/no (rtorrent 0.16.25+)
+                             [rtorrent default]
   RT_MEMORY_MAX              Piece memory cap, bytes [rtorrent default]
   RT_MAX_FILE_SIZE           Largest accepted file, bytes [rtorrent default]
   RT_SYNC_TIMEOUT            Piece disk-sync timeout, seconds [rtorrent default]
@@ -112,7 +120,8 @@ STORAGE
   RT_PRELOAD_MIN_RATE        Only preload above this upload rate, bytes/s [rtorrent default]
 
 RESOURCE LIMITS
-  RT_MAX_OPEN_FILES          Open file handle cap [rtorrent default]
+  RT_MAX_OPEN_FILES          Open file handle cap (read-only on rtorrent 0.16.15+) [rtorrent
+                             default]
   RT_MAX_OPEN_SOCKETS        Open socket cap [rtorrent default]
   RT_MAX_HTTP_OPEN           Concurrent HTTP requests (read-only on rtorrent 0.16+) [rtorrent
                              default]
@@ -122,14 +131,17 @@ RESOURCE LIMITS
   RT_SEND_BUFFER             Socket send buffer, bytes [rtorrent default]
 
 RPC
-  RT_SCGI_SOCKET             Unix socket rtorrent listens on [/run/rtorrent/rpc.socket]
-  RT_SCGI_PORT               Also listen for SCGI on this TCP port (unauthenticated — keep it
-                             private) [unset]
-  RT_SCGI_BIND               Interface for RT_SCGI_PORT [127.0.0.1]
+  RT_SCGI_SOCKET             Unix socket rtorrent listens on, unless RT_SCGI_PORT is set
+                             [/run/rtorrent/rpc.socket]
+  RT_SCGI_PORT               Listen for SCGI on this TCP port instead of the socket
+                             (unauthenticated — keep it private) [unset]
+  RT_SCGI_BIND               Address RT_SCGI_PORT listens on; 0.0.0.0 lets a published port
+                             reach it [127.0.0.1]
   RT_XMLRPC_SIZE_LIMIT       Max XML-RPC request size, bytes (raises the .torrent upload
                              ceiling) [16777216]
   CASCADE_SCGI               Endpoint the web server talks to — a path, or host:port for a
-                             remote rtorrent [RT_SCGI_SOCKET]
+                             remote rtorrent [RT_SCGI_SOCKET, or RT_SCGI_PORT (on 127.0.0.1 for
+                             a wildcard RT_SCGI_BIND)]
 
 WEB SERVER
   WEB_PORT                   HTTP port [8080]
@@ -151,7 +163,9 @@ WEB SERVER
 
 ESCAPE HATCHES
   Settings given as environment variables are applied over XML-RPC at startup rather than
-  written into rtorrent.rc, so changes made in the UI last until the container restarts.
+  written into rtorrent.rc, so changes made in the UI last until the container restarts. The
+  torrent-name switches go into rtorrent.rc as well, where the build has them, since rtorrent
+  names its session's torrents before anything else can reach it.
   RT_EXTRA_CONFIG            Raw rtorrent.rc lines appended to the generated config [unset]
   RT_EXTRA_CONFIG_FILE       File of extra rtorrent.rc lines to append [unset]
   RT_CONFIG_FILE             Use this rtorrent.rc verbatim instead of generating one

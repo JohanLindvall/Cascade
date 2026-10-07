@@ -97,23 +97,39 @@ export function Switch({
   checked,
   onChange,
   label,
+  hint,
   disabled,
 }: {
   checked: boolean;
   onChange: (value: boolean) => void;
   label: ReactNode;
+  /** A line under the label, which becomes the switch's description. */
+  hint?: ReactNode;
   disabled?: boolean;
 }) {
-  return (
+  const hintId = useId();
+  const control = (
     <label className="switch" title={disabled ? 'not supported by this rtorrent build' : undefined}>
       <input
         type="checkbox"
         checked={checked}
         disabled={disabled}
+        aria-describedby={hint ? hintId : undefined}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="track" />
       <span>{label}</span>
     </label>
+  );
+  if (!hint) return control;
+  // Outside the label, so the hint describes the switch rather than becoming
+  // part of its name.
+  return (
+    <div className="switch-field">
+      {control}
+      <div id={hintId} className="hint">
+        {hint}
+      </div>
+    </div>
   );
 }
