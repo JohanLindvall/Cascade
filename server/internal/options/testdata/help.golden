@@ -108,8 +108,9 @@ STORAGE
                              default]
   RT_USE_SANITIZED_NAME      List a torrent under its saved name, a / in it shown as _, yes/no
                              (rtorrent 0.16.22+) [rtorrent default]
-  RT_ALLOW_LEGACY_UTF8       Name torrents and their files from name.utf-8 and path.utf-8 where
-                             a torrent has them, yes/no (rtorrent 0.16.25+) [rtorrent default]
+  RT_ALLOW_LEGACY_UTF8       Name torrents, and a multi-file torrent's files, from name.utf-8
+                             and path.utf-8 where a torrent has them, yes/no (rtorrent 0.16.25+)
+                             [rtorrent default]
   RT_MEMORY_MAX              Piece memory cap, bytes [rtorrent default]
   RT_MAX_FILE_SIZE           Largest accepted file, bytes [rtorrent default]
   RT_SYNC_TIMEOUT            Piece disk-sync timeout, seconds [rtorrent default]

@@ -415,7 +415,7 @@ export function SettingsDialog({
               'allowLegacyUtf8',
               'Use a torrent’s UTF-8 names',
               supports('allowLegacyUtf8')
-                ? 'name.utf-8 and path.utf-8, which older torrents carry beside a legacy-encoded name — this changes where such files are saved'
+                ? 'name.utf-8 and path.utf-8, which older torrents carry beside a legacy-encoded name — for a multi-file torrent this changes where its files are saved; a single-file torrent keeps its legacy file name, and only its listed name changes'
                 : 'rtorrent 0.16.25+',
             )}
           </div>

@@ -287,9 +287,10 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
 
    The torrent-name switches are the second case (`pick_name_switches`): rtorrent names a torrent
    as it loads it, and it loads the session before the server connects, so a switch applied over
-   XML-RPC would reach only torrents added later — and a torrent added with
-   `system.file_name.allow_legacy_utf8` off would be looked for under other file names after the
-   next restart (measured on 0.16.25). `RT_USE_SANITIZED_NAME` and `RT_ALLOW_LEGACY_UTF8` are
+   XML-RPC would reach only torrents added later — and a multi-file torrent added with
+   `system.file_name.allow_legacy_utf8` off would have its files looked for under other names after
+   the next restart, while a single-file torrent's file keeps its legacy name either way (both
+   measured on 0.16.25). `RT_USE_SANITIZED_NAME` and `RT_ALLOW_LEGACY_UTF8` are
    written into the rc where `rc_command_exists` finds the command (0.16.22 and 0.16.25 added
    them), and staged as startup settings too, which re-apply the same value and name the key in
    the boot-settings warning on a build without it.
@@ -368,10 +369,15 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    more ways: from 0.16.22 a `/` inside a name or a path component is saved as
    `system.file_name.replace_slash` (`_`) — in `f.path` always, in `d.name` unless
    `system.torrent_name.use_sanitized` is off (`useSanitizedName`); earlier releases refused such a
-   torrent, and Cascade's upload check still does — and from 0.16.25 both come from `name.utf-8`
-   and `path.utf-8` where a torrent has them, unless `system.file_name.allow_legacy_utf8` is off
-   (`allowLegacyUtf8`), which moves the files on disk too. The Files tab fetches `f.frozen_path` and shows "on disk as …" when the
-   two differ (`MapFile`'s `OnDisk`), which is also what the API smoke test checks.
+   torrent, and Cascade's upload check still does — and from 0.16.25, where a torrent carries
+   `name.utf-8` and `path.utf-8` beside legacy-encoded names, `d.name` comes from `name.utf-8`, and
+   a multi-file torrent's directory and `f.path` from those too, unless
+   `system.file_name.allow_legacy_utf8` is off (`allowLegacyUtf8`). That moves a multi-file
+   torrent's files on disk, while a single-file torrent's file keeps its legacy `name` either way
+   (libtorrent's `parse_single_file` reads nothing else) and only its `d.name` follows the switch;
+   the API smoke test holds the release to both. The Files tab fetches `f.frozen_path` and shows
+   "on disk as …" when it differs from `f.path` (`MapFile`'s `OnDisk`), which is also what the API
+   smoke test checks.
    `docker/patches/apply-<repo>.sh` is the general hook — one per repository, run after clone and
    before configure.
 

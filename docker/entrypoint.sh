@@ -255,8 +255,9 @@ pick_port_commands() {
 # rtorrent names a torrent as it loads it, and it loads the session before the
 # server can apply anything. Applied only afterwards, a switch would name the
 # session's torrents one way and new ones another — and RT_ALLOW_LEGACY_UTF8
-# would have rtorrent look for a torrent's files, after every restart, under
-# other names than it saved them under. Only a build that knows the command
+# would have rtorrent look for a multi-file torrent's files, after every
+# restart, under other names than it saved them under (a single-file torrent's
+# file keeps its legacy name either way). Only a build that knows the command
 # gets the line, since rtorrent aborts on an unknown one; the server's
 # startup settings name what this build lacks.
 pick_name_switches() {

@@ -223,15 +223,16 @@ Two switches decide what rtorrent calls a torrent and its files, under **Torrent
 the settings dialog. 0.16.22 loads a torrent with a `/` in its name, which earlier releases
 refused, and saves the `/` as `_` (`system.file_name.replace_slash`);
 `system.torrent_name.use_sanitized` (`RT_USE_SANITIZED_NAME`) picks whether the list shows that
-name or the torrent's own. 0.16.25 names a torrent and its files from the `name.utf-8` and
-`path.utf-8` that older torrent makers wrote beside a name in a legacy encoding, unless
-`system.file_name.allow_legacy_utf8` (`RT_ALLOW_LEGACY_UTF8`) is off. rtorrent applies both as it
-loads a torrent — the session's too, at every start — so the two variables also go into the
-generated `rtorrent.rc`, and a change made in the dialog reaches only the torrents added after it,
-until rtorrent restarts. The legacy switch decides where such a torrent's files are saved: choose
-it before adding torrents that carry both names, and keep it. Cascade's own upload check still
-refuses a `/` in a torrent's name, as rtorrent did before 0.16.22; the watch directory, magnet
-links and URLs reach rtorrent's handling.
+name or the torrent's own. 0.16.25 names a torrent from the `name.utf-8` that older torrent makers
+wrote beside a name in a legacy encoding, and a multi-file torrent's directory and files from it and
+`path.utf-8`, unless `system.file_name.allow_legacy_utf8` (`RT_ALLOW_LEGACY_UTF8`) is off; a
+single-file torrent's file keeps its legacy name either way. rtorrent applies both as it loads a
+torrent — the session's too, at every start — so the two variables also go into the generated
+`rtorrent.rc`, and a change made in the dialog reaches only the torrents added after it, until
+rtorrent restarts. The legacy switch decides where a multi-file torrent's files are saved (for a
+single-file torrent only the name the list shows): choose it before adding torrents that carry both
+names, and keep it. Cascade's own upload check still refuses a `/` in a torrent's name, as rtorrent
+did before 0.16.22; the watch directory, magnet links and URLs reach rtorrent's handling.
 
 0.16.25 refuses values it used to narrow: a global rate over 4294967294 bytes/s, which earlier
 releases, 0.9.8 included, wrapped around in 32 bits (4 GiB/s read back as 0, unlimited), and a DHT
@@ -354,7 +355,7 @@ Rates are in KiB/s, at most 4194303 (just under 4 GiB/s); 0 means unlimited.
 | `RT_HASH_ON_COMPLETION` | rtorrent default | Re-verify on completion, yes/no |
 | `RT_ADVISE_RANDOM_HASHING` | rtorrent default | Random-access hint while hashing, yes/no (rtorrent 0.16+) |
 | `RT_USE_SANITIZED_NAME` | rtorrent default | List a torrent under its saved name, a / in it shown as _, yes/no (rtorrent 0.16.22+) |
-| `RT_ALLOW_LEGACY_UTF8` | rtorrent default | Name torrents and their files from name.utf-8 and path.utf-8 where a torrent has them, yes/no (rtorrent 0.16.25+) |
+| `RT_ALLOW_LEGACY_UTF8` | rtorrent default | Name torrents, and a multi-file torrent's files, from name.utf-8 and path.utf-8 where a torrent has them, yes/no (rtorrent 0.16.25+) |
 | `RT_MEMORY_MAX` | rtorrent default | Piece memory cap, bytes |
 | `RT_MAX_FILE_SIZE` | rtorrent default | Largest accepted file, bytes |
 | `RT_SYNC_TIMEOUT` | rtorrent default | Piece disk-sync timeout, seconds |
