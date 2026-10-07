@@ -59,6 +59,15 @@ func (s *stubService) SetTorrentSlots(_ context.Context, hash string, uploads, d
 func (s *stubService) SetDirectory(_ context.Context, hash, directory string) error {
 	return s.record("setDirectory", hash, directory)
 }
+
+// RefuseDirectoryChange fails only as fail says: the other hash is a torrent
+// whose changes fault (setDirectory, after the stop), not one refused before.
+func (s *stubService) RefuseDirectoryChange(_ context.Context, hash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, stubCall{"refuseDirectoryChange", []any{hash}})
+	return s.fail["refuseDirectoryChange"]
+}
 func (s *stubService) SetTrackerEnabled(_ context.Context, hash string, index int, enabled bool) error {
 	return s.record("setTrackerEnabled", hash, index, enabled)
 }
@@ -170,17 +179,54 @@ func TestPatchAppliesEveryNamedFieldInOrder(t *testing.T) {
 	if r.status != 200 {
 		t.Fatalf("%d %s", r.status, r.raw)
 	}
-	var order []string
-	for _, c := range h.service.calls {
-		order = append(order, c.method)
-	}
-	if want := []string{"setPriority", "setLabel", "setTorrentThrottle", "setDirectory", "setTorrentSlots"}; !reflect.DeepEqual(order, want) {
+	// Whether the directory may change at all is asked before anything is.
+	want := []string{"refuseDirectoryChange", "setPriority", "setLabel", "setTorrentThrottle", "setDirectory", "setTorrentSlots"}
+	if order := methods(h.service); !reflect.DeepEqual(order, want) {
 		t.Fatalf("%v", order)
 	}
+	wantCall(t, h.service, "refuseDirectoryChange", hash)
 	wantCall(t, h.service, "setLabel", hash, "tv")
 	wantCall(t, h.service, "setTorrentSlots", hash, int64(4), (*int64)(nil))
 	if r := send(t, "PATCH", h.base+"/api/torrents/"+hash, `{"directory":"  "}`, nil); r.status != 400 {
 		t.Fatalf("a blank directory: %d", r.status)
+	}
+}
+
+// methods is what the stub was asked, in order.
+func methods(s *stubService) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	order := []string{}
+	for _, c := range s.calls {
+		order = append(order, c.method)
+	}
+	return order
+}
+
+// A magnet still fetching its metadata cannot have its directory changed: a
+// 409, which leaves the stream alone, as a refusal that changed nothing.
+// Coming after the fields ahead of the directory, it left them changed —
+// priority, label, throttle group (that one stopping and restarting the
+// magnet) — with no page told until the stream's next read. It is asked
+// before the first of them.
+func TestADirectoryRefusedForItsTorrentChangesNoOtherField(t *testing.T) {
+	h := boot(t, nil)
+	const fetching = "this torrent is still fetching its metadata"
+	h.service.fail = map[string]error{"refuseDirectoryChange": httperr.New(http.StatusConflict, fetching)}
+	r := send(t, "PATCH", h.base+"/api/torrents/"+hash,
+		`{"priority":3,"label":"tv","throttle":"slow","directory":"/downloads/x","maxUploads":4}`, nil)
+	if r.status != 409 || r.body["error"] != fetching {
+		t.Fatalf("%d %s", r.status, r.raw)
+	}
+	if got := methods(h.service); !reflect.DeepEqual(got, []string{"refuseDirectoryChange"}) {
+		t.Fatalf("asked %v", got)
+	}
+	// A patch without a directory has nothing to be refused for.
+	if r := send(t, "PATCH", h.base+"/api/torrents/"+hash, `{"priority":3,"label":"tv","throttle":"slow"}`, nil); r.status != 200 {
+		t.Fatalf("%d %s", r.status, r.raw)
+	}
+	if got, want := methods(h.service), []string{"refuseDirectoryChange", "setPriority", "setLabel", "setTorrentThrottle"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("asked %v", got)
 	}
 }
 
@@ -274,7 +320,7 @@ func TestAMagnetOrURLIsAddedFromJSON(t *testing.T) {
 	if r := send(t, "POST", h.base+"/api/torrents/url", `{"url":" magnet:?xt=urn:btih:`+hash+` ","start":false}`, nil); r.status != 200 {
 		t.Fatalf("%d %s", r.status, r.raw)
 	}
-	wantCall(t, h.service, "addTorrentUrl", "magnet:?xt=urn:btih:"+hash)
+	wantCall(t, h.service, "addTorrentUrl", "magnet:?xt=urn:btih:"+hash, contracts.LoadOptions{})
 	for _, body := range []string{`{}`, `{"url":"x","start":"perhaps"}`, `{"url":"x","label":7}`} {
 		if r := send(t, "POST", h.base+"/api/torrents/url", body, nil); r.status != 400 {
 			t.Errorf("%s: %d", body, r.status)

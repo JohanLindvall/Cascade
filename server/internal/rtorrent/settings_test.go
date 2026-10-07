@@ -143,6 +143,32 @@ func TestAGlobalProxyRtorrentWouldCrashOnIsRefusedFirst(t *testing.T) {
 	}
 }
 
+// A setting's text reaches rtorrent as XML-RPC, which xmlrpc-c refuses for a
+// character beyond U+FFFF — the whole multicall, every other setting in the
+// patch with it (0.9.8 and 0.16.25, -503) — and XML for a carriage return or
+// a byte that is not UTF-8, which would arrive as something else. Each is a
+// 400 naming the setting before anything is sent.
+func TestATextSettingRtorrentCannotBeSentIsRefusedByName(t *testing.T) {
+	for key, value := range map[string]string{
+		"directory":   "/downloads/films \U0001F3AC",
+		"httpCapath":  "/etc/ssl/Caf\xe9",
+		"bindAddress": "0.0.0.0\rx",
+		"encryption":  "allow_incoming,\U0001F512",
+		"proxyGlobal": "socks5://10.0.0.1:1080/\U0001F9E6",
+		"portRange":   "50000-50000\U0001F6AA",
+	} {
+		calls, err := SettingEntries(map[string]any{"pex": true, key: value}, resolveAll)
+		requireFieldError(t, err, `"`+key+`" contains`)
+		if calls != nil {
+			t.Errorf("%s: %v", key, calls)
+		}
+	}
+	if call, err := entry(t, map[string]any{"directory": "/downloads/Café 中文"}); err != nil ||
+		!reflect.DeepEqual(call.Params, []any{"", "/downloads/Café 中文"}) {
+		t.Fatalf("%#v %v", call.Params, err)
+	}
+}
+
 // The torrent-name switches (0.16.22 and 0.16.25) are booleans like the rest:
 // 0 or 1 after the empty target, read back as true or false.
 func TestTheTorrentNameSwitchesAreBooleans(t *testing.T) {

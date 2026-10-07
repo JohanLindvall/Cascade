@@ -54,6 +54,7 @@ type Torrent struct {
 	IsActive          bool   `json:"isActive"`
 	IsPrivate         bool   `json:"isPrivate"`
 	IsMultiFile       bool   `json:"isMultiFile"`
+	IsMeta            bool   `json:"isMeta"` // a magnet still fetching its metadata (d.is_meta)
 	Hashing           int64  `json:"hashing"`
 	ChunkSize         int64  `json:"chunkSize"`
 	ChunksDone        int64  `json:"chunksDone"`

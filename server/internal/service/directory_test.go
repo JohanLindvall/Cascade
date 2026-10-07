@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/JohanLindvall/Cascade/server/internal/rtorrent"
@@ -238,6 +239,64 @@ func TestAQuestionMarkInAFolderIsItselfFrom0163(t *testing.T) {
 		err := newService(t, client, nil).SetDirectory(ctx, hash, "/media")
 		if code := status(t, err); code != 502 || len(changes(client)) != 0 {
 			t.Errorf("%s: %d %v", version, code, changes(client))
+		}
+	}
+}
+
+// A magnet still fetching its metadata is a download of the metadata alone
+// (d.is_meta). Once that is complete rtorrent erases it and loads the torrent
+// from it with the commands the add carried, its directory among them, so a
+// directory set meanwhile was lost — after the stop it takes had held up the
+// fetch. It is refused before anything is sent, even where the stand-in sits
+// in the very directory asked for: the torrent goes where the add said.
+func TestAMagnetStillFetchingItsMetadataIsRefusedBeforeAnythingStops(t *testing.T) {
+	for _, directory := range []string{"/downloads/fromadd", "/media"} {
+		client := placed(directory, false, "d.is_meta").Answer("d.is_meta", 1)
+		err := newService(t, client, nil).SetDirectory(ctx, hash, "/media")
+		if code := status(t, err); code != 409 || err.Error() != FetchingMetadata || len(changes(client)) != 0 {
+			t.Fatalf("%s: %d %v %v", directory, code, err, changes(client))
+		}
+		if got := client.Methods(); slices.Contains(got, "d.directory") || slices.Contains(got, "d.is_multi_file") {
+			t.Errorf("read before the refusal: %v", got)
+		}
+	}
+	// The torrent the metadata became is no download of it, and moves.
+	client := placed("/downloads/fromadd", false, "d.is_meta").Answer("d.is_meta", 0)
+	if err := newService(t, client, nil).SetDirectory(ctx, hash, "/media"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := changes(client), movedWith("d.directory.set", "/media"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("%v", got)
+	}
+}
+
+// A PATCH asks the same before the first of its fields changes anything
+// (RefuseDirectoryChange): a 409 after a priority, label or throttle group
+// had been set left them changed, and no page was told. Asking changes
+// nothing, and asks nothing of the torrent but d.is_meta.
+func TestTheRefusalIsAskedOnItsOwnBeforeAnythingChanges(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		client *rtorrenttest.FakeClient
+		status int
+		asked  int
+	}{
+		{"fetching its metadata", placed("/downloads/fromadd", false, "d.is_meta").Answer("d.is_meta", 1), 409, 1},
+		{"a torrent", placed("/downloads", false, "d.is_meta").Answer("d.is_meta", 0), 200, 1},
+		{"a build without d.is_meta", placed("/downloads", false), 200, 0},
+	} {
+		err := newService(t, c.client, nil).RefuseDirectoryChange(ctx, hash)
+		if code := status(t, err); code != c.status || (code == 409 && err.Error() != FetchingMetadata) {
+			t.Errorf("%s: %d %v", c.name, code, err)
+		}
+		asked := c.client.CallsTo("d.is_meta")
+		if len(asked) != c.asked || (c.asked > 0 && !reflect.DeepEqual(asked[0].Params, []any{hash})) {
+			t.Errorf("%s: %v", c.name, asked)
+		}
+		for _, method := range c.client.Methods() {
+			if strings.HasPrefix(method, "d.") && method != "d.is_meta" {
+				t.Errorf("%s: asked %s", c.name, method)
+			}
 		}
 	}
 }

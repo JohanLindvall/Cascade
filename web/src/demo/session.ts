@@ -20,6 +20,7 @@ import type {
   GameState, GameStats, GlobalSettings, GlobalStatus, LogScopeChange, LogScopeState, Peer, RateSample,
   ThrottleGroup, ThrottleRate, Torrent, TorrentFile, TorrentStatus, Tracker,
 } from '../contracts.ts';
+import { FETCHING_METADATA } from '../dataFolder.ts';
 import { CATALOG, HISTORY, THROTTLES, type CatalogFile, type CatalogTorrent } from './catalog.ts';
 import { buildGame, newlyUnlocked } from './game.ts';
 import { fitComponent } from './pathfit.ts';
@@ -942,9 +943,11 @@ export class Session {
    * multi-file torrent's folder keeps its name inside it. A torrent already
    * there is left alone; any other is stopped and closed first, and the data
    * itself is not moved. Only d.directory changes: d.base_path follows at the
-   * next open.
+   * next open. A magnet still fetching its metadata is refused before
+   * anything stops (refuseDirectoryChange).
    */
   setDirectory(hash: string, directory: string): void {
+    this.refuseDirectoryChange(hash);
     const t = this.get(hash);
     const parent = trimDirectory(directory);
     if (parent === t.parent) return;
@@ -952,6 +955,16 @@ export class Session {
     this.stop(t, nowS);
     this.close(t, nowS);
     t.parent = parent;
+  }
+
+  /**
+   * RefuseDirectoryChange: a 409 for a magnet still fetching its metadata —
+   * the torrent that metadata becomes is loaded with the add's own directory
+   * (materialize), as rtorrent's is. The PATCH route asks it before any field
+   * changes: a 409 must not follow a change.
+   */
+  refuseDirectoryChange(hash: string): void {
+    if (this.get(hash).meta) throw new HttpError(409, FETCHING_METADATA);
   }
 
   /**
@@ -1860,6 +1873,7 @@ export class Session {
       isActive: t.active,
       isPrivate: t.isPrivate,
       isMultiFile: t.multi,
+      isMeta: t.meta !== null,
       hashing: t.hashing,
       chunkSize: t.chunk,
       chunksDone: allChunks ? chunksTotal : Math.max(0, Math.min(chunksTotal - 1, Math.floor(completed / t.chunk))),

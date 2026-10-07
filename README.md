@@ -635,6 +635,17 @@ every hash before applying anything, normalize case and deduplicate, then return
 by hash in `errors`. Numeric settings reject null, booleans, fractions, unsafe integers and
 malformed strings; a typo cannot become unlimited.
 
+Text rtorrent cannot be sent is a `400` naming the field as well, in any field that reaches it as
+text — a `directory`, a link in `url`, a tracker's `url`, a `throttle` group, a setting, a `view`:
+rtorrent's XML-RPC layer takes no character beyond U+FFFF, an emoji among them, and XML none of
+U+FFFE, U+FFFF, a carriage return (it would arrive as a line feed) or bytes that are not UTF-8.
+Such a value used to reach rtorrent and fail with a `502` — after a directory change had already
+stopped the torrent; now nothing is asked of rtorrent. In an upload, such a `directory` refuses the
+whole batch, while such a link in `urls` fails on its own, named in `errors` and counted in
+`failedUrls`, and the rest are added. As an `RT_*` setting it stops the start, by the variable's
+name. A `label` takes anything: it is stored URL-encoded. The API console and `/RPC2` pass text
+through as given, and answer with rtorrent's fault.
+
 Uploads accept up to 50 files and URLs combined. `CASCADE_MAX_UPLOAD_MB` bounds the combined
 file bytes in a batch. The response contains `added`, `errors`, `failedFiles` and `failedUrls`;
 the last two are zero-based indices into the submitted files and non-empty URL lines. The Add
@@ -643,7 +654,12 @@ are structurally validated before loading; v2-only torrents are rejected with an
 `directory` with a control character in it (a line break, say) is refused: it would reach
 rtorrent inside a command. A torrent's `directory` in a `PATCH` names the same thing as an
 upload's: the directory its data goes into, a multi-file torrent's own folder inside it (see
-*Notes and limitations*).
+*Notes and limitations*). Changing the `directory` of a magnet still fetching its metadata is a
+`409`, before any other field of the `PATCH` is changed: rtorrent loads the torrent anew once the
+metadata arrives, into the directory it was added with, and a change made before then would be
+lost. Neither directory may be `/` — a `400`: rtorrent strips a directory's trailing slashes, and
+the empty path that leaves is `.`, the directory rtorrent runs in, where a single file would go. An
+upload's empty `directory`, or none, is rtorrent's default.
 
 A change, once sent, is carried through even if the client goes away, `/RPC2` included: a closed
 tab does not leave a torrent stopped halfway through a throttle change.
@@ -750,7 +766,11 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
   exactly or be sent as text (see above: one that is not UTF-8, or holds an emoji — and before
   rtorrent 0.16.3 one with a `?`, which may stand for such a byte) is kept as well when it is the
   torrent's own name; any other such folder fails the change with a `502` before anything is
-  touched.
+  touched. A magnet still fetching its metadata keeps the directory it was added with — rtorrent
+  loads the torrent anew, with the add's directory, when the metadata arrives — so "Change
+  directory" leaves it out and says so; change it once the metadata is in. A destination rtorrent
+  cannot be sent (one with an emoji in it) or `/` is refused before the torrent is touched, in the
+  prompt as in the API.
 - Deleting torrent data is confined to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and any
   `CASCADE_DELETE_ROOTS`. Paths are checked before removing metadata, and deletion stays anchored
   to an open root directory even if symlinks change. A root itself cannot be deleted. A path

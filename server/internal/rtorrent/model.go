@@ -36,6 +36,9 @@ var TorrentFields = []string{
 	"d.is_active",
 	"d.is_private",
 	"d.is_multi_file",
+	// A magnet still fetching its metadata, whose directory the UI does not
+	// offer to change (refuseFetchingMetadata in internal/service).
+	"d.is_meta",
 	"d.complete",
 	"d.hashing",
 	"d.hashing_failed",
@@ -374,6 +377,7 @@ func MapTorrent(row Row, addedAt int64) contracts.Torrent {
 		IsActive:          isActive,
 		IsPrivate:         row.flag("d.is_private"),
 		IsMultiFile:       row.flag("d.is_multi_file"),
+		IsMeta:            row.flag("d.is_meta"),
 		Hashing:           hashing,
 		ChunkSize:         row.integer("d.chunk_size"),
 		ChunksDone:        row.integer("d.completed_chunks"),

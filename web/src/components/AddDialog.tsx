@@ -6,6 +6,7 @@ import { acceptTorrents, dropText, droppedFiles, linksFromDrop } from '../files'
 import { bytes } from '../format';
 import { useMounted } from '../hooks';
 import { redactSecrets } from '../redact';
+import { directoryProblem, linesProblem, sentence } from '../rtorrentText';
 import { IconClose, IconFile, IconUpload } from './icons';
 import { Field, Switch } from './form';
 import { Modal } from './modal';
@@ -30,6 +31,13 @@ export function AddDialog({ onClose, defaultDirectory, labels }: AddDialogProps)
   const inputRef = useRef<HTMLInputElement>(null);
   const labelListId = useId();
   const toast = useToast();
+  // What the server would refuse is held here, as typed, to be put right
+  // before anything is added: a directory, which refuses the whole batch
+  // (validate.Directory), and a link line, which would fail on its own. An
+  // empty directory is rtorrent's default, and is not sent at all.
+  const directoryError = directoryProblem(directory);
+  const urlsError = linesProblem(urls);
+  const invalid = directoryError !== null || urlsError !== null;
 
   const addFiles = (list: Iterable<File>) => {
     if (busy) return;
@@ -62,7 +70,7 @@ export function AddDialog({ onClose, defaultDirectory, labels }: AddDialogProps)
   const browse = () => { if (!busy) inputRef.current?.click(); };
 
   const submit = async () => {
-    if (busy) return;
+    if (busy || invalid) return;
     if (files.length === 0 && urls.trim() === '') {
       toast.push('error', 'Add at least one .torrent file, magnet link or URL');
       return;
@@ -109,7 +117,12 @@ export function AddDialog({ onClose, defaultDirectory, labels }: AddDialogProps)
           <button className="btn" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn primary" onClick={() => void submit()} disabled={busy}>
+          <button
+            className="btn primary"
+            onClick={() => void submit()}
+            disabled={busy || invalid}
+            title={invalid ? 'Fix the fields marked in red first' : undefined}
+          >
             {busy ? 'Adding…' : 'Add'}
           </button>
         </>
@@ -187,7 +200,11 @@ export function AddDialog({ onClose, defaultDirectory, labels }: AddDialogProps)
           </div>
         )}
 
-        <Field label="Magnet links or torrent URLs" hint="One per line. Magnet links are handed to rtorrent as-is.">
+        <Field
+          label="Magnet links or torrent URLs"
+          hint="One per line. Magnet links are handed to rtorrent as-is."
+          error={urlsError === null ? undefined : sentence(urlsError)}
+        >
           <textarea
             className="textarea"
             rows={3}
@@ -201,6 +218,7 @@ export function AddDialog({ onClose, defaultDirectory, labels }: AddDialogProps)
           <Field
             label="Destination directory"
             hint={defaultDirectory ? `Default: ${defaultDirectory}` : 'Default: rtorrent’s own'}
+            error={directoryError === null ? undefined : sentence(directoryError)}
           >
             <input
               className="input"

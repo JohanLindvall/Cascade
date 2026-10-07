@@ -32,7 +32,8 @@ package rtorrent
 import (
 	"fmt"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/JohanLindvall/Cascade/server/internal/validate"
 )
 
 // shownDirectory is d.directory as the UI shows it. d.directory has no exact
@@ -92,7 +93,8 @@ func TrimDirectory(directory string) string {
 // Folder is the name of a multi-file torrent's own folder as the bytes on
 // disk, to hand back to rtorrent. ok is false when rtorrent reports it by a
 // stand-in (standin.go) the row cannot undo, or when rtorrent could not be
-// sent it (Sendable); a root with no folder of its own, such as ".", has "",
+// sent it (validate.Sendable: not UTF-8, or an emoji, which xmlrpc-c refuses
+// in a request too); a root with no folder of its own, such as ".", has "",
 // ok. questionMarks says whether this rtorrent's '?' may stand in for a byte
 // (QuestionMarksStandIn): from 0.16.3 it never does, and a folder whose only
 // mark is a '?' is its name as it is.
@@ -111,28 +113,10 @@ func Folder(row Row, questionMarks bool) (folder string, ok bool) {
 			folder = baseName(base)
 		}
 	}
-	if folder == "" || !Sendable(folder) {
+	if folder == "" || !validate.Sendable(folder) {
 		return "", false
 	}
 	return folder, true
-}
-
-// Sendable reports whether text reaches rtorrent as it is. XML-RPC text is
-// UTF-8 — the encoder makes it so, a byte that is not becoming U+FFFD —
-// xmlrpc-c 1.51 refuses a character beyond the Basic Multilingual Plane, an
-// emoji, with a fault (-503 "Call XML not a proper XML-RPC call", on 0.9.8 as
-// on 0.16.25), and XML cannot carry U+FFFE, U+FFFF or most control characters
-// (the encoder drops them) and reads a carriage return as a line feed.
-func Sendable(text string) bool {
-	if !utf8.ValidString(text) {
-		return false
-	}
-	for _, r := range text {
-		if r > 0xFFFD || r == '\r' || (r < 0x20 && r != '\t' && r != '\n') {
-			return false
-		}
-	}
-	return true
 }
 
 // NamedAfterTorrent reports whether a multi-file torrent's folder is, as far

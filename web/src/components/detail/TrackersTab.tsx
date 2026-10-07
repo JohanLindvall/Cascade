@@ -4,6 +4,7 @@ import { Fragment, memo, useState } from 'react';
 import { api } from '../../api';
 import { announcePeers, duration, relative, until } from '../../format';
 import { redactUrl } from '../../redact';
+import { sentence, unsendable } from '../../rtorrentText';
 import type { Tracker } from '../../types';
 import { useClock } from '../clock';
 import { IconPlus } from '../icons';
@@ -25,6 +26,12 @@ const TRACKER_EVENTS: Record<number, string> = {
 
 /** A tracker URL rtorrent can announce to (d.tracker.insert takes anything). */
 const TRACKER_URL = /^(https?|udp):\/\/\S+$/i;
+
+/** Why rtorrent cannot be sent a URL, as the server's 400 says it, or null. */
+function urlProblem(url: string): string | null {
+  const problem = unsendable(url);
+  return problem === null ? null : sentence(problem);
+}
 
 /** The torrent's trackers, each one switchable; a row expands to its announce history. Memoized, as FilesTab. */
 export const TrackersTab = memo(function TrackersTab({
@@ -156,7 +163,9 @@ function AddTracker({ hash, onAdded }: { hash: string; onAdded: () => void }) {
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const toast = useToast();
-  const valid = TRACKER_URL.test(url.trim());
+  // Text rtorrent cannot be sent is refused by the server too, named.
+  const problem = urlProblem(url.trim());
+  const valid = TRACKER_URL.test(url.trim()) && problem === null;
 
   const add = async () => {
     if (!valid || busy) return;
@@ -186,6 +195,7 @@ function AddTracker({ hash, onAdded }: { hash: string; onAdded: () => void }) {
         placeholder="Add a tracker — http(s):// or udp:// announce URL"
         aria-label="Tracker announce URL"
         aria-invalid={(url.trim() !== '' && !valid) || undefined}
+        title={problem ?? undefined}
         value={url}
         disabled={busy}
         onChange={(event) => setUrl(event.target.value)}

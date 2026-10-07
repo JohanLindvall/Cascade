@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { dataFolder, sharedDataFolder } from './dataFolder.ts';
+import { FETCHING_METADATA, dataFolder, leftOutFetching, sharedDataFolder } from './dataFolder.ts';
 import type { Torrent } from './types';
 
 const torrent = (hash: string, name: string, directory: string, isMultiFile: boolean) =>
@@ -54,4 +54,17 @@ test('a selection offers the directory its torrents\' data shares, single and mu
   assert.equal(sharedDataFolder(byHash, ['elsewhere']), '/media/tv');
   assert.equal(sharedDataFolder(byHash, ['single', 'gone']), '');
   assert.equal(sharedDataFolder(byHash, []), '');
+});
+
+test('a magnet still fetching its metadata is left out, and the prompt says how many', () => {
+  // The server's 409, word for word (FetchingMetadata in internal/service/torrents.go).
+  assert.equal(
+    FETCHING_METADATA,
+    'this torrent is still fetching its metadata, and once that arrives rtorrent loads it anew into the directory it was added with — a directory changed now would be lost, so wait for the metadata, then change it',
+  );
+  assert.equal(
+    leftOutFetching(1),
+    'Left out: one torrent still fetching its metadata, which rtorrent puts in the directory it was added with once that arrives.',
+  );
+  assert.match(leftOutFetching(3), /^Left out: 3 torrents still fetching their metadata, /);
 });

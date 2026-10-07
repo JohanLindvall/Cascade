@@ -58,6 +58,9 @@ func (s *Server) routes() *router {
 		if !ok {
 			view = "main"
 		}
+		if err := validate.RtorrentText(view, "view"); err != nil {
+			return nil, err
+		}
 		return s.svc.Torrents(c.ctx, view)
 	})
 	read("GET /api/prefs", func(*call) (any, error) { return s.store.Preferences(), nil })
@@ -87,7 +90,7 @@ func (s *Server) routes() *router {
 
 	handle("POST /api/torrents/upload", s.upload)
 	act("POST /api/torrents/url", func(c *call) error {
-		link, err := c.text("url", false)
+		link, err := validate.RtorrentString(c.body["url"], "url", false)
 		if err != nil {
 			return err
 		}
@@ -347,7 +350,15 @@ func (s *Server) upload(c *call) error {
 		}
 	}
 	for index, link := range urls {
-		if err := s.svc.AddTorrentURL(c.ctx, link, options); err != nil {
+		// A link rtorrent cannot be sent as text concerns that link alone: it
+		// fails as its own item, before rtorrent is asked, and the rest are
+		// added. Only the directory, which every item carries, refuses the
+		// batch (loadOptions).
+		err := validate.RtorrentText(link, "urls")
+		if err == nil {
+			err = s.svc.AddTorrentURL(c.ctx, link, options)
+		}
+		if err != nil {
 			result.FailedURLs = append(result.FailedURLs, index)
 			result.Errors = append(result.Errors, link+": "+err.Error())
 		}
@@ -369,15 +380,18 @@ func (s *Server) patchTorrent(c *call) error {
 	if err != nil {
 		return err
 	}
-	label, err := c.optionalText("label", true)
+	// The label goes URL-encoded; the throttle group and the directory reach
+	// rtorrent as text, which a directory change used to find out only after
+	// it had stopped and closed the torrent.
+	label, err := c.optionalText("label", true, validate.String)
 	if err != nil {
 		return err
 	}
-	throttle, err := c.optionalText("throttle", true)
+	throttle, err := c.optionalText("throttle", true, validate.RtorrentString)
 	if err != nil {
 		return err
 	}
-	directory, err := c.optionalText("directory", false)
+	directory, err := c.optionalText("directory", false, validate.Directory)
 	if err != nil {
 		return err
 	}
@@ -388,6 +402,16 @@ func (s *Server) patchTorrent(c *call) error {
 	downloads, err := c.optionalInteger("maxDownloads", 100_000)
 	if err != nil {
 		return err
+	}
+	// A directory the torrent cannot take now is refused before the first
+	// change as well: a magnet still fetching its metadata is a 409, which,
+	// coming after the fields ahead of it, left them changed — and unseen
+	// until the stream's next read, as a 409 does not wake it (refusedAsSent).
+	// SetDirectory asks again.
+	if directory != nil {
+		if err := s.svc.RefuseDirectoryChange(c.ctx, hash); err != nil {
+			return err
+		}
 	}
 	if priority != nil {
 		// d.priority: 0 off, 1 low, 2 normal, 3 high.

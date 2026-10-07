@@ -5,6 +5,7 @@
  * same, so a refusal reads in the demo as it does against a real install. A
  * refusal is thrown as an HttpError and answered as {"error": message}.
  */
+import { ROOT_DIRECTORY, unsendable } from '../rtorrentText.ts';
 
 export class HttpError extends Error {
   readonly status: number;
@@ -43,6 +44,25 @@ export function text(value: unknown, field: string, allowEmpty: boolean): string
   }
   if (CONTROL.test(value)) throw new HttpError(400, `${quote(field)} contains control characters`);
   return value.trim();
+}
+
+/** Text rtorrent can be sent as it is (validate.RtorrentText): what it cannot is refused, named by its field. */
+export function rtorrentText(value: string, field: string): string {
+  const problem = unsendable(value);
+  if (problem !== null) throw new HttpError(400, `${quote(field)} ${problem}`);
+  return value;
+}
+
+/** text for a value rtorrent is sent as text (validate.RtorrentString). */
+export function rtorrentString(value: unknown, field: string, allowEmpty: boolean): string {
+  return rtorrentText(text(value, field, allowEmpty), field);
+}
+
+/** rtorrentString for a directory, never the root (validate.Directory); empty is the caller's, where allowed. */
+export function directory(value: unknown, field: string, allowEmpty: boolean): string {
+  const path = rtorrentString(value, field, allowEmpty);
+  if (path !== '' && /^\/+$/.test(path)) throw new HttpError(400, `${quote(field)} ${ROOT_DIRECTORY}`);
+  return path;
 }
 
 /** A whole number from min to max; numeric strings count, as URL and form fields carry nothing else. */

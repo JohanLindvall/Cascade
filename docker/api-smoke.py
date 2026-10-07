@@ -10,10 +10,12 @@ and throttle round trips in rtorrent's own units, a setting offered only where
 its setter works, which names the legacy-name switch saves a torrent under,
 the state stream, the libtorrent path patch (a torrent named past Linux's
 255-byte limit must start), deleting the data of a torrent whose name is not
-UTF-8, and a directory change, which must not nest a multi-file torrent inside
-its own folder. Given the container's name it gives up as soon as the container
-exits rather than waiting out the readiness timeout, and looks at its disk
-where a check needs to; without it, such a check is skipped.
+UTF-8, a directory change, which must not nest a multi-file torrent inside
+its own folder, and what rtorrent cannot be sent or do with a directory — a
+magnet's still fetching its metadata among them — which must be refused before
+a running torrent is touched. Given the container's name it gives up as soon
+as the container exits rather than waiting out the readiness timeout, and looks
+at its disk where a check needs to; without it, such a check is skipped.
 
 Standard library only. It restores what it changes and removes what it adds,
 but it does change a live rtorrent: point it at a disposable container.
@@ -333,7 +335,7 @@ def check_long_file_name(cascade):
         remove_torrent(cascade, info_hash)
 
 
-def upload_torrents(cascade, *torrents, **fields):
+def upload_torrents(cascade, *torrents, expected=200, **fields):
     boundary = 'cascade-smoke-' + uuid.uuid4().hex
     form = b''.join(
         (f'--{boundary}\r\nContent-Disposition: form-data; name="torrents"; filename="t{i}.torrent"\r\n'
@@ -343,7 +345,7 @@ def upload_torrents(cascade, *torrents, **fields):
         for name, value in fields.items()) + f'--{boundary}--\r\n'.encode()
     status, _, body = cascade.fetch('/api/torrents/upload', form, 'POST',
                                     {'content-type': f'multipart/form-data; boundary={boundary}'})
-    assert status == 200, (status, body)
+    assert status == expected, (status, body)
     return json.loads(body)
 
 
@@ -503,6 +505,135 @@ def check_directory_change(cascade):
             cascade.fetch(f'/api/torrents/{info_hash}', method='DELETE')
 
 
+EMOJI = '\U0001F3AC'
+BEYOND = (f'contains "{EMOJI}" (U+1F3AC): rtorrent\'s XML-RPC layer takes no character beyond U+FFFF, '
+          'such as an emoji')
+ROOT = ('"directory" cannot be "/": rtorrent strips a directory\'s trailing slashes and would put a single file '
+        'in ".", the directory it runs in')
+FETCHING_METADATA = ('this torrent is still fetching its metadata, and once that arrives rtorrent loads it anew into '
+                     'the directory it was added with — a directory changed now would be lost, so wait for the '
+                     'metadata, then change it')
+
+
+def held(cascade, info_hash):
+    """What a refused change must leave as it was: running, open, where it was."""
+    return [cascade.rpc(command, info_hash) for command in ('d.state', 'd.is_active', 'd.is_open', 'd.directory')]
+
+
+def listed(cascade):
+    return {t['hash']: t for t in cascade.api('/api/state')['torrents']}
+
+
+def check_what_rtorrent_cannot_take(cascade):
+    """What rtorrent cannot do with a value is refused before anything is
+    touched, so a running torrent keeps running. Text its XML-RPC layer cannot
+    carry — xmlrpc-c faults on a character beyond U+FFFF, and a directory
+    change used to stop and close the torrent before the fault came back — is
+    a 400 naming the field, wherever it is typed, but for a link of an upload,
+    which fails as an item of its own while the rest are added; so is the root
+    as a directory, which rtorrent strips to nothing and reads as "."."""
+    tag = uuid.uuid4().hex[:8]
+    downloads = cascade.rpc('directory.default').rstrip('/') or '/'
+    data = tag.encode() * 2048
+    info = {'piece length': len(data), 'pieces': hashlib.sha1(data).digest(), 'name': f'running {tag}.bin',
+            'length': len(data)}
+    info_hash = hashlib.sha1(bencode(info)).hexdigest().upper()
+    magnet_hash = hashlib.sha1(tag.encode()).hexdigest().upper()
+    magnet = f'magnet:?xt=urn:btih:{magnet_hash}&dn=smoke-{tag}'
+    clapped_hash = hashlib.sha1(f'{tag} clapped'.encode()).hexdigest().upper()
+    clapped = f'magnet:?xt=urn:btih:{clapped_hash}&dn=smoke-{tag}&tr={EMOJI}'
+    other = {**info, 'name': f'held {tag}.bin'}
+    other_hash = hashlib.sha1(bencode(other)).hexdigest().upper()
+
+    def refused(path, body, error, method='POST'):
+        reply = cascade.api(path, body, method, expected=400)
+        assert reply == {'error': error}, (path, body, reply)
+
+    try:
+        # Started with no data and no peer: running, and staying so.
+        assert upload_torrent(cascade, info)['added'] == 1
+        before = held(cascade, info_hash)
+        assert before[:3] == [1, 1, 1], before
+        patch = f'/api/torrents/{info_hash}'
+        refused(patch, {'priority': 0, 'directory': f'{downloads}/films {EMOJI}'}, f'"directory" {BEYOND}', 'PATCH')
+        refused(patch, {'directory': '/'}, ROOT, 'PATCH')
+        refused(patch, {'directory': ' // '}, ROOT, 'PATCH')
+        refused(patch, {'throttle': f'slow {EMOJI}'}, f'"throttle" {BEYOND}', 'PATCH')
+        assert held(cascade, info_hash) == before, held(cascade, info_hash)
+        assert cascade.rpc('d.priority', info_hash) != 0, 'a refused patch changed a field before the bad one'
+
+        # An add's directory, which every item of the batch carries, refuses the whole batch before
+        # any of it is loaded.
+        again = bencode({'announce': 'http://tracker.invalid/announce', 'info': other})
+        for fields, error in [({'directory': f'{downloads}/{EMOJI}'}, f'"directory" {BEYOND}'),
+                              ({'directory': '/'}, ROOT)]:
+            assert upload_torrents(cascade, again, expected=400, **fields) == {'error': error}, fields
+        refused('/api/torrents/url', {'url': f'{magnet}&tr={EMOJI}'}, f'"url" {BEYOND}')
+        refused('/api/torrents/url', {'url': magnet, 'directory': '//'}, ROOT)
+        loaded = listed(cascade)
+        assert other_hash not in loaded and magnet_hash not in loaded, 'a refused add loaded something'
+        refused(f'/api/torrents/{info_hash}/trackers', {'url': f'udp://tracker.invalid:6969/{EMOJI}'}, f'"url" {BEYOND}')
+        refused('/api/settings', {'directory': f'{downloads}/{EMOJI}'}, f'"directory" {BEYOND}')
+        assert cascade.rpc('directory.default').rstrip('/') == downloads.rstrip('/')
+        refused('/api/torrents?view=' + urllib.parse.quote(EMOJI), None, f'"view" {BEYOND}', 'GET')
+
+        # A link concerns itself alone: one rtorrent cannot be sent fails as its own item, named,
+        # and the file and the link beside it are added.
+        reply = upload_torrents(cascade, again, urls=f'{clapped}\n{magnet}', start='0')
+        assert reply == {'added': 2, 'errors': [f'{clapped}: "urls" {BEYOND}'], 'failedFiles': [],
+                         'failedUrls': [0]}, reply
+        for _ in range(20):
+            loaded = listed(cascade)
+            if other_hash in loaded and magnet_hash in loaded:
+                break
+            time.sleep(0.25)
+        assert other_hash in loaded and magnet_hash in loaded, 'the items beside the link refused were not added'
+        assert clapped_hash not in loaded, 'the link refused was added'
+    finally:
+        for added in (info_hash, other_hash, magnet_hash, clapped_hash):
+            remove_torrent(cascade, added)
+
+
+def check_fetching_metadata(cascade):
+    """A magnet still fetching its metadata is a download of the metadata
+    alone, which rtorrent replaces once that arrives with the torrent, loaded
+    with the add's own directory. Changing its directory is a 409 before
+    anything is touched, and it keeps fetching; the listing says which it is."""
+    tag = uuid.uuid4().hex[:8]
+    downloads = cascade.rpc('directory.default').rstrip('/') or '/'
+    magnet_hash = hashlib.sha1(f'smoke meta {tag}'.encode()).hexdigest().upper()
+    try:
+        cascade.api('/api/torrents/url', {'url': f'magnet:?xt=urn:btih:{magnet_hash}&dn=smoke-meta-{tag}',
+                                          'directory': downloads})
+        assert cascade.rpc('d.is_meta', magnet_hash) == 1
+        for _ in range(20):
+            torrents = listed(cascade)
+            if magnet_hash in torrents:
+                break
+            time.sleep(0.25)
+        assert torrents[magnet_hash]['isMeta'] is True, torrents[magnet_hash]
+        fetching = held(cascade, magnet_hash)
+        assert fetching[:3] == [1, 1, 1], fetching
+        reply = cascade.api(f'/api/torrents/{magnet_hash}', {'directory': f'{downloads}/smoke-moved-{tag}'}, 'PATCH',
+                            expected=409)
+        assert reply == {'error': FETCHING_METADATA}, reply
+        assert held(cascade, magnet_hash) == fetching, held(cascade, magnet_hash)
+        # Refused before the fields ahead of it change, or they would stay changed behind a 409,
+        # which leaves the stream alone — the throttle group's after a stop and a start.
+        fields = ('d.priority', 'd.custom1', 'd.throttle_name')
+        before = [cascade.rpc(command, magnet_hash) for command in fields]
+        reply = cascade.api(f'/api/torrents/{magnet_hash}',
+                            {'priority': 0, 'label': f'smoke-{tag}', 'throttle': f'smoke{tag}',
+                             'directory': f'{downloads}/smoke-moved-{tag}'}, 'PATCH', expected=409)
+        assert reply == {'error': FETCHING_METADATA}, reply
+        assert [cascade.rpc(command, magnet_hash) for command in fields] == before, \
+            [cascade.rpc(command, magnet_hash) for command in fields]
+        assert before[0] != 0, before
+        assert held(cascade, magnet_hash) == fetching, held(cascade, magnet_hash)
+    finally:
+        remove_torrent(cascade, magnet_hash)
+
+
 def check_stream(cascade):
     """The state stream: a compressed snapshot first, then a delta once a
     change lands — here a preference, which the status carries."""
@@ -561,6 +692,8 @@ def main(base, container=None):
     check_long_file_name(cascade)
     check_names_that_are_not_text(cascade)
     check_directory_change(cascade)
+    check_what_rtorrent_cannot_take(cascade)
+    check_fetching_metadata(cascade)
     check_stream(cascade)
     print(f'API smoke test passed on rtorrent {version}')
 

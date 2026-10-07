@@ -46,6 +46,8 @@ export interface Torrent {
   isActive: boolean;
   isPrivate: boolean;
   isMultiFile: boolean;
+  /** A magnet still fetching its metadata (d.is_meta): its directory cannot be changed until that arrives. */
+  isMeta: boolean;
   hashing: number;
   chunkSize: number;
   chunksDone: number;

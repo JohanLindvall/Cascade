@@ -55,6 +55,19 @@ func TestStatusFollowsTheLifecycle(t *testing.T) {
 	}
 }
 
+// A magnet still fetching its metadata is listed as a download of the
+// metadata alone, "<HASH>.meta", 1 byte, running; d.is_meta tells it apart
+// (0.9.8 and 0.16.25), and a backend without the command has none.
+func TestAMagnetFetchingItsMetadataIsToldApart(t *testing.T) {
+	fetching := MapTorrent(row(Row{"d.is_meta": int64(1), "d.name": strings.Repeat("A", 40) + ".meta", "d.size_bytes": int64(1)}), 0)
+	if !fetching.IsMeta || fetching.Status != contracts.StatusDownloading {
+		t.Fatalf("%#v", fetching)
+	}
+	if MapTorrent(row(Row{"d.is_meta": int64(0)}), 0).IsMeta || MapTorrent(row(nil), 0).IsMeta {
+		t.Fatal("a torrent is not its metadata")
+	}
+}
+
 func TestATrackerWhingeIsNotAnErrorAnythingElseIs(t *testing.T) {
 	if got := MapTorrent(row(Row{"d.message": "Tracker: [Timeout was reached]"}), 0).Status; got != contracts.StatusDownloading {
 		t.Errorf("tracker message: %s", got)

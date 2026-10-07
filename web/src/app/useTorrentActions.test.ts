@@ -25,10 +25,24 @@ function promptDirectory(): string {
 }
 
 test('"Change directory" is pre-filled with the directory the data goes into', () => {
-  assert.match(promptDirectory(), /\binitial: sharedDataFolder\(byHash, hashes\),/);
+  assert.match(promptDirectory(), /\binitial: sharedDataFolder\(byHash, moving\),/);
 });
 
 test('and reads no torrent\'s directory for it', () => {
   // `torrent.directory`, `t.directory` or `({ directory }) =>`: d.directory, a multi-file torrent's own folder.
   assert.doesNotMatch(promptDirectory(), /\.directory\b|\{\s*directory\s*\}\s*\)\s*=>/);
+});
+
+test('a magnet still fetching its metadata is left out, in the server\'s words', () => {
+  // rtorrent loads it anew, with the add's directory, once the metadata
+  // arrives; the server refuses the change with FETCHING_METADATA (a 409).
+  const source = promptDirectory();
+  assert.match(source, /const moving = hashes\.filter\(\(hash\) => !byHash\.get\(hash\)\?\.isMeta\);/);
+  assert.match(source, /`\$\{name\}: \$\{FETCHING_METADATA\}`/);
+  assert.match(source, /items: names\(moving\),/);
+  assert.match(source, /await patch\(\{ directory: directory\.trim\(\) \}, moving\);/);
+});
+
+test('and what the server would refuse is held in the prompt, as typed', () => {
+  assert.match(promptDirectory(), /validate: \(text\) => \{\s*const problem = directoryProblem\(text\);/);
 });

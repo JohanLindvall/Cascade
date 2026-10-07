@@ -266,7 +266,11 @@ func (s *Service) SetTorrentSlots(ctx context.Context, hash string, uploads, dow
 // multi-file torrent's own folder, which keeps its name on disk (see
 // rtorrent/directory.go). The data itself is not moved. A torrent whose data
 // already goes there is left alone, running or not, so the directory the UI
-// offers changes nothing when it is sent back as it is.
+// offers changes nothing when it is sent back as it is; a magnet still
+// fetching its metadata is refused (refuseFetchingMetadata, which a PATCH asks
+// before its other fields too: RefuseDirectoryChange). The directory is
+// the API's to check: the root, or one rtorrent cannot be sent, is refused
+// there (validate.Directory).
 func (s *Service) SetDirectory(ctx context.Context, hash, directory string) error {
 	ctx = detached(ctx)
 	// As rtorrent keeps a directory, and as DataDirectory reads the listing's:
@@ -279,6 +283,9 @@ func (s *Service) SetDirectory(ctx context.Context, hash, directory string) erro
 		}
 		if !s.caps.Supports("perTorrentDirectory") {
 			return httperr.New(http.StatusNotImplemented, "this rtorrent build does not support changing a torrent directory")
+		}
+		if err := s.refuseFetchingMetadata(ctx, hash); err != nil {
+			return err
 		}
 		questionMarks := rtorrent.QuestionMarksStandIn(s.caps.Info().ClientVersion)
 		where, err := s.placement(ctx, hash, questionMarks)
@@ -305,6 +312,49 @@ func (s *Service) SetDirectory(ctx context.Context, hash, directory string) erro
 		_, err = s.client.Call(ctx, "d.save_full_session", hash)
 		return err
 	})
+}
+
+// FetchingMetadata is why a directory change leaves a magnet alone until its
+// metadata has arrived (refuseFetchingMetadata). The web UI says the same
+// (FETCHING_METADATA in web/src/dataFolder.ts).
+const FetchingMetadata = "this torrent is still fetching its metadata, and once that arrives rtorrent loads it anew " +
+	"into the directory it was added with — a directory changed now would be lost, so wait for the metadata, " +
+	"then change it"
+
+// RefuseDirectoryChange is SetDirectory's refusal of a magnet still fetching
+// its metadata, asked on its own: a PATCH asks it before the first of its
+// fields changes anything, as a 409 must never follow a change — it leaves
+// the stream alone (refusedAsSent in internal/httpapi). A torrent never
+// becomes a download of its metadata again, so SetDirectory, which asks once
+// more in the torrent's queue, cannot refuse what this let through.
+func (s *Service) RefuseDirectoryChange(ctx context.Context, hash string) error {
+	ctx = detached(ctx)
+	if err := s.caps.Ensure(ctx); err != nil {
+		return err
+	}
+	return s.refuseFetchingMetadata(ctx, hash)
+}
+
+// refuseFetchingMetadata is a 409 for a magnet still fetching its metadata,
+// before anything is stopped. What the session holds until the metadata
+// arrives is a download of the metadata alone (d.is_meta, on 0.9.8 as on
+// 0.16.25), and when it is complete rtorrent stops and erases it and loads the
+// torrent from the metadata with the commands the add carried — its
+// d.directory.set among them — so a directory set on it now is lost. The stop
+// and close a change takes held the fetch up besides: started again, 0.16.25
+// left it idle until a recheck.
+func (s *Service) refuseFetchingMetadata(ctx context.Context, hash string) error {
+	if !s.caps.Has("d.is_meta") {
+		return nil
+	}
+	meta, err := s.client.Call(ctx, "d.is_meta", hash)
+	if err != nil {
+		return err
+	}
+	if rtorrent.Number(meta) != 0 {
+		return httperr.New(http.StatusConflict, FetchingMetadata)
+	}
+	return nil
 }
 
 // placement reads what a directory change needs to know of a torrent: its
