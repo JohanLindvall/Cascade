@@ -196,6 +196,20 @@ export function hostPort(address: string, port: number): string {
 }
 
 /**
+ * The peers a tracker's last announce returned and, after a plus, how many of
+ * them were new to the torrent: "200 +37", "200" when none were, "—" when it
+ * returned none, as the trackers table's Peers column writes them (the new
+ * ones in green there). An expanded tracker's block shows them beside its
+ * longest key, which in retro leaves them 11 letters of the narrowest column
+ * (.mini-kv b in styles.css): a longer value would wrap whenever the count
+ * grew, and the block would gain a line and lose it again with the polls.
+ */
+export function announcePeers(sum: number, fresh: number): string {
+  const peers = sum > 0 ? String(sum) : '—';
+  return fresh > 0 ? `${peers} +${fresh}` : peers;
+}
+
+/**
  * A magnet link that reproduces the torrent from its info hash. Trackers are
  * left out on purpose: a private tracker's announce URL carries the owner's
  * passkey, and a copied magnet gets pasted to other people.

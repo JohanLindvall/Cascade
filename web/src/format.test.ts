@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import {
   FILE_PRIORITIES,
   TORRENT_PRIORITIES,
+  announcePeers,
   bytes,
   duration,
   fileName,
@@ -181,6 +182,14 @@ test('the port is whatever follows the last colon outside the brackets', () => {
       assert.ok(!host.includes(':') || /^\[[^\]]*\]$/.test(host), text);
     }
   }
+});
+
+test("an announce's peers read as the trackers table writes them: the new ones after a plus", () => {
+  assert.equal(announcePeers(200, 37), '200 +37');
+  assert.equal(announcePeers(200, 0), '200');
+  assert.equal(announcePeers(0, 0), '—');
+  // Whether it fits its block is expanded.test.ts's count.
+  assert.equal(announcePeers(9999, 9999), '9999 +9999');
 });
 
 test('log lines split into time, level and message', () => {

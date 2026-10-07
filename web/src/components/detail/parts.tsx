@@ -29,6 +29,8 @@ export const yesNo = (value: boolean) => (value ? 'yes' : 'no');
  * the pane on screen however wide the table. Every value shows whole, wrapping
  * where its column is too narrow; a 'wide' row has a line of its own, for a
  * long value that is read or copied whole: a peer's address, ID and client.
+ * A value that changes with the polls must fit beside its key unwrapped, or
+ * the block grows and shrinks as it changes: expanded.test.ts counts letters.
  */
 export function MiniKv({ rows }: { rows: Array<[key: string, value: ReactNode, width?: 'wide']> }) {
   return (

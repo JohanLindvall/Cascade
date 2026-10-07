@@ -1642,8 +1642,14 @@ table.grid tr.detail-row > td {
 /* Every value is shown whole: one longer than the room beside its key (a
    tracker's ID; on a phone, a peer's address, ID or client) wraps rather than
    ending in an ellipsis, inside a word if it has to, and copies as it was.
-   The figures that change with each poll are short enough for the narrowest
-   column, so a block keeps its height between polls. */
+   A value that changes with the polls must fit without wrapping, or its block
+   would gain a line and lose it again, and every row below would jump with
+   it. The narrowest column is 226px, and retro draws the widest letters, its
+   keys in the mono font too: at about 7.2px each, a key and its value share
+   30 of them there, in the 216px the gap leaves. The longest key, "Peers last
+   announce", leaves its value 11, which "200 +37", as the row writes it,
+   fits and "200 (37 new)" did not. expanded.test.ts holds each such pair to
+   that count. */
 .mini-kv b {
   font-family: var(--mono);
   font-size: 11.5px;
