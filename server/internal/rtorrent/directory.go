@@ -26,6 +26,7 @@ package rtorrent
 // once, in d.base_path only once the torrent opens again.
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 )
@@ -121,10 +122,67 @@ func Sendable(text string) bool {
 
 // NamedAfterTorrent reports whether a multi-file torrent's folder is, as far
 // as rtorrent's text tells, the torrent's own name — the one d.directory.set
-// gives it.
+// gives it, shortened where the image's libtorrent shortens it.
 func NamedAfterTorrent(row Row) bool {
-	name, _ := row.bytes("d.name")
-	return name != "" && Reports(name, baseName(row.text("d.directory")))
+	name, exact := row.bytes("d.name")
+	folder := baseName(row.text("d.directory"))
+	switch {
+	case name == "":
+		return false
+	case Reports(name, folder):
+		return true
+	case exact || !MayStandIn(name):
+		return Reports(fitComponent(name), folder)
+	}
+	return fittedLike(name, folder)
+}
+
+// fittedLike reports whether a folder has the shape fitComponent gives a
+// name, both read through stand-ins: the name's start, "~" and eight hex
+// digits, the name's ending. A stand-in replaces byte by byte, so the start
+// and the ending survive it; the tag, a hash of the bytes it hides, cannot be
+// checked.
+func fittedLike(name, folder string) bool {
+	cut := strings.LastIndexByte(folder, '~')
+	if cut < 0 || len(folder) < cut+9 || len(name) <= 255 {
+		return false
+	}
+	for _, c := range folder[cut+1 : cut+9] {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	ext := folder[cut+9:]
+	return (ext == "" || ext[0] == '.') && strings.HasPrefix(name, folder[:cut]) && strings.HasSuffix(name, ext)
+}
+
+// fitComponent is the name the image's libtorrent gives a path component
+// longer than Linux allows (docker/patches/path_fit.h, AGENTS.md quirk 12):
+// the stem cut at a UTF-8 boundary, "~" and an FNV-1a tag of the original,
+// a short extension kept. A multi-file torrent's folder goes through it.
+func fitComponent(name string) string {
+	const limit = 255
+	if len(name) <= limit {
+		return name
+	}
+	ext := ""
+	if dot := strings.LastIndexByte(name, '.'); dot > 0 && len(name)-dot <= 16 && !strings.ContainsAny(name[dot:], " \t") {
+		ext = name[dot:]
+	}
+	tag := uint32(2166136261)
+	for i := 0; i < len(name); i++ {
+		tag ^= uint32(name[i])
+		tag *= 16777619
+	}
+	suffix := fmt.Sprintf("~%08x", tag)
+	cut := limit - len(suffix) - len(ext)
+	for cut > 0 && name[cut]&0xC0 == 0x80 {
+		cut--
+	}
+	for cut > 0 && (name[cut-1] == ' ' || name[cut-1] == '.') {
+		cut--
+	}
+	return name[:cut] + suffix + ext
 }
 
 // JoinDirectory puts name inside directory the way d.directory.set does.

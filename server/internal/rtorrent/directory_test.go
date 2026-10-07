@@ -2,7 +2,11 @@
 
 package rtorrent
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 func TestTheDataDirectoryIsWhereTheDataGoesNotTheTorrentsOwnFolder(t *testing.T) {
 	for _, c := range []struct {
@@ -91,12 +95,52 @@ func TestAFolderNamedAfterItsTorrent(t *testing.T) {
 		{"the name as bytes", Row{"d.directory": "/downloads/Caf%E9", "d.name.base64": b64("Caf\xe9")}, true},
 		// A name that is text, under a path that is not: the whole path is the stand-in.
 		{"the name as text", Row{"d.directory": "/downloads/Caf?/Caf??", "d.name": "Café"}, true},
+		// Shortened by the libtorrent patch, emoji and all, as d.directory.set shortens it again.
+		{"the name shortened", Row{"d.directory": "/downloads/" + EscapeCodes(fitComponent(longName)),
+			"d.name.base64": b64(longName)}, true},
+		{"another name shortened", Row{"d.directory": "/downloads/" + EscapeCodes(fitComponent(longName+"!")),
+			"d.name.base64": b64(longName)}, false},
+		// Before 0.16.13 the name is a stand-in too, and only the shape can be told.
+		{"a stand-in shortened", Row{"d.directory": "/downloads/" + QuestionMarks(fitComponent(longName)),
+			"d.name": QuestionMarks(longName)}, true},
+		{"an escaped one shortened", Row{"d.directory": "/downloads/" + EscapeCodes(fitComponent(longName)),
+			"d.name": EscapeCodes(longName)}, true},
+		{"the shape of another name", Row{"d.directory": "/downloads/" + QuestionMarks(fitComponent("Other "+longName)),
+			"d.name": QuestionMarks(longName)}, false},
 		{"another name", Row{"d.directory": "/downloads/Caf?", "d.name": "Show S01"}, false},
 		{"no name", Row{"d.directory": "/downloads/x"}, false},
 	} {
 		if got := NamedAfterTorrent(c.row); got != c.want {
 			t.Errorf("%s: %v", c.name, got)
 		}
+	}
+}
+
+// longName is a multi-file torrent's name past the 255 bytes a path component may hold.
+var longName = strings.Repeat("\U0001F3B5 Song ", 30) + "[FLAC]"
+
+// The rule docker/patches/path_fit.h compiles into the image's libtorrent,
+// held to the values its own test and the demo's port are held to.
+func TestAComponentIsFittedAsTheImagesLibtorrentFitsIt(t *testing.T) {
+	for _, same := range []string{"", "Some.Series.S01E01.mkv", strings.Repeat("a", 255)} {
+		if got := fitComponent(same); got != same {
+			t.Errorf("%q fitted to %q", same, got)
+		}
+	}
+	if got, want := fitComponent(strings.Repeat("a", 300)+".bin"), strings.Repeat("a", 242)+"~d9bcc566.bin"; got != want {
+		t.Errorf("%q, want %q", got, want)
+	}
+	if fitComponent(strings.Repeat("x", 300)+"A.bin") == fitComponent(strings.Repeat("x", 300)+"B.bin") {
+		t.Error("names that differ past the cut collide")
+	}
+	for _, name := range []string{longName, strings.Repeat("\U0001F3B5", 80) + ".flac", strings.Repeat("w", 240) + strings.Repeat(" ", 30) + "tail.mkv"} {
+		fitted := fitComponent(name)
+		if len(fitted) > 255 || !utf8.ValidString(fitted) || strings.Contains(fitted, " ~") {
+			t.Errorf("%q fitted to %q", name, fitted)
+		}
+	}
+	if !strings.HasSuffix(fitComponent(strings.Repeat("\U0001F3B5", 80)+".flac"), ".flac") {
+		t.Error("the extension was lost")
 	}
 }
 
