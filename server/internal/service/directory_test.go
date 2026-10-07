@@ -241,3 +241,30 @@ func TestAQuestionMarkInAFolderIsItselfFrom0163(t *testing.T) {
 		}
 	}
 }
+
+// A magnet still fetching its metadata is a download of the metadata alone
+// (d.is_meta). Once that is complete rtorrent erases it and loads the torrent
+// from it with the commands the add carried, its directory among them, so a
+// directory set meanwhile was lost — after the stop it takes had held up the
+// fetch. It is refused before anything is sent, even where the stand-in sits
+// in the very directory asked for: the torrent goes where the add said.
+func TestAMagnetStillFetchingItsMetadataIsRefusedBeforeAnythingStops(t *testing.T) {
+	for _, directory := range []string{"/downloads/fromadd", "/media"} {
+		client := placed(directory, false, "d.is_meta").Answer("d.is_meta", 1)
+		err := newService(t, client, nil).SetDirectory(ctx, hash, "/media")
+		if code := status(t, err); code != 409 || err.Error() != FetchingMetadata || len(changes(client)) != 0 {
+			t.Fatalf("%s: %d %v %v", directory, code, err, changes(client))
+		}
+		if got := client.Methods(); slices.Contains(got, "d.directory") || slices.Contains(got, "d.is_multi_file") {
+			t.Errorf("read before the refusal: %v", got)
+		}
+	}
+	// The torrent the metadata became is no download of it, and moves.
+	client := placed("/downloads/fromadd", false, "d.is_meta").Answer("d.is_meta", 0)
+	if err := newService(t, client, nil).SetDirectory(ctx, hash, "/media"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := changes(client), movedWith("d.directory.set", "/media"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("%v", got)
+	}
+}

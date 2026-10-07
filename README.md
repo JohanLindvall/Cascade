@@ -643,7 +643,9 @@ are structurally validated before loading; v2-only torrents are rejected with an
 `directory` with a control character in it (a line break, say) is refused: it would reach
 rtorrent inside a command. A torrent's `directory` in a `PATCH` names the same thing as an
 upload's: the directory its data goes into, a multi-file torrent's own folder inside it (see
-*Notes and limitations*).
+*Notes and limitations*). Changing the `directory` of a magnet still fetching its metadata is a
+`409`: rtorrent loads the torrent anew once the metadata arrives, into the directory it was added
+with, and a change made before then would be lost.
 
 A change, once sent, is carried through even if the client goes away, `/RPC2` included: a closed
 tab does not leave a torrent stopped halfway through a throttle change.
@@ -750,7 +752,9 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
   exactly or be sent as text (see above: one that is not UTF-8, or holds an emoji — and before
   rtorrent 0.16.3 one with a `?`, which may stand for such a byte) is kept as well when it is the
   torrent's own name; any other such folder fails the change with a `502` before anything is
-  touched.
+  touched. A magnet still fetching its metadata keeps the directory it was added with — rtorrent
+  loads the torrent anew, with the add's directory, when the metadata arrives — so "Change
+  directory" leaves it out and says so; change it once the metadata is in.
 - Deleting torrent data is confined to `RT_DOWNLOAD_DIR`, `RT_COMPLETED_DIR` and any
   `CASCADE_DELETE_ROOTS`. Paths are checked before removing metadata, and deletion stays anchored
   to an open root directory even if symlinks change. A root itself cannot be deleted. A path

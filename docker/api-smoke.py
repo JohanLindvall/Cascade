@@ -10,10 +10,12 @@ and throttle round trips in rtorrent's own units, a setting offered only where
 its setter works, which names the legacy-name switch saves a torrent under,
 the state stream, the libtorrent path patch (a torrent named past Linux's
 255-byte limit must start), deleting the data of a torrent whose name is not
-UTF-8, and a directory change, which must not nest a multi-file torrent inside
-its own folder. Given the container's name it gives up as soon as the container
-exits rather than waiting out the readiness timeout, and looks at its disk
-where a check needs to; without it, such a check is skipped.
+UTF-8, a directory change, which must not nest a multi-file torrent inside
+its own folder, and one rtorrent would lose — a magnet's while it fetches its
+metadata — which must be refused before the magnet is touched. Given the
+container's name it gives up as soon as the container exits rather than
+waiting out the readiness timeout, and looks at its disk where a check needs
+to; without it, such a check is skipped.
 
 Standard library only. It restores what it changes and removes what it adds,
 but it does change a live rtorrent: point it at a disposable container.
@@ -503,6 +505,48 @@ def check_directory_change(cascade):
             cascade.fetch(f'/api/torrents/{info_hash}', method='DELETE')
 
 
+FETCHING_METADATA = ('this torrent is still fetching its metadata, and once that arrives rtorrent loads it anew into '
+                     'the directory it was added with — a directory changed now would be lost, so wait for the '
+                     'metadata, then change it')
+
+
+def held(cascade, info_hash):
+    """What a refused change must leave as it was: running, open, where it was."""
+    return [cascade.rpc(command, info_hash) for command in ('d.state', 'd.is_active', 'd.is_open', 'd.directory')]
+
+
+def listed(cascade):
+    return {t['hash']: t for t in cascade.api('/api/state')['torrents']}
+
+
+def check_fetching_metadata(cascade):
+    """A magnet still fetching its metadata is a download of the metadata
+    alone, which rtorrent replaces once that arrives with the torrent, loaded
+    with the add's own directory. Changing its directory is a 409 before
+    anything is touched, and it keeps fetching; the listing says which it is."""
+    tag = uuid.uuid4().hex[:8]
+    downloads = cascade.rpc('directory.default').rstrip('/') or '/'
+    magnet_hash = hashlib.sha1(f'smoke meta {tag}'.encode()).hexdigest().upper()
+    try:
+        cascade.api('/api/torrents/url', {'url': f'magnet:?xt=urn:btih:{magnet_hash}&dn=smoke-meta-{tag}',
+                                          'directory': downloads})
+        assert cascade.rpc('d.is_meta', magnet_hash) == 1
+        for _ in range(20):
+            torrents = listed(cascade)
+            if magnet_hash in torrents:
+                break
+            time.sleep(0.25)
+        assert torrents[magnet_hash]['isMeta'] is True, torrents[magnet_hash]
+        fetching = held(cascade, magnet_hash)
+        assert fetching[:3] == [1, 1, 1], fetching
+        reply = cascade.api(f'/api/torrents/{magnet_hash}', {'directory': f'{downloads}/smoke-moved-{tag}'}, 'PATCH',
+                            expected=409)
+        assert reply == {'error': FETCHING_METADATA}, reply
+        assert held(cascade, magnet_hash) == fetching, held(cascade, magnet_hash)
+    finally:
+        remove_torrent(cascade, magnet_hash)
+
+
 def check_stream(cascade):
     """The state stream: a compressed snapshot first, then a delta once a
     change lands — here a preference, which the status carries."""
@@ -561,6 +605,7 @@ def main(base, container=None):
     check_long_file_name(cascade)
     check_names_that_are_not_text(cascade)
     check_directory_change(cascade)
+    check_fetching_metadata(cascade)
     check_stream(cascade)
     print(f'API smoke test passed on rtorrent {version}')
 

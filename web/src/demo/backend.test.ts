@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LogScopeChange, StateResponse, Torrent, TorrentFile, Tracker, UploadResult } from '../contracts.ts';
-import { dataFolder, sharedDataFolder } from '../dataFolder.ts';
+import { FETCHING_METADATA, dataFolder, sharedDataFolder } from '../dataFolder.ts';
 import { DEFAULT_PREFERENCES } from '../preferences.ts';
 import { DEFAULT_POLL_MS, DemoServer, type DemoRequest, type DemoResponse, type UploadPart } from './backend.ts';
 import { ManualClock, torrentFile } from './fixtures.ts';
@@ -258,6 +258,21 @@ test('a directory change reads the directory above a folder without trailing sla
   ok('PATCH', `torrents/${cosmos.hash}`, { directory: dataFolder(before) });
   const after = named('Cosmos');
   assert.deepEqual([after.directory, after.status], [before.directory, before.status]);
+});
+
+test('a magnet still fetching its metadata keeps the directory it was added with: refused, running on', () => {
+  const { ok, refused, named, clock } = setup();
+  ok('POST', 'torrents/url', { url: 'magnet:?xt=urn:btih:89abcdef0123456789abcdef0123456789abcdef&dn=open-movie.mkv', directory: '/downloads/fromadd' });
+  const meta = named('89ABCDEF0123456789ABCDEF0123456789ABCDEF.meta');
+  assert.deepEqual([meta.isMeta, meta.status], [true, 'downloading']);
+  refused('PATCH', `torrents/${meta.hash}`, { directory: '/media' }, 409, FETCHING_METADATA);
+  assert.deepEqual([named(meta.name).status, named(meta.name).directory], [meta.status, meta.directory]);
+  // Once the metadata is in, rtorrent has loaded the torrent with the add's directory, and it moves.
+  clock.advance(8000);
+  const fetched = named('open-movie.mkv');
+  assert.deepEqual([fetched.hash, fetched.isMeta, fetched.directory], [meta.hash, false, '/downloads/fromadd']);
+  ok('PATCH', `torrents/${fetched.hash}`, { directory: '/media' });
+  assert.deepEqual([named('open-movie.mkv').directory, named('open-movie.mkv').status], ['/media', 'stopped']);
 });
 
 test('removing: the data goes only from inside the data roots, refused before the torrent is erased', () => {

@@ -5,7 +5,7 @@ import { api, type BulkResult } from '../api';
 import { useDialogs } from '../components/dialogs';
 import { useToast } from '../components/toast';
 import type { MenuActions } from '../components/TorrentMenu';
-import { sharedDataFolder } from '../dataFolder';
+import { FETCHING_METADATA, leftOutFetching, sharedDataFolder } from '../dataFolder';
 import { magnetLink, nameErrors } from '../format';
 import { sharedValue } from '../sharedValue';
 import type { Policy, Torrent } from '../types';
@@ -156,22 +156,32 @@ export function useTorrentActions({ targets, byHash, labels, policy, downloadDir
   const promptDirectory = useCallback(
     async (hashes: string[] = targets) => {
       if (hashes.length === 0) return;
+      // A magnet still fetching its metadata is loaded anew once that
+      // arrives, into the directory it was added with: the server refuses to
+      // change it (a 409), so it is left out, and said so in the same words.
+      const fetching = hashes.filter((hash) => byHash.get(hash)?.isMeta);
+      const moving = hashes.filter((hash) => !byHash.get(hash)?.isMeta);
+      if (moving.length === 0) {
+        for (const name of names(fetching)) toast.push('info', `${name}: ${FETCHING_METADATA}`);
+        return;
+      }
       const directory = await dialogs.prompt({
         title: 'Change directory',
         label: 'Destination directory',
         hint: 'As when adding: a multi-file torrent’s own folder goes inside it.',
         message:
-          'A torrent that moves is stopped and its saved path changed; its data is not moved. Move the files yourself, then use Recheck & restart.',
-        items: names(hashes),
+          'A torrent that moves is stopped and its saved path changed; its data is not moved. Move the files yourself, then use Recheck & restart.' +
+          (fetching.length > 0 ? ` ${leftOutFetching(fetching.length)}` : ''),
+        items: names(moving),
         // The directory the data goes into, never d.directory itself: sent
         // back unchanged, that moved a multi-file torrent into "X/X".
-        initial: sharedDataFolder(byHash, hashes),
+        initial: sharedDataFolder(byHash, moving),
         placeholder: downloadDir || '/downloads',
         confirmLabel: 'Change directory',
       });
-      if (directory?.trim()) await patch({ directory: directory.trim() }, hashes);
+      if (directory?.trim()) await patch({ directory: directory.trim() }, moving);
     },
-    [targets, dialogs, names, byHash, downloadDir, patch],
+    [targets, dialogs, names, byHash, downloadDir, patch, toast],
   );
 
   const copyMagnets = useCallback(

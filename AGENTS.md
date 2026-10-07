@@ -121,12 +121,12 @@ flags (`components/detail/flags.ts`) and where focus goes on selection or menu o
 (`app/rowFocus.ts`) live apart from the components for exactly that reason. What cannot be split off
 is pinned by reading the source instead: `components/detail/tabs.test.ts` checks the detail tabs
 stay memoized, and `app/useTorrentActions.test.ts` that "Change directory" is pre-filled from
-`sharedDataFolder`. A pure module that imports another spells the specifier with `.ts`
-(`preferences.ts` → `'./sort.ts'`): the runner resolves specifiers literally, and Vite and tsc
-accept either. A module that touches `window` or `document` at load time cannot be imported
-statically: `api.test.ts` stubs `document.baseURI` and then imports `api.ts` dynamically, and
-`preferences.ts` (the shape and its repair) is kept apart from `prefs.ts` (the fetch, the cache, the
-`pagehide` flush) so its tests need no stub at all.
+`sharedDataFolder` and leaves out a magnet still fetching its metadata. A pure module that imports
+another spells the specifier with `.ts` (`preferences.ts` → `'./sort.ts'`): the runner resolves
+specifiers literally, and Vite and tsc accept either. A module that touches `window` or `document`
+at load time cannot be imported statically: `api.test.ts` stubs `document.baseURI` and then imports
+`api.ts` dynamically, and `preferences.ts` (the shape and its repair) is kept apart from `prefs.ts`
+(the fetch, the cache, the `pagehide` flush) so its tests need no stub at all.
 
 Go runs in Docker too, as uid 1000 so the files it writes keep their owner:
 
@@ -814,8 +814,18 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   is kept by its text even where no base path can vouch for it. A change stops and
   closes the torrent before setting its path, and leaves it stopped for the owner to move the data
   and recheck it; `d.base_path` follows only at the next open. Keep those lifecycle commands
-  separate and in the per-torrent mutation queue, as for recheck and throttle changes. The demo
-  mirrors it: `setDirectory`, and `d.directory.set` against `d.directory_base.set` in its console.
+  separate and in the per-torrent mutation queue, as for recheck and throttle changes. A magnet
+  still fetching its metadata never gets that far: it is a 409 before anything stops
+  (`refuseFetchingMetadata`). Until the metadata arrives the session holds a download of the
+  metadata alone (`d.is_meta`, on 0.9.8 as on 0.16.25), which rtorrent then stops, erases and
+  replaces with the torrent, loaded with the commands the add carried (`process_meta_download` and
+  `try_create_download_from_meta_download` in its source) — its `d.directory.set` among them. The
+  change was lost, measured in a two-container swarm, and the stop it took held the fetch up until
+  a recheck. The listing carries `d.is_meta` as `isMeta`, so "Change directory" leaves such a
+  torrent out and toasts the server's words (`FETCHING_METADATA`, `web/src/dataFolder.ts`). A
+  label or priority set meanwhile is lost the same way (measured on both), but costs the fetch
+  nothing, and is not refused. The demo mirrors it: `setDirectory`, and `d.directory.set` against
+  `d.directory_base.set` in its console.
 - Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes `<epoch
   seconds> <level letter> <text>` for the severity scopes and `<epoch seconds> <text>` (no level)
   for the subsystem scopes such as `tracker_events` — the same two shapes on 0.9.8, 0.16.20 and

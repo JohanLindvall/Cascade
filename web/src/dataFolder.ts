@@ -26,3 +26,21 @@ export function dataFolder(torrent: Pick<Torrent, 'directory' | 'isMultiFile'>):
 export function sharedDataFolder(byHash: ReadonlyMap<string, Torrent>, hashes: readonly string[]): string {
   return sharedValue(byHash, hashes, dataFolder) ?? '';
 }
+
+/**
+ * Why "Change directory" leaves a magnet alone while it fetches its metadata
+ * (isMeta, rtorrent's d.is_meta): what is listed until then is a download of
+ * the metadata alone, and once that is complete rtorrent loads the torrent
+ * anew with the commands the add carried, so a directory set meanwhile would
+ * be lost. The server refuses it with these words, a 409 (FetchingMetadata in
+ * server/internal/service/torrents.go).
+ */
+export const FETCHING_METADATA =
+  'this torrent is still fetching its metadata, and once that arrives rtorrent loads it anew into the directory it was added with — a directory changed now would be lost, so wait for the metadata, then change it';
+
+/** What the "Change directory" prompt says of the torrents it leaves out for fetching their metadata. */
+export function leftOutFetching(count: number): string {
+  return count === 1
+    ? 'Left out: one torrent still fetching its metadata, which rtorrent puts in the directory it was added with once that arrives.'
+    : `Left out: ${count} torrents still fetching their metadata, which rtorrent puts in the directory each was added with once it arrives.`;
+}
