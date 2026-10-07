@@ -287,6 +287,13 @@ test('a magnet still fetching its metadata keeps the directory it was added with
   assert.deepEqual([meta.isMeta, meta.status], [true, 'downloading']);
   refused('PATCH', `torrents/${meta.hash}`, { directory: '/media' }, 409, FETCHING_METADATA);
   assert.deepEqual([named(meta.name).status, named(meta.name).directory], [meta.status, meta.directory]);
+  // Refused before the fields ahead of it change: a 409 must not follow a change, which no page would be told of.
+  refused('PATCH', `torrents/${meta.hash}`, { priority: 0, label: 'changed', throttle: 'slow', directory: '/media' }, 409,
+    FETCHING_METADATA);
+  const still = named(meta.name);
+  assert.deepEqual([still.priority, still.label, still.throttle, still.status, still.directory],
+    [meta.priority, meta.label, meta.throttle, meta.status, meta.directory]);
+  assert.notEqual(meta.priority, 0);
   // Once the metadata is in, rtorrent has loaded the torrent with the add's directory, and it moves.
   clock.advance(8000);
   const fetched = named('open-movie.mkv');

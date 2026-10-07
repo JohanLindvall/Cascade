@@ -500,6 +500,8 @@ export class DemoServer {
       const destination = call.optionalText('directory', false, directory);
       const uploads = call.optionalInteger('maxUploads', 100_000);
       const downloads = call.optionalInteger('maxDownloads', 100_000);
+      // So is a directory the torrent cannot take now (a magnet fetching its metadata): a 409 must not follow a change.
+      if (destination !== null) session.refuseDirectoryChange(hash);
       if (priority !== null) session.setPriority(hash, priority);
       if (label !== null) session.setLabel(hash, label);
       if (throttle !== null) session.setThrottle(hash, throttle);

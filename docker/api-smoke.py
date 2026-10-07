@@ -601,6 +601,18 @@ def check_fetching_metadata(cascade):
                             expected=409)
         assert reply == {'error': FETCHING_METADATA}, reply
         assert held(cascade, magnet_hash) == fetching, held(cascade, magnet_hash)
+        # Refused before the fields ahead of it change, or they would stay changed behind a 409,
+        # which leaves the stream alone — the throttle group's after a stop and a start.
+        fields = ('d.priority', 'd.custom1', 'd.throttle_name')
+        before = [cascade.rpc(command, magnet_hash) for command in fields]
+        reply = cascade.api(f'/api/torrents/{magnet_hash}',
+                            {'priority': 0, 'label': f'smoke-{tag}', 'throttle': f'smoke{tag}',
+                             'directory': f'{downloads}/smoke-moved-{tag}'}, 'PATCH', expected=409)
+        assert reply == {'error': FETCHING_METADATA}, reply
+        assert [cascade.rpc(command, magnet_hash) for command in fields] == before, \
+            [cascade.rpc(command, magnet_hash) for command in fields]
+        assert before[0] != 0, before
+        assert held(cascade, magnet_hash) == fetching, held(cascade, magnet_hash)
     finally:
         remove_torrent(cascade, magnet_hash)
 

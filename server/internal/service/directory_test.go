@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/JohanLindvall/Cascade/server/internal/rtorrent"
@@ -266,5 +267,36 @@ func TestAMagnetStillFetchingItsMetadataIsRefusedBeforeAnythingStops(t *testing.
 	}
 	if got, want := changes(client), movedWith("d.directory.set", "/media"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("%v", got)
+	}
+}
+
+// A PATCH asks the same before the first of its fields changes anything
+// (RefuseDirectoryChange): a 409 after a priority, label or throttle group
+// had been set left them changed, and no page was told. Asking changes
+// nothing, and asks nothing of the torrent but d.is_meta.
+func TestTheRefusalIsAskedOnItsOwnBeforeAnythingChanges(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		client *rtorrenttest.FakeClient
+		status int
+		asked  int
+	}{
+		{"fetching its metadata", placed("/downloads/fromadd", false, "d.is_meta").Answer("d.is_meta", 1), 409, 1},
+		{"a torrent", placed("/downloads", false, "d.is_meta").Answer("d.is_meta", 0), 200, 1},
+		{"a build without d.is_meta", placed("/downloads", false), 200, 0},
+	} {
+		err := newService(t, c.client, nil).RefuseDirectoryChange(ctx, hash)
+		if code := status(t, err); code != c.status || (code == 409 && err.Error() != FetchingMetadata) {
+			t.Errorf("%s: %d %v", c.name, code, err)
+		}
+		asked := c.client.CallsTo("d.is_meta")
+		if len(asked) != c.asked || (c.asked > 0 && !reflect.DeepEqual(asked[0].Params, []any{hash})) {
+			t.Errorf("%s: %v", c.name, asked)
+		}
+		for _, method := range c.client.Methods() {
+			if strings.HasPrefix(method, "d.") && method != "d.is_meta" {
+				t.Errorf("%s: asked %s", c.name, method)
+			}
+		}
 	}
 }

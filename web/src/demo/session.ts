@@ -944,18 +944,27 @@ export class Session {
    * there is left alone; any other is stopped and closed first, and the data
    * itself is not moved. Only d.directory changes: d.base_path follows at the
    * next open. A magnet still fetching its metadata is refused before
-   * anything stops: the torrent its metadata becomes is loaded with the add's
-   * own directory (materialize), as rtorrent's is.
+   * anything stops (refuseDirectoryChange).
    */
   setDirectory(hash: string, directory: string): void {
+    this.refuseDirectoryChange(hash);
     const t = this.get(hash);
-    if (t.meta) throw new HttpError(409, FETCHING_METADATA);
     const parent = trimDirectory(directory);
     if (parent === t.parent) return;
     const nowS = Math.floor(this.time / 1000);
     this.stop(t, nowS);
     this.close(t, nowS);
     t.parent = parent;
+  }
+
+  /**
+   * RefuseDirectoryChange: a 409 for a magnet still fetching its metadata —
+   * the torrent that metadata becomes is loaded with the add's own directory
+   * (materialize), as rtorrent's is. The PATCH route asks it before any field
+   * changes: a 409 must not follow a change.
+   */
+  refuseDirectoryChange(hash: string): void {
+    if (this.get(hash).meta) throw new HttpError(409, FETCHING_METADATA);
   }
 
   /**

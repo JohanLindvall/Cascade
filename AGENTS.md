@@ -824,19 +824,21 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   and recheck it; `d.base_path` follows only at the next open. Keep those lifecycle commands
   separate and in the per-torrent mutation queue, as for recheck and throttle changes. A magnet
   still fetching its metadata never gets that far: it is a 409 before anything stops
-  (`refuseFetchingMetadata`). Until the metadata arrives the session holds a download of the
-  metadata alone (`d.is_meta`, on 0.9.8 as on 0.16.25), which rtorrent then stops, erases and
-  replaces with the torrent, loaded with the commands the add carried (`process_meta_download` and
-  `try_create_download_from_meta_download` in its source) — its `d.directory.set` among them. The
-  change was lost, measured in a two-container swarm, and the stop it took held the fetch up until
-  a recheck. The listing carries `d.is_meta` as `isMeta`, so "Change directory" leaves such a
-  torrent out and toasts the server's words (`FETCHING_METADATA`, `web/src/dataFolder.ts`). A
-  label or priority set meanwhile is lost the same way (measured on both), but costs the fetch
-  nothing, and is not refused. Nor does a destination of `/` get that far: it is a 400 at the edge
-  (`validate.Directory`), for a change or an add, as rtorrent strips a directory's trailing
-  slashes and the empty path left is `.`, the directory it runs in, where a single file went. The
-  demo mirrors it: `setDirectory`, and `d.directory.set` against `d.directory_base.set` in its
-  console.
+  (`refuseFetchingMetadata`), and a `PATCH` asks it before its first field changes anything
+  (`RefuseDirectoryChange`), or a priority, label or throttle group set ahead of it would stay
+  changed behind a 409, which does not wake the stream. Until the metadata arrives the session holds
+  a download of the metadata alone (`d.is_meta`, on 0.9.8 as on 0.16.25), which rtorrent then stops,
+  erases and replaces with the torrent, loaded with the commands the add carried
+  (`process_meta_download` and `try_create_download_from_meta_download` in its source) — its
+  `d.directory.set` among them. The change was lost, measured in a two-container swarm, and the stop
+  it took held the fetch up until a recheck. The listing carries `d.is_meta` as `isMeta`, so "Change
+  directory" leaves such a torrent out and toasts the server's words (`FETCHING_METADATA`,
+  `web/src/dataFolder.ts`). A label or priority set meanwhile is lost the same way (measured on
+  both), but costs the fetch nothing, and is not refused. Nor does a destination of `/` get that
+  far: it is a 400 at the edge (`validate.Directory`), for a change or an add, as rtorrent strips a
+  directory's trailing slashes and the empty path left is `.`, the directory it runs in, where a
+  single file went. The demo mirrors it: `setDirectory`, and `d.directory.set` against
+  `d.directory_base.set` in its console.
 - Log lines are parsed by `parseLogLine` (`web/src/format.ts`, tested): rtorrent writes `<epoch
   seconds> <level letter> <text>` for the severity scopes and `<epoch seconds> <text>` (no level)
   for the subsystem scopes such as `tracker_events` — the same two shapes on 0.9.8, 0.16.20 and
@@ -892,8 +894,9 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   415 (`refusedAsSent`) — refusals the API and the service make before asking rtorrent to change
   anything. A 403 or a 5xx still wakes it: a data delete is refused with 403 *after* the torrent
   was erased, and a failure can follow half a change. So a 400, 404, 409, 413 or 415 must never follow
-  a change — keep that true when adding one deep in the service. The interval is
-  `status.statePollMs` — the user's preference, else
+  a change — keep that true when adding one deep in the service, and ask for it before the first
+  change of a request that makes several (`RefuseDirectoryChange` in `patchTorrent`). The
+  interval is `status.statePollMs` — the user's preference, else
   `CASCADE_STATE_POLL_MS` (500 ms) — within 100 ms to a minute. The state is held as a tree whose
   branches are decoded and whose leaves (a torrent, a history sample, a status value) stay raw
   JSON until their bytes differ, so a read of 500 torrents diffs in about a millisecond. The patch

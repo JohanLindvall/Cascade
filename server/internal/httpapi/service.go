@@ -38,6 +38,9 @@ type Service interface {
 	// A nil count is left as it is.
 	SetTorrentSlots(ctx context.Context, hash string, uploads, downloads *int64) error
 	SetDirectory(ctx context.Context, hash, directory string) error
+	// RefuseDirectoryChange is SetDirectory's refusal of a magnet still
+	// fetching its metadata (a 409), for asking before anything else changes.
+	RefuseDirectoryChange(ctx context.Context, hash string) error
 	SetFilePriority(ctx context.Context, hash string, index int, priority int64) error
 	SetTrackerEnabled(ctx context.Context, hash string, index int, enabled bool) error
 	AddTracker(ctx context.Context, hash, url string, group int64) error

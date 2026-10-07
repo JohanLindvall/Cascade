@@ -653,11 +653,11 @@ are structurally validated before loading; v2-only torrents are rejected with an
 rtorrent inside a command. A torrent's `directory` in a `PATCH` names the same thing as an
 upload's: the directory its data goes into, a multi-file torrent's own folder inside it (see
 *Notes and limitations*). Changing the `directory` of a magnet still fetching its metadata is a
-`409`: rtorrent loads the torrent anew once the metadata arrives, into the directory it was added
-with, and a change made before then would be lost. Neither directory may be `/` — a `400`:
-rtorrent strips a directory's trailing slashes, and the empty path that leaves is `.`, the
-directory rtorrent runs in, where a single file would go. An upload's empty `directory`, or none,
-is rtorrent's default.
+`409`, before any other field of the `PATCH` is changed: rtorrent loads the torrent anew once the
+metadata arrives, into the directory it was added with, and a change made before then would be
+lost. Neither directory may be `/` — a `400`: rtorrent strips a directory's trailing slashes, and
+the empty path that leaves is `.`, the directory rtorrent runs in, where a single file would go. An
+upload's empty `directory`, or none, is rtorrent's default.
 
 A change, once sent, is carried through even if the client goes away, `/RPC2` included: a closed
 tab does not leave a torrent stopped halfway through a throttle change.

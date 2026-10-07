@@ -395,6 +395,16 @@ func (s *Server) patchTorrent(c *call) error {
 	if err != nil {
 		return err
 	}
+	// A directory the torrent cannot take now is refused before the first
+	// change as well: a magnet still fetching its metadata is a 409, which,
+	// coming after the fields ahead of it, left them changed — and unseen
+	// until the stream's next read, as a 409 does not wake it (refusedAsSent).
+	// SetDirectory asks again.
+	if directory != nil {
+		if err := s.svc.RefuseDirectoryChange(c.ctx, hash); err != nil {
+			return err
+		}
+	}
 	if priority != nil {
 		// d.priority: 0 off, 1 low, 2 normal, 3 high.
 		if err := s.svc.SetPriority(c.ctx, hash, *priority); err != nil {
