@@ -94,7 +94,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 # 2. compile libtorrent and rtorrent from upstream tags
 # --------------------------------------------------------------------------
 FROM alpine:${ALPINE_VERSION} AS rtorrent
-ARG RTORRENT_VERSION=0.16.24
+ARG RTORRENT_VERSION=0.16.25
 ARG LIBTORRENT_VERSION=
 ARG RTORRENT_REPO=https://github.com/rakshasa/rtorrent
 ARG LIBTORRENT_REPO=https://github.com/rakshasa/libtorrent
