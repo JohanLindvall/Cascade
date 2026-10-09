@@ -1,7 +1,7 @@
 github.com/JohanLindvall/arena v0.4.0 h1:ESdGqCvIrVTLnPTrjnp/FdivN6g9+hzKevcw43otjGA=
 github.com/JohanLindvall/arena v0.4.0/go.mod h1:0TK9jrf8IQVg8/K0XaHGr6EFfw6PrdetIxS4KeWj5yw=
-github.com/JohanLindvall/lightning v0.0.104 h1:HnZgAVj/2uvWTTVSbtj3XW4etk/fasmJD5WMfKaQIXo=
-github.com/JohanLindvall/lightning v0.0.104/go.mod h1:mBw/H3k20Q6gATaMgpQqU7dHOpFcfSPWFVQs7oM0i9Y=
+github.com/JohanLindvall/lightning v0.0.107 h1:kVS1Us0g2JoAsi7UAd+jIBD+cTEKIedCxdN4KBaLldQ=
+github.com/JohanLindvall/lightning v0.0.107/go.mod h1:mBw/H3k20Q6gATaMgpQqU7dHOpFcfSPWFVQs7oM0i9Y=
 github.com/klauspost/compress v1.20.1 h1:T7kKElXUMXrUJ2E9QhQhxFtcK5rPyLdsGZvdbLMPdiQ=
 github.com/klauspost/compress v1.20.1/go.mod h1:LUdAzn7YLVvxLpc7y3V1m40wESHTgc1422pwwBSKYuI=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
