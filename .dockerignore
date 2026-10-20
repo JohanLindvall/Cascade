@@ -15,3 +15,6 @@ data
 /server/*.test
 # Test torrents dropped into the working tree while debugging.
 **/*.torrent
+# Local Compose credentials are never needed to build an image.
+.env
+.env.*

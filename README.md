@@ -5,12 +5,14 @@
 [![License](https://img.shields.io/github/license/JohanLindvall/Cascade)](LICENSE)
 [![Live demo](https://img.shields.io/badge/demo-live-7c9bff)](https://johanlindvall.github.io/Cascade/)
 
-**Cascade** is a web UI for [rtorrent](https://github.com/rakshasa/rtorrent), shipped as one
-Docker image for linux/amd64 and linux/arm64 with rtorrent compiled from its upstream release tag
-inside. A small Go server speaks rtorrent's XML-RPC over SCGI and streams every open page a
-snapshot and then only what changed, as server-sent events; the same server and React UI drive
-every rtorrent from 0.9.8 to the release the image ships, because they ask the running one which
-commands it has. Everything is configured with environment variables on `docker run`.
+**A self-hosted web UI for [rtorrent](https://github.com/rakshasa/rtorrent), ready in one Docker
+container.** Manage downloads, files, peers and trackers from your desktop or phone, with live
+updates, five themes and optional sharing badges. The image includes rtorrent compiled from
+source for linux/amd64 and linux/arm64. Cascade's Go server and React UI work with rtorrent
+from 0.9.8 to the release the image ships, adapting to the commands each version supports.
+
+[Install](#quick-start) · [Docker Compose](#docker-compose) · [UI tour](#the-ui) ·
+[Configuration](#configuration) · [API](#api) · [Contribute](CONTRIBUTING.md) · [Get help](SUPPORT.md)
 
 **[Try the live demo](https://johanlindvall.github.io/Cascade/)** — the real UI against a
 simulated rtorrent, in your browser — or run it:
@@ -28,7 +30,10 @@ without it, any web page you visit could reach Cascade
 ([SECURITY.md](SECURITY.md#what-cascade-protects-and-what-it-does-not)). The
 [quick start](#quick-start) has the full command: your own folders, the time zone.
 
-![Main view](docs/screenshot-main.png)
+![Cascade's dark theme showing downloads, seeding torrents and live transfer rates](docs/screenshot-main.png)
+
+If Cascade is useful to you, a star helps other self-hosters find it. Bug reports, documentation
+fixes and sharing your setup are welcome too.
 
 ## Highlights
 
@@ -62,10 +67,14 @@ without it, any web page you visit could reach Cascade
   browser.
 - **Works on a phone** — the table becomes cards with their own sort control, the sidebar becomes
   a drawer that also carries the tools, and detail and dialogs become full-screen sheets.
-- **Configured entirely from `docker run`** — the rtorrent backend options are environment
-  variables.
+- **Configured with environment variables** — use `docker run` or the included Compose file
+  to set the rtorrent backend options.
 
 ## Quick start
+
+You need Docker Engine or Docker Desktop. The command below uses your own folders;
+[Docker Compose](#docker-compose) keeps the settings in files for easier updates.
+To explore without installing anything, use the [live demo](https://johanlindvall.github.io/Cascade/).
 
 Images are published to GitHub Container Registry for **linux/amd64** and **linux/arm64**
 (so a Raspberry Pi 4/5 or an Apple-silicon Docker host works the same as an x86 server):
@@ -95,6 +104,11 @@ docker run \
 
 Open <http://localhost:8080>.
 
+Replace the example password and host folders before running. On Linux, `id -u` and `id -g`
+show the values to use for `PUID` and `PGID`. To keep the UI on this machine, use
+`-p 127.0.0.1:8080:8080` instead of `-p 8080:8080`; for remote access, use authentication and
+a TLS reverse proxy as described in [Security](SECURITY.md).
+
 Two volumes matter: `/config` holds rtorrent's session, its log and
 `cascade-state.json` (preferences, progress, throttle groups) and should be persistent;
 `/downloads` is where the data lands. Port 50000 is the peer port — publish it on TCP **and** UDP
@@ -106,22 +120,76 @@ that is slow to answer that takes ten seconds or more — which is why the conta
 `--stop-timeout 60` (under Compose, `stop_grace_period: 60s`). Without it, `docker stop` gives up
 after Docker's default ten seconds and kills rtorrent mid-shutdown.
 
+### Docker Compose
+
+The repository includes [compose.yaml](compose.yaml) and [.env.example](.env.example).
+With Git and Docker Compose installed:
+
+```bash
+git clone https://github.com/JohanLindvall/Cascade.git
+cd Cascade
+cp .env.example .env
+```
+
+Edit `.env` and set `WEB_PASS` to your own password. Then start the published image:
+
+```bash
+mkdir -p data/config data/downloads data/watch
+docker compose up -d
+docker compose ps
+```
+
+Open <http://localhost:8080> and sign in with the username and password from `.env`.
+Compose refuses to start with empty credentials. The UI binds to `127.0.0.1` by default;
+the peer port is published on TCP and UDP.
+
+Your files are in `./data/downloads`, the session and preferences in `./data/config`, and
+the watched torrent folder in `./data/watch`. Set `CASCADE_DATA_DIR` in `.env` to use another
+parent directory, and match `PUID`/`PGID` to its owner on Linux. Keep this directory when
+updating. If you change that path, create its `config`, `downloads` and `watch` directories
+before starting too. `.env` holds your password and is ignored by Git.
+
+```bash
+docker compose logs --tail=100 cascade   # inspect startup
+docker compose stop                    # stop cleanly; keep your files
+docker compose pull                    # download an updated image
+docker compose up -d                    # apply the image or .env changes
+```
+
+Stop Cascade and back up `data/config` before an upgrade; back up `data/downloads` separately.
+To pin a release, set `CASCADE_IMAGE` in `.env` to one of the [image tags](#image-tags).
+Additional [container options](#configuration) go under the service's `environment:` in
+`compose.yaml`; adding a variable only to `.env` does not automatically pass it to the container.
+
+### Add your first torrent
+
+1. Click **Add torrent** and select a `.torrent` file, paste a magnet link or enter a torrent URL.
+2. Optionally choose a label and a destination such as `/downloads`. Paths refer to folders
+   **inside the container**.
+3. Select the torrent to see its files, peers and trackers. Right-click it, or long-press on a
+   phone, for actions.
+
+Dropping a torrent onto the main window adds and starts it immediately. Use the Add dialog when
+you want to choose its options first. If something does not work, start with
+[troubleshooting](SUPPORT.md#troubleshooting).
+
 ### Image tags
 
-Every push to `main` is published, so tags are cheap and specific:
+Every push to `main` is published. The versioned tags below are examples;
+find the newest one on the [package page](https://github.com/JohanLindvall/Cascade/pkgs/container/cascade).
 
 | Tag | Points at |
 | --- | --- |
 | `latest` | The newest published build |
-| `v0.1.42` | One exact release, built against the default rtorrent |
-| `v0.1.42-0.16.23` | The same release, naming the rtorrent version explicitly |
+| `v0.1.31` | One exact published Cascade release |
+| `v0.1.31-0.16.25` | The same release, naming the rtorrent version explicitly |
 
 The `-<rtorrent-version>` suffix is always present so that builds against other rtorrent releases
 can be published under the same scheme later. Pin `vX.Y.Z-<rtorrent>` for anything you care about
 keeping still; `latest` moves with `main`.
 
 ```bash
-docker pull ghcr.io/johanlindvall/cascade:v0.1.42-0.16.23   # pin a release
+docker pull ghcr.io/johanlindvall/cascade:v0.1.31-0.16.25   # pin this example release
 docker pull ghcr.io/johanlindvall/cascade:latest            # follow main
 ```
 
@@ -249,8 +317,8 @@ start, so Cascade refuses those before they are sent.
 
 ## Configuration
 
-Everything is an environment variable on `docker run`. Only what you set is applied — anything
-left unset keeps rtorrent's own default.
+Everything is an environment variable on `docker run`, or under `environment:` in Compose.
+Only what you set is applied — anything left unset keeps rtorrent's own default.
 
 The image lists them all itself, so you never need this page to be up to date:
 
@@ -423,17 +491,24 @@ Settings given as environment variables are applied over XML-RPC at startup rath
 
 ## The UI
 
-The keyboard works throughout: `/` focuses search (`Esc` there clears it), `n` opens the Add
-dialog, `↑`/`↓` walk the list and `Home`/`End` jump to its ends — with `Shift` held they extend
-the selection, as `Shift`-click does from the last row clicked, while `Ctrl/⌘`-click toggles one
-row and `Ctrl/⌘+Shift`-click adds a range. `Ctrl/⌘-A` selects everything visible, `Delete` (or
-`⌘⌫`) removes the selection and `Shift-Delete` also deletes its data, and the menu key or
-`Shift-F10` opens the right-click menu on the current row, arrow keys moving through it. `Esc`
-closes one thing at a time: a menu, a dialog (only the top one, when a confirmation sits on
-another), the filter drawer, then the selection. The column headers sort from the keyboard, the
-detail tabs follow the arrow keys, and the detail pane's resize handle takes `↑`/`↓`. Removing
-asks first, in a dialog that lists what is about to go; setting a label or a directory lists the
-torrents it applies to and offers the labels already in use.
+### Keyboard shortcuts
+
+| Key | Action |
+| --- | --- |
+| `/` | Focus search; `Esc` in search clears it |
+| `n` | Open Add torrent |
+| `↑` / `↓`, `Home` / `End` | Move through torrents; hold `Shift` to extend the selection |
+| `Ctrl/⌘` + click | Toggle a torrent in the selection |
+| `Shift` + click | Select a range; add `Ctrl/⌘` to keep the previous selection too |
+| `Ctrl/⌘` + `A` | Select all visible torrents |
+| `Delete` or `⌘⌫` | Remove selected torrents, after confirmation |
+| `Shift` + `Delete` | Remove selected torrents **and their data**, after confirmation |
+| Menu key or `Shift` + `F10` | Open the torrent's context menu |
+| `Esc` | Close the current menu, dialog or drawer, then clear the selection |
+
+Column headers sort from the keyboard, detail tabs follow the arrow keys, and the detail pane's
+resize handle takes `↑`/`↓`. Removing asks first, in a dialog that lists what is about to go;
+setting a label or a directory lists the torrents it applies to and offers existing labels.
 
 On a phone, a card opens its details; its checkbox selects it for bulk actions without opening
 the details sheet. The filters drawer and details sheet keep keyboard focus inside while open;
@@ -472,6 +547,9 @@ torrent started again the moment the check completes, so the missing chunks are 
 the torrent sitting stopped behind a finished progress bar. A plain **Force recheck** still leaves
 the torrent stopped for inspection.
 
+<details>
+<summary>Tour: files, peers and trackers</summary>
+
 Click a torrent for details — general, files with per-file priority, live peers and trackers. Peer
 and tracker rows expand for everything rtorrent knows: peer id, protocol extensions, direction,
 encryption and the preferred/snubbed/unwanted/banned flags.
@@ -488,6 +566,11 @@ tab.
 Files can be prioritised individually — skip, normal or high — with per-file progress.
 
 ![Files](docs/screenshot-files.png)
+
+</details>
+
+<details>
+<summary>Tour: adding torrents and sharing badges</summary>
 
 Drag `.torrent` files onto the window — anywhere — and drop to add them. Magnet links and torrent
 URLs can be dragged in the same way, straight from another browser tab.
@@ -518,6 +601,11 @@ leans on uploading rather than downloading. Set `CASCADE_GAMIFY=0` and the whole
 
 ![Progress and badges](docs/screenshot-progress.png)
 
+</details>
+
+<details>
+<summary>Tour: settings, throttle groups and the API console</summary>
+
 rtorrent's live settings are editable, with anything the running version does not support greyed
 out. Rate fields take `500k`, `2M`, `1.5 MiB/s` or `800 B/s` — a bare number is KiB/s, empty is
 unlimited — and anything else is flagged at the field and holds **Apply** back, rather than being
@@ -532,8 +620,8 @@ is read for it while no page is open.
 
 rtorrent has no per-torrent rate limit — it throttles by *named group*. Create groups here and
 assign torrents to them from the right-click menu; deleting one asks first.
-Group limits round up to whole KiB/s, rtorrent's precision for named groups: `800 B/s` becomes
-`1 KiB/s`. Global limits retain byte precision. The dialog shows the saved value after an edit.
+Group and global limits round up to whole KiB/s, rtorrent's precision: `800 B/s` becomes
+`1 KiB/s`. The dialog shows the saved value after an edit.
 
 ![Throttle groups](docs/screenshot-throttles.png)
 
@@ -543,6 +631,11 @@ with `CASCADE_ALLOW_DATA_DELETE=0` so does *Remove + delete data*: the server re
 regardless, and the UI stops offering them.
 
 ![API console](docs/screenshot-console.png)
+
+</details>
+
+<details>
+<summary>Tour: black metal, retro and light themes</summary>
 
 Themes are chosen from the header: **System** (follows the OS), **Light**, **Dark**, a
 **Retro 8-bit** mode with CRT phosphor colours, hard pixel edges, stepped progress bars,
@@ -567,6 +660,8 @@ The retro treatment is driven entirely by the same design tokens, so it reaches 
 And the light theme:
 
 ![Light theme](docs/screenshot-light.png)
+
+</details>
 
 UI preferences — theme, sort column, detail-pane height — are saved server-side, so a new browser
 or a different machine picks up the same setup. They live in `/config/cascade-state.json` next to
@@ -807,6 +902,9 @@ curl -N --compressed -u admin:change-me http://localhost:8080/api/stream
 
 ## Development
 
+New to the codebase? Start with [CONTRIBUTING.md](CONTRIBUTING.md) for a first change,
+the local demo and the checks relevant to your work.
+
 The whole toolchain lives in the image; no local Go or Node is required (bar `make dev` and
 `make demo`, below).
 The Makefile wraps the usual work — `make` on its own lists every target.
@@ -900,6 +998,21 @@ docker/        entrypoint that renders rtorrent.rc and supervises both processes
 
 See [AGENTS.md](AGENTS.md) for the architecture details and the rtorrent quirks worth knowing
 before changing the backend.
+
+## Contributing and support
+
+Questions, reproducible bug reports, accessibility improvements and documentation fixes all help.
+You do not need to write Go or TypeScript to contribute.
+
+- [Get help and troubleshoot an installation](SUPPORT.md).
+- [Report a bug or suggest a feature](https://github.com/JohanLindvall/Cascade/issues/new/choose).
+- [Make your first contribution](CONTRIBUTING.md), or browse
+  [good first issues](https://github.com/JohanLindvall/Cascade/labels/good%20first%20issue) and
+  [help wanted](https://github.com/JohanLindvall/Cascade/labels/help%20wanted).
+- Follow the [Code of Conduct](CODE_OF_CONDUCT.md) when participating.
+
+Cascade is maintained by [Johan Lindvall](https://github.com/JohanLindvall).
+Support and reviews are best effort.
 
 ## Security
 

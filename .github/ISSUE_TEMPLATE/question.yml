@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: MIT
+
+name: Question / setup help
+description: Ask about installing, configuring or using Cascade.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [troubleshooting guide](https://github.com/JohanLindvall/Cascade/blob/main/SUPPORT.md#troubleshooting)
+        and search existing issues first. Support is best effort.
+        Keep passwords, tracker passkeys and private URLs out of your report.
+  - type: textarea
+    id: question
+    attributes:
+      label: What are you trying to do?
+      description: Include what you have tried and where you got stuck.
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: Image tag and rtorrent version, host OS, and whether you use Compose, a reverse proxy or a VPN. Do not paste credentials.
+  - type: textarea
+    id: context
+    attributes:
+      label: Relevant error or screenshot
+      description: Optional. Review logs and screenshots for secrets before sharing.

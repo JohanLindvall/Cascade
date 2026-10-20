@@ -36,7 +36,7 @@ env:
   # description and license from the index, which `imagetools create` writes
   # below, so they are annotations there as well as labels on each platform's
   # image.
-  DESCRIPTION: Web UI for rtorrent in one Docker image with rtorrent compiled from source inside
+  DESCRIPTION: Self-hosted rtorrent web UI with live updates, mobile support and five themes. One Docker image with rtorrent compiled from source
   # The licenses of what the image contains: Cascade's own, and rtorrent's and
   # libtorrent's. Every text is in the image, under /usr/local/share/licenses.
   LICENSES: MIT AND GPL-2.0-or-later

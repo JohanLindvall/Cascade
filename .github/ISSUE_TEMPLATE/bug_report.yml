@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: MIT
+
+name: Bug report
+description: Report something that does not work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search existing issues first. For setup help, choose **Question / setup help**.
+        Report security vulnerabilities privately via [SECURITY.md](https://github.com/JohanLindvall/Cascade/blob/main/SECURITY.md).
+        Remove passwords, tracker passkeys and private URLs from anything you share.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe what you expected and what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest example you can reproduce. If it is intermittent, say how often.
+      placeholder: |
+        1. Open …
+        2. Select …
+        3. Observe …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Cascade and rtorrent versions
+      description: Image tag or commit, and rtorrent version from Settings → Backend. For the live demo, say "live demo".
+      placeholder: "Cascade image tag or commit; rtorrent version"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Your setup
+      description: Host OS and architecture; browser/device for UI issues; Compose or docker run; proxy, VPN or custom rtorrent config if relevant.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or screenshots
+      description: Share the relevant excerpt, with secrets removed. Do not paste .env, full docker inspect or unedited docker compose config output.

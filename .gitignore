@@ -15,3 +15,8 @@ dist-test/
 /server/cascade
 /server/*.test
 *.prof
+
+# Local Compose credentials; keep only the documented example.
+.env
+.env.*
+!.env.example
