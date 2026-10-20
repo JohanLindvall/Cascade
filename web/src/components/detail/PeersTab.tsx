@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 
 import { Fragment, memo, type ReactNode } from 'react';
+import { PEER_COLUMNS, peerIdentity } from '../../detailSort';
 import { bytes, hostPort, percent, rate } from '../../format';
 import type { Peer } from '../../types';
 import { ProgressBar } from '../ui';
+import { useTableSort } from '../table';
 import { peerFlags } from './flags';
 import { Flags, MiniKv, NoteRow, RowToggle, useExpanded, yesNo } from './parts';
 
@@ -35,26 +37,15 @@ function breakIntoGroups(text: string, size = 8): ReactNode[] {
 /** The connected peers; a row expands to everything rtorrent says about the peer. Memoized, as FilesTab. */
 export const PeersTab = memo(function PeersTab({ peers }: { peers: Peer[] | undefined }) {
   const [isOpen, toggle] = useExpanded();
+  const { rows, headers } = useTableSort(peers, PEER_COLUMNS, peerIdentity);
   return (
     <table className="grid peers-grid">
       <thead>
-        <tr>
-          <th className="col-address">Address</th>
-          <th>Client</th>
-          <th className="col-progress">Progress</th>
-          <th className="right col-down">Down</th>
-          <th className="right col-up">Up</th>
-          <th className="right col-swarm" title="What this peer is pulling from the swarm">
-            Swarm
-          </th>
-          <th className="right col-down-total">Downloaded</th>
-          <th className="right col-up-total">Uploaded</th>
-          <th className="col-flags">Flags</th>
-        </tr>
+        <tr>{headers}</tr>
       </thead>
       <tbody>
-        {peers?.map((peer) => {
-          const key = `${peer.address}:${peer.port}`;
+        {rows?.map((peer) => {
+          const key = peerIdentity(peer);
           const endpoint = hostPort(peer.address, peer.port);
           const open = isOpen(key);
           return (

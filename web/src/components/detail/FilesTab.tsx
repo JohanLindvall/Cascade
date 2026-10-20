@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 
 import { memo } from 'react';
+import { FILE_COLUMNS, fileIdentity } from '../../detailSort';
 import { FILE_PRIORITIES, bytes, fileName, percent } from '../../format';
 import type { TorrentFile } from '../../types';
 import { ProgressBar } from '../ui';
+import { useTableSort } from '../table';
 import { NoteRow } from './parts';
 
 /**
@@ -19,18 +21,14 @@ export const FilesTab = memo(function FilesTab({
   files: TorrentFile[] | undefined;
   onPriority: (index: number, priority: number) => void;
 }) {
+  const { rows, headers } = useTableSort(files, FILE_COLUMNS, fileIdentity);
   return (
     <table className="grid files-grid">
       <thead>
-        <tr>
-          <th>File</th>
-          <th className="right col-size">Size</th>
-          <th className="col-progress">Progress</th>
-          <th className="col-priority">Priority</th>
-        </tr>
+        <tr>{headers}</tr>
       </thead>
       <tbody>
-        {files?.map((file) => {
+        {rows?.map((file) => {
           const name = fileName(file.path);
           return (
             <tr key={file.index}>

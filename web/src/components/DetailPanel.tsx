@@ -265,7 +265,7 @@ export function DetailPanel({
       <div className="detail-body" id={`${ids}-panel`} role="tabpanel" aria-labelledby={`${ids}-${tab}`}>
         {/* Keyed by torrent where a tab has state: expanded rows and a half-typed tracker belong to the torrent they were for. */}
         {tab === 'general' && <GeneralTab torrent={torrent} onRecheckRestart={onRecheckRestart} />}
-        {tab === 'files' && <FilesTab files={current.files} onPriority={setFilePriority} />}
+        {tab === 'files' && <FilesTab key={hash} files={current.files} onPriority={setFilePriority} />}
         {tab === 'peers' && <PeersTab key={hash} peers={current.peers} />}
         {tab === 'trackers' && (
           <TrackersTab
