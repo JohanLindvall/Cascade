@@ -481,9 +481,9 @@ button:focus-visible,
   outline-offset: 2px;
 }
 
-/* Focusable things that are not buttons get the ring inset: a table or a
-   scrolling pane would clip one drawn outside them. */
+/* Tables and scrolling panes would clip a focus ring drawn outside them. */
 table.torrents th[tabindex]:focus-visible,
+.sort-button:focus-visible,
 .detail-resize:focus-visible,
 .dropzone:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent);
@@ -918,17 +918,61 @@ table.torrents thead th {
   user-select: none;
 }
 
-table.torrents thead th:hover {
+table.torrents thead th:hover,
+table.grid th.sortable:hover {
   color: var(--text-dim);
 }
 
-table.torrents thead th.sorted {
+table.torrents thead th.sorted,
+table.grid th.sortable.sorted {
   color: var(--accent);
 }
 
 table.torrents thead th .arrow {
   font-size: 9px;
   margin-left: 3px;
+}
+
+table.grid th.sortable {
+  padding: 0;
+}
+
+.sort-button {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+
+th.right .sort-button {
+  justify-content: flex-end;
+}
+
+.sort-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sort-arrow {
+  flex-shrink: 0;
+  width: 1em;
+  font-size: 9px;
+}
+
+th:not(.sorted) .sort-arrow {
+  opacity: 0.5;
 }
 
 table.torrents td {
@@ -1489,11 +1533,11 @@ table.grid {
   table-layout: fixed;
 }
 
-.files-grid { min-width: 540px; }
+.files-grid { min-width: 600px; }
 .files-grid .col-size { width: 12%; }
 .files-grid .col-progress { width: 20%; }
 .files-grid .col-priority { width: 16%; }
-.peers-grid, .trackers-grid { min-width: 1000px; }
+.peers-grid, .trackers-grid { min-width: 1320px; }
 .peers-grid .col-address { width: 18%; }
 .peers-grid .col-progress { width: 14%; }
 .peers-grid .col-down, .peers-grid .col-up, .peers-grid .col-swarm { width: 8%; }
@@ -1504,8 +1548,8 @@ table.grid {
 .trackers-grid .col-seeders, .trackers-grid .col-leechers, .trackers-grid .col-peers,
 .trackers-grid .col-attempts, .trackers-grid .col-enabled { width: 7%; }
 .trackers-grid .col-downloaded { width: 9%; }
-.trackers-grid .col-next { width: 10%; }
-.throttle-grid { min-width: 680px; }
+.trackers-grid .col-next { width: 10.5%; }
+.throttle-grid { min-width: 800px; }
 .throttle-grid .col-limit { width: 22%; }
 .throttle-grid .col-delete { width: 6%; }
 

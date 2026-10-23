@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: MIT
+
+services:
+  cascade:
+    image: "${CASCADE_IMAGE:-ghcr.io/johanlindvall/cascade:latest}"
+    restart: unless-stopped
+    # rtorrent needs time to announce its shutdown and save the session.
+    stop_grace_period: 60s
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      TZ: "${TZ:-Etc/UTC}"
+      WEB_USER: "${WEB_USER:?Set WEB_USER in .env}"
+      WEB_PASS: "${WEB_PASS:?Set WEB_PASS in .env}"
+      RT_PORT_RANGE: "${PEER_PORT:-50000}-${PEER_PORT:-50000}"
+    ports:
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:8080"
+      - "${PEER_PORT:-50000}:${PEER_PORT:-50000}/tcp"
+      - "${PEER_PORT:-50000}:${PEER_PORT:-50000}/udp"
+    volumes:
+      - "${CASCADE_DATA_DIR:-./data}/config:/config"
+      - "${CASCADE_DATA_DIR:-./data}/downloads:/downloads"
+      - "${CASCADE_DATA_DIR:-./data}/watch:/watch"

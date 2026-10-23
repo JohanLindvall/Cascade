@@ -2,6 +2,7 @@
 
 import { Fragment, memo, useState } from 'react';
 import { api } from '../../api';
+import { TRACKER_COLUMNS, trackerIdentity, trackerType } from '../../detailSort';
 import { announcePeers, duration, relative, until } from '../../format';
 import { redactUrl } from '../../redact';
 import { sentence, unsendable } from '../../rtorrentText';
@@ -9,13 +10,13 @@ import type { Tracker } from '../../types';
 import { useClock } from '../clock';
 import { IconPlus } from '../icons';
 import { useToast } from '../toast';
+import { useTableSort } from '../table';
 import { trackerFlags } from './flags';
 import { Flags, MiniKv, NoteRow, RowToggle, useExpanded, yesNo } from './parts';
 
 const COLUMNS = 10;
 
-/** libtorrent's Tracker::Type / Tracker::Event enumerations. */
-const TRACKER_TYPES: Record<number, string> = { 1: 'HTTP', 2: 'UDP', 3: 'DHT' };
+/** libtorrent's Tracker::Event enumeration. */
 const TRACKER_EVENTS: Record<number, string> = {
   0: 'none',
   1: 'completed',
@@ -48,6 +49,7 @@ export const TrackersTab = memo(function TrackersTab({
   onAdded: () => void;
 }) {
   const [isOpen, toggle] = useExpanded();
+  const { rows, headers } = useTableSort(trackers, TRACKER_COLUMNS, trackerIdentity);
   // The announce times count down with the clock. Being memoized, the tab
   // would otherwise move them only when the next poll replaces its rows.
   useClock();
@@ -55,23 +57,10 @@ export const TrackersTab = memo(function TrackersTab({
     <>
       <table className="grid trackers-grid">
         <thead>
-          <tr>
-            <th>URL</th>
-            <th className="col-type">Type</th>
-            <th className="col-state">State</th>
-            <th className="right col-seeders">Seeders</th>
-            <th className="right col-leechers">Leechers</th>
-            <th className="right col-downloaded">Downloaded</th>
-            <th className="right col-peers" title="Peers returned by the last announce">
-              Peers
-            </th>
-            <th className="col-next">Next announce</th>
-            <th className="right col-attempts">OK / fail</th>
-            <th className="col-enabled">Enabled</th>
-          </tr>
+          <tr>{headers}</tr>
         </thead>
         <tbody>
-          {trackers?.map((tracker) => {
+          {rows?.map((tracker) => {
             const key = String(tracker.index);
             const open = isOpen(key);
             // A private tracker's URL carries the account's passkey.
@@ -84,7 +73,7 @@ export const TrackersTab = memo(function TrackersTab({
                       {url}
                     </RowToggle>
                   </td>
-                  <td>{TRACKER_TYPES[tracker.type] ?? `type ${tracker.type}`}</td>
+                  <td>{trackerType(tracker)}</td>
                   <td>
                     <Flags flags={trackerFlags(tracker)} />
                   </td>

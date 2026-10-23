@@ -71,6 +71,10 @@ jobs:
         run: go run . options-docs
       - name: Container script tests
         run: sh docker/scripts.test.sh
+      - name: Compose example
+        env:
+          WEB_PASS: ci-configuration-check
+        run: docker compose --env-file .env.example config --quiet
       # Every source file names its license on a line of its own, so a legal
       # review can read it off whichever file it is handed; a new file without
       # the line fails here (this file's own pattern, below, does not count).

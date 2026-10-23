@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { api } from '../api';
+import { THROTTLE_COLUMNS, throttleIdentity } from '../detailSort';
 import { formatRateInput, parseRate, rate } from '../format';
 import { useMounted, usePolling } from '../hooks';
 import type { BackendSummary, ThrottleGroup } from '../types';
@@ -10,6 +11,7 @@ import { IconPlus, IconTrash } from './icons';
 import { Field, ParsedInput } from './form';
 import { Modal } from './modal';
 import { useToast } from './toast';
+import { useTableSort } from './table';
 
 /** The server's rule for a group name (internal/store/throttle.go), checked here first. */
 const NAME_RE = /^[A-Za-z0-9_.-]{1,32}$/;
@@ -31,6 +33,12 @@ export function ThrottleDialog({
 }) {
   const [groups, setGroups] = useState<ThrottleGroup[]>([]);
   const [rates, setRates] = useState<Rates>({});
+  const groupRows = useMemo(() => groups.map((group) => ({
+    ...group,
+    downRate: rates[group.name]?.down ?? 0,
+    upRate: rates[group.name]?.up ?? 0,
+  })), [groups, rates]);
+  const { rows, headers } = useTableSort(groupRows, THROTTLE_COLUMNS, throttleIdentity);
   const [name, setName] = useState('');
   const [down, setDown] = useState<number | null>(0);
   const [up, setUp] = useState<number | null>(0);
@@ -187,18 +195,14 @@ export function ThrottleDialog({
       <table className="grid throttle-grid">
         <thead>
           <tr>
-            <th>Group</th>
-            <th className="col-limit">Download limit</th>
-            <th className="col-limit">Upload limit</th>
-            <th className="right">Current down</th>
-            <th className="right">Current up</th>
+            {headers}
             <th className="col-delete">
               <span className="visually-hidden">Delete</span>
             </th>
           </tr>
         </thead>
         <tbody>
-          {groups.map((group) => (
+          {rows?.map((group) => (
             <tr key={group.name}>
               <td>
                 <span className="tag accent">{group.name}</span>
@@ -217,8 +221,8 @@ export function ThrottleDialog({
                   />
                 </td>
               ))}
-              <td className="num right rate-num down">{rate(rates[group.name]?.down ?? 0)}</td>
-              <td className="num right rate-num up">{rate(rates[group.name]?.up ?? 0)}</td>
+              <td className="num right rate-num down">{rate(group.downRate)}</td>
+              <td className="num right rate-num up">{rate(group.upRate)}</td>
               <td>
                 <button
                   className="btn icon ghost sm danger"

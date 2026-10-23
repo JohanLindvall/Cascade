@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: MIT
+
+name: Feature request
+description: Suggest an improvement to Cascade.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing requests first; add a reaction or extra context if one covers your idea.
+        A concrete use case helps decide what belongs in Cascade.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe who needs this and what is difficult today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested behaviour
+      description: Describe the outcome you want. Sketches or examples are welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+      description: What have you tried? Would a documentation improvement help?

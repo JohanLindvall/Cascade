@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/JohanLindvall/Cascade/security/advisories/new
+    about: Use private reporting for vulnerabilities; do not disclose them in a public issue.
+  - name: Troubleshooting and setup guide
+    url: https://github.com/JohanLindvall/Cascade/blob/main/SUPPORT.md
+    about: Common setup problems, diagnostics and where to get help.
