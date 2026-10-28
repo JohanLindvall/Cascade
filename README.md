@@ -491,6 +491,13 @@ Settings given as environment variables are applied over XML-RPC at startup rath
 
 ## The UI
 
+Search matches every word in any order, ignoring case and punctuation: `bunny 1080`
+finds `Big.Buck.Bunny.1080p`. Words can match across the torrent's name, hash, file
+paths (including names on disk), trackers, label, download directory, status,
+throttle group and message. Files and trackers load while searching; the list says
+when those results are still loading or incomplete. Search combines with the
+sidebar's filters.
+
 ### Keyboard shortcuts
 
 | Key | Action |

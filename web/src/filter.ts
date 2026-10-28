@@ -6,6 +6,7 @@
  * Pure, so the node test runner can reach it; the components only render.
  */
 import type { Torrent, TorrentStatus } from './types';
+import { redactSecrets } from './redact.ts';
 
 export interface Filter {
   kind: 'status' | 'label' | 'tracker';
@@ -49,18 +50,30 @@ export function matchesFilter(
   }
 }
 
+/** Mediator's search rule: letter/digit fragments, in any order, ignoring punctuation. */
+export function searchWords(search: string): string[] {
+  return search.toLowerCase().match(/[\p{L}\p{Nd}]+/gu) ?? [];
+}
+
 /** The list after the sidebar filter and the search box, in the input order. */
 export function filterTorrents(
   torrents: Torrent[],
   filter: Filter,
   search: string,
   trackerHosts: Record<string, string>,
+  metadata: Readonly<Record<string, string>> = {},
 ): Torrent[] {
-  const needle = search.trim().toLowerCase();
+  const words = searchWords(search);
   return torrents.filter((torrent) => {
     if (!matchesFilter(torrent, filter, trackerHosts)) return false;
-    if (!needle) return true;
-    return torrent.name.toLowerCase().includes(needle) || torrent.hash.toLowerCase().includes(needle);
+    if (words.length === 0) return true;
+    const text = [
+      torrent.name, torrent.hash, torrent.label, torrent.directory, torrent.basePath,
+      torrent.status, torrent.throttle, redactSecrets(torrent.message),
+      trackerHosts[torrent.hash] ?? '',
+    ].join('\n').toLowerCase();
+    const details = metadata[torrent.hash] ?? '';
+    return words.every((word) => text.includes(word) || details.includes(word));
   });
 }
 

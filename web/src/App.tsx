@@ -8,6 +8,7 @@ import { useDropToAdd } from './app/useDropToAdd';
 import { useShortcuts } from './app/useShortcuts';
 import { useTorrentActions } from './app/useTorrentActions';
 import { useTrackerHosts } from './app/useTrackerHosts';
+import { useSearchMetadata } from './app/useSearchMetadata';
 import { AchievementsDialog } from './components/Achievements';
 import { AddDialog } from './components/AddDialog';
 import { Celebrate } from './components/Celebrate';
@@ -202,9 +203,10 @@ export function App() {
 
   /* ------------------------------ filtering ---------------------------- */
 
+  const searchMetadata = useSearchMetadata(torrents, search);
   const visible = useMemo(
-    () => sortTorrents(filterTorrents(torrents, filter, search, trackerHosts), sort),
-    [torrents, filter, search, sort, trackerHosts],
+    () => sortTorrents(filterTorrents(torrents, filter, search, trackerHosts, searchMetadata.text), sort),
+    [torrents, filter, search, sort, trackerHosts, searchMetadata.text],
   );
   const order = useMemo(() => visible.map((torrent) => torrent.hash), [visible]);
   const orderRef = useLatest(order);
@@ -443,6 +445,15 @@ export function App() {
           searchRef={searchRef}
         />
 
+        {(searchMetadata.pending > 0 || searchMetadata.failed > 0) && (
+          <div className="search-status" role="status">
+            {searchMetadata.pending > 0 && <span>Searching files and trackers…</span>}
+            {searchMetadata.failed > 0 && (
+              <span className="warn-text">Some files or trackers could not be searched: {searchMetadata.error}. Retrying…</span>
+            )}
+          </div>
+        )}
+
         <TorrentTable
           compact={compact}
           torrents={visible}
@@ -458,7 +469,11 @@ export function App() {
               ? { title: 'Loading torrents…' }
               : torrents.length === 0
                 ? { title: 'Nothing here yet', hint: 'Add a .torrent file or magnet link to get started.' }
-                : { title: 'No matches', hint: 'No torrents match the current filter or search.' }
+                : searchMetadata.pending > 0
+                  ? { title: 'Searching…', hint: 'Checking torrent files and trackers.' }
+                  : searchMetadata.failed > 0
+                    ? { title: 'Search incomplete', hint: 'Some files or trackers could not be searched. Retrying…' }
+                    : { title: 'No matches', hint: 'No torrents match the current filter or search.' }
           }
         />
 
