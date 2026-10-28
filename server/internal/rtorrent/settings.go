@@ -201,10 +201,9 @@ var settingTable = []struct {
 	{"useSanitizedName", SettingSpec{Get: one("system.torrent_name.use_sanitized"), Set: one("system.torrent_name.use_sanitized.set"), Kind: KindBool}},
 	// 0.16.25 names a torrent from name.utf-8, and a multi-file torrent's
 	// directory and files from it and path.utf-8, which older torrent makers
-	// wrote beside names in a legacy encoding. Unlike the switch above, this
-	// moves a multi-file torrent's files on disk; a single-file torrent's file
-	// keeps its legacy name either way (libtorrent's parse_single_file reads
-	// only "name"), so there only d.name follows the switch.
+	// wrote beside names in a legacy encoding. This changes the paths rtorrent
+	// opens, including single-file paths from 0.16.27. In 0.16.25 and 0.16.26 a
+	// single file keeps its legacy name and only d.name follows the switch.
 	{"allowLegacyUtf8", SettingSpec{Get: one("system.file_name.allow_legacy_utf8"), Set: one("system.file_name.allow_legacy_utf8.set"), Kind: KindBool}},
 	{"directory", SettingSpec{Get: one("directory.default"), Set: one("directory.default.set"), Kind: KindString}},
 	// Changing the session directory of a running rtorrent is not supported.

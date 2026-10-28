@@ -438,7 +438,7 @@ var Options = []Option{
 		Name:    "RT_ALLOW_LEGACY_UTF8",
 		Setting: "allowLegacyUtf8",
 		Section: "Storage",
-		Summary: "Name torrents, and a multi-file torrent's files, from name.utf-8 and path.utf-8 where a torrent has them, yes/no (rtorrent 0.16.25+)",
+		Summary: "Use name.utf-8 and path.utf-8 for torrent and file names, yes/no (rtorrent 0.16.25+; single-file paths 0.16.27+)",
 		Note:    rtorrentDefault,
 	},
 	{
