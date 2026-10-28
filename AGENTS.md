@@ -426,16 +426,18 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    a torrent carries `name.utf-8` and `path.utf-8` beside legacy-encoded names, `d.name` comes from
    `name.utf-8`, and a multi-file torrent's directory and `f.path` from those too, unless
    `system.file_name.allow_legacy_utf8` is off (`allowLegacyUtf8`). That moves a multi-file
-   torrent's files on disk, while a single-file torrent's file keeps its legacy `name` either way
-   (libtorrent's `parse_single_file` reads nothing else) and only its `d.name` follows the switch;
-   the API smoke test holds the release to both. The Files tab fetches `f.frozen_path` and shows "on
+   torrent's files on disk. Through 0.16.26 a single-file torrent's file keeps its legacy `name`
+   either way and only its `d.name` follows the switch; from 0.16.27 its file uses the selected
+   UTF-8 name too (`parse_single_file` now takes `name_sanitized`). The API smoke test holds each
+   release to its rule. An upgrade with the switch on therefore needs an existing single-file
+   payload under its UTF-8 name. The Files tab fetches `f.frozen_path` and shows "on
    disk as …" when it differs from `f.path` (`MapFile`'s `OnDisk`), which is also what the API smoke
    test checks. `docker/patches/apply-<repo>.sh` is the general hook — one per repository, run after
    clone and before configure.
 
    **Nor does anything make those names UTF-8, and XML-RPC text must be.** An old torrent names its
-   files in Latin-1 and libtorrent writes those bytes as they are — 0.16.25 still names a single
-   file by its legacy `name`, whatever `name.utf-8` says. xmlrpc-c, every image's RPC layer, takes a
+   files in Latin-1 and libtorrent writes those bytes as they are — through 0.16.26 a single
+   file keeps its legacy `name`, whatever `name.utf-8` says. xmlrpc-c, every image's RPC layer, takes a
    string only if it is UTF-8 inside the Basic Multilingual Plane, so an emoji fails as well (1.51,
    and the current release still); rtorrent then sends a stand-in for the whole string
    (`internal/rtorrent/standin.go`): from 0.16.7 every byte outside printable ASCII as `%XX`,

@@ -261,10 +261,14 @@ def check_legacy_names(cascade):
     between the name.utf-8 and path.utf-8 older torrent makers wrote and the
     names beside them, and the settings dialog says how: a torrent is listed
     under the names it picks, and a multi-file torrent's directory and files
-    are saved under them, but a single-file torrent's file keeps its plain
-    name either way (libtorrent's parse_single_file reads only "name")."""
-    if not cascade.api('/api/capabilities')['supports']['allowLegacyUtf8']:
+    are saved under them. Single-file paths follow the same choice from
+    libtorrent 0.16.27; 0.16.25 and 0.16.26 keep the plain file name."""
+    backend = cascade.api('/api/capabilities')
+    if not backend['supports']['allowLegacyUtf8']:
         return
+    version = re.match(r'^(\d+)\.(\d+)\.(\d+)', backend['libraryVersion'])
+    assert version, backend['libraryVersion']
+    single_uses_utf8 = tuple(map(int, version.groups())) >= (0, 16, 27)
     before = cascade.api('/api/settings')['allowLegacyUtf8']
     tag = uuid.uuid4().hex[:8]
     data = tag.encode() * 2048
@@ -274,6 +278,7 @@ def check_legacy_names(cascade):
             assert cascade.api('/api/settings', {'allowLegacyUtf8': switch})['allowLegacyUtf8'] == switch
             mark = f'{tag}-{"on" if switch else "off"}'
             picked = 'utf8' if switch else 'legacy'
+            single_saved = picked if single_uses_utf8 else 'legacy'
             # rtorrent picks by key, not by encoding, so ASCII stands in for a
             # legacy name: one that is not UTF-8 would come back escaped (%E9
             # for a Latin-1 é) rather than as the path on disk.
@@ -282,7 +287,7 @@ def check_legacy_names(cascade):
             multi = {'name': f'legacy {mark}', 'name.utf-8': f'utf8 {mark}',
                      'piece length': len(data), 'pieces': hashlib.sha1(data).digest(),
                      'files': [{'length': len(data), 'path': ['legacy.bin'], 'path.utf-8': ['utf8.bin']}]}
-            for info, listed, saved in ((single, f'{picked} {mark}.bin', f'legacy {mark}.bin'),
+            for info, listed, saved in ((single, f'{picked} {mark}.bin', f'{single_saved} {mark}.bin'),
                                         (multi, f'{picked} {mark}', f'{picked} {mark}/{picked}.bin')):
                 result = upload_torrent(cascade, info)
                 assert result['added'] == 1, result
