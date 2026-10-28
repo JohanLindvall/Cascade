@@ -176,6 +176,7 @@ export function Toolbar({
           className="input"
           placeholder="Search torrents… ( / )"
           aria-label="Search torrents"
+          title="Match words in any order across names, files, trackers, labels and other torrent details"
           value={search}
           onChange={(event) => onSearch(event.target.value)}
           onKeyDown={(event) => {

@@ -857,6 +857,17 @@ table.torrents th[tabindex]:focus-visible,
   margin: 0 2px;
 }
 
+.search-status {
+  display: flex;
+  flex-wrap: wrap;
+  flex: none;
+  gap: 4px 12px;
+  padding: 6px 14px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 .selection-pill {
   display: inline-flex;
   align-items: center;
