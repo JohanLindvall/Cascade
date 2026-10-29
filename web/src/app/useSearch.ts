@@ -1,16 +1,14 @@
 // SPDX-License-Identifier: MIT
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useReducer } from 'react';
 import { api } from '../api';
-import type { SearchResult } from '../contracts';
-import { hasSearchWords, pollSearch } from '../search';
-
-const EMPTY_HASHES: ReadonlySet<string> = new Set();
+import { INITIAL_SEARCH, hasSearchWords, pollSearch, reduceSearch } from '../search';
 
 /** The browser keeps only matching IDs; file and tracker text stays on the server. */
 export function useSearch(query: string) {
-  const [answer, setAnswer] = useState<{ query: string; result: SearchResult }>();
+  const [state, dispatch] = useReducer(reduceSearch, INITIAL_SEARCH);
   useEffect(() => {
+    dispatch({ type: 'query', query });
     let stop: (() => void) | undefined;
     const visible = () => {
       stop?.();
@@ -18,7 +16,8 @@ export function useSearch(query: string) {
       if (document.hidden) return;
       stop = pollSearch(query, {
         read: api.search,
-        changed: (result) => setAnswer({ query, result }),
+        changed: (result) => dispatch({ type: 'result', query, result }),
+        failed: (error) => dispatch({ type: 'error', query, error }),
         setTimer: (run, ms) => window.setTimeout(run, ms),
         clearTimer: (timer) => window.clearTimeout(timer as number | undefined),
       });
@@ -31,10 +30,7 @@ export function useSearch(query: string) {
     };
   }, [query]);
 
-  const result = answer?.query === query ? answer.result : undefined;
-  const hashes = useMemo(() => result ? new Set(result.hashes) : EMPTY_HASHES, [result]);
+  const hashes = useMemo(() => state.hashes === null ? null : new Set(state.hashes), [state.hashes]);
   if (!hasSearchWords(query)) return { hashes: null, pending: 0, failed: 0 };
-  // Never apply a previous query's matches while waiting for the new one:
-  // bulk actions are restricted to the rows this query has actually shown.
-  return { hashes, pending: result?.pending ?? 1, failed: result?.failed ?? 0, error: result?.error };
+  return { hashes, pending: state.pending, failed: state.failed, error: state.error };
 }

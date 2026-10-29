@@ -1064,9 +1064,12 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   arriving magnet metadata and tracker-count changes invalidate them, and trackers refresh once
   a minute. Main listings prune the index; a detail response cannot restore an old entry.
   `search.ts` debounces and polls in the browser, aborting when the query changes or the page
-  hides; `filter.ts` only intersects those IDs with sidebar filters. The production browser must
-  never fetch every torrent's files or trackers to search. The demo mirrors matching in
-  `demo/search.ts`. Search redaction (`internal/redact`) must stay in step with `redact.ts`.
+  hides. Typing and failed reads keep the last returned matches until a new answer arrives;
+  clearing the query restores the unfiltered list immediately. Late answers from abandoned
+  requests cannot replace those matches. `filter.ts` only intersects those IDs with sidebar
+  filters. The production browser must never fetch every torrent's files or trackers to search.
+  The demo mirrors matching in `demo/search.ts`. Search redaction (`internal/redact`) must stay
+  in step with `redact.ts`.
 - Forms go through `Field` (`form.tsx`), which ties the label to the first control by id and wires
   its hint or error in as `aria-describedby`, and values that must parse go through
   `ParsedInput`: the text is kept as typed, `aria-invalid` flags what does not parse, and the
