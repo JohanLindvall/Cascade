@@ -103,6 +103,36 @@ func (s *stubService) State(ctx context.Context) (contracts.StateResponse, error
 	}
 	return contracts.StateResponse{Torrents: []contracts.Torrent{}}, s.record("state")
 }
+func (s *stubService) Search(_ context.Context, query string) (contracts.SearchResult, error) {
+	return contracts.SearchResult{Hashes: []string{hash}, Pending: 2, Failed: 1, Error: "tracker unavailable"}, s.record("search", query)
+}
+
+func TestSearchReturnsOnlyMatchesAndProgressAndValidatesQuery(t *testing.T) {
+	h := boot(t, func(c *config.Config) { c.BasePath = "/cascade" })
+	for _, query := range []string{"", "日本 ÉTÉ movie", "a&b+c?#"} {
+		result := do(t, "GET", h.base+"/cascade/api/search?q="+url.QueryEscape(query), nil, nil)
+		if result.status != 200 || len(result.body) != 4 || result.body["pending"] != float64(2) || result.body["failed"] != float64(1) || result.body["error"] != "tracker unavailable" {
+			t.Fatalf("search: %+v", result)
+		}
+		if !reflect.DeepEqual(result.body["hashes"], []any{hash}) {
+			t.Fatalf("matches: %v", result.body)
+		}
+		calls := h.service.callsTo("search")
+		if calls[len(calls)-1].args[0] != query {
+			t.Fatalf("query: %v", calls)
+		}
+	}
+	before := len(h.service.callsTo("search"))
+	for _, query := range []string{"q=a&q=b", "q=" + strings.Repeat("x", 4097), "q=" + url.QueryEscape(strings.Repeat("日", 1366))} {
+		result := do(t, "GET", h.base+"/cascade/api/search?"+query, nil, nil)
+		if result.status != 400 {
+			t.Fatalf("query was not refused: %+v", result)
+		}
+	}
+	if len(h.service.callsTo("search")) != before {
+		t.Fatal("invalid query reached the service")
+	}
+}
 func (s *stubService) Action(ctx context.Context, hash, action string) error {
 	if s.onAction != nil {
 		s.onAction(ctx)

@@ -2,6 +2,7 @@
 
 /** The server's HTTP shapes (contracts.ts), under the names the components use. */
 export type {
+  SearchResult,
   TorrentStatus, Torrent, TorrentFile, Peer, Tracker,
   BackendSummary, Policy, RateSample, GlobalStatus, StateResponse,
   LogScopeState as LogScopes, LogScopeChange, ThrottleGroup, ThrottleRate,

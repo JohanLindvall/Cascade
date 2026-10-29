@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { LogScopeChange, StateResponse, Torrent, TorrentFile, Tracker, UploadResult } from '../contracts.ts';
+import type { LogScopeChange, SearchResult, StateResponse, Torrent, TorrentFile, Tracker, UploadResult } from '../contracts.ts';
 import { FETCHING_METADATA, dataFolder, sharedDataFolder } from '../dataFolder.ts';
 import { DEFAULT_PREFERENCES } from '../preferences.ts';
 import { DEFAULT_POLL_MS, DemoServer, type DemoRequest, type DemoResponse, type UploadPart } from './backend.ts';
@@ -17,6 +17,42 @@ import { ManualClock, torrentFile } from './fixtures.ts';
 
 const START = Date.UTC(2026, 9, 6, 19, 0, 0) + 503;
 const UNKNOWN = '0000000000000000000000000000000000000000';
+
+test('search returns IDs for word fragments across files, trackers and torrent fields', () => {
+  const { upload, named, ok, call, torrents } = setup();
+  for (const torrent of torrents()) ok('DELETE', `torrents/${torrent.hash}`);
+  const added = upload([
+    { name: 'torrents', filename: 'movie.torrent', data: torrentFile({
+      name: 'Open.Movie.1080p ÉTÉ_日本語_١٢', files: [{ length: 1000, path: ['Extras', 'Director-Interview.srt'] }],
+    }, { 'announce-list': [
+      ['https://primary.example.org/announce?passkey=secretvalue'],
+      ['https://username:password@backup.example.org/announce'],
+    ] }) },
+    { name: 'start', value: 'false' }, { name: 'label', value: 'Cinema' }, { name: 'directory', value: '/downloads/Archive' },
+  ]);
+  assert.equal(added.status, 200);
+  const movie = named('Open.Movie');
+  const search = (q: string) => ok<SearchResult>('GET', 'search', undefined, new URLSearchParams({ q }).toString());
+  for (const query of [
+    'movie 1080', '1080 MOVIE', 'movie-1080', 'movie.interview', 'cinema srt',
+    'backup director', 'primary interview', 'archive movie', '日本 ÉTÉ', '١٢ été',
+    `movie ${movie.hash.slice(0, 8)}`,
+  ]) {
+    assert.deepEqual(search(query), { hashes: [movie.hash], pending: 0, failed: 0 }, query);
+  }
+  for (const query of ['movie absent', 'secretvalue', 'username', 'password']) assert.deepEqual(search(query).hashes, [], query);
+  for (const query of ['', ' .-_ ']) assert.deepEqual(search(query).hashes, torrents().map((t) => t.hash));
+  ok('PATCH', `torrents/${movie.hash}`, { label: 'Festival' });
+  assert.deepEqual(search('cinema interview').hashes, []);
+  assert.deepEqual(search('festival interview').hashes, [movie.hash]);
+  ok('POST', `torrents/${movie.hash}/trackers`, { url: 'https://replacement.example/announce' });
+  assert.deepEqual(search('replacement interview').hashes, [movie.hash]);
+  ok('DELETE', `torrents/${movie.hash}`);
+  assert.deepEqual(search('festival interview').hashes, []);
+  for (const query of ['q=a&q=b', `q=${'x'.repeat(4097)}`, new URLSearchParams({ q: '日'.repeat(1366) }).toString()]) {
+    assert.equal(call('GET', 'search', undefined, query).status, 400);
+  }
+});
 
 function setup() {
   const clock = new ManualClock(START);

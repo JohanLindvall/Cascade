@@ -23,6 +23,12 @@ const server = createServer((req, response) => {
     case '/api/ok':
       response.writeHead(200, { 'content-type': 'application/json' }).end('{"ok":true}');
       return;
+    case '/api/search': {
+      const q = new URL(req.url ?? '', 'http://x').searchParams.get('q');
+      if (q === 'stall') { stall(response, 200); return; }
+      response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ hashes: [q], pending: 0, failed: 0 }));
+      return;
+    }
     case '/api/login':
       response.writeHead(200, { 'content-type': 'text/html' }).end('<html>sign in</html>');
       return;
@@ -48,7 +54,16 @@ after(() => {
 
 // api.ts resolves its base against the document at load time.
 Object.assign(globalThis, { document: { baseURI: `http://127.0.0.1:${(server.address() as AddressInfo).port}/` } });
-const { ApiError, request } = await import('./api.ts');
+const { ApiError, request, api } = await import('./api.ts');
+
+test('search encodes Unicode and URL punctuation and forwards cancellation', async () => {
+  const query = '日本 ÉTÉ &b+c?#';
+  assert.deepEqual(await api.search(query), { hashes: [query], pending: 0, failed: 0 });
+  const controller = new AbortController();
+  const pending = api.search('stall', controller.signal);
+  controller.abort();
+  await assert.rejects(pending, (error: unknown) => error instanceof DOMException && error.name === 'AbortError');
+});
 
 // Tells a test when the headers are in, so what it does next lands mid-body.
 let headersIn: () => void = () => {};

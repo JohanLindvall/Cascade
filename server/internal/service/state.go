@@ -101,6 +101,7 @@ func (s *Service) readTorrents(ctx context.Context, view string) ([]contracts.To
 	if view == "main" {
 		s.store.Prune(live)
 		s.updateGame(torrents)
+		s.search.sync(torrents)
 	}
 	return torrents, nil
 }

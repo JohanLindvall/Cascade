@@ -52,6 +52,7 @@ type Service struct {
 	stateRead       flight[contracts.StateResponse]
 	torrentRead     flight[[]contracts.Torrent]
 	disk            diskCache
+	search          searchIndex
 	// Listings and erases must reach the store in the same order they reach
 	// rtorrent, or a delayed listing can credit an erased torrent twice.
 	// A channel lets the housekeeping abandon a queued read during Stop.

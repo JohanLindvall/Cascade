@@ -8,7 +8,7 @@ import { useDropToAdd } from './app/useDropToAdd';
 import { useShortcuts } from './app/useShortcuts';
 import { useTorrentActions } from './app/useTorrentActions';
 import { useTrackerHosts } from './app/useTrackerHosts';
-import { useSearchMetadata } from './app/useSearchMetadata';
+import { useSearch } from './app/useSearch';
 import { AchievementsDialog } from './components/Achievements';
 import { AddDialog } from './components/AddDialog';
 import { Celebrate } from './components/Celebrate';
@@ -203,10 +203,10 @@ export function App() {
 
   /* ------------------------------ filtering ---------------------------- */
 
-  const searchMetadata = useSearchMetadata(torrents, search);
+  const searchResult = useSearch(search);
   const visible = useMemo(
-    () => sortTorrents(filterTorrents(torrents, filter, search, trackerHosts, searchMetadata.text), sort),
-    [torrents, filter, search, sort, trackerHosts, searchMetadata.text],
+    () => sortTorrents(filterTorrents(torrents, filter, trackerHosts, searchResult.hashes), sort),
+    [torrents, filter, sort, trackerHosts, searchResult.hashes],
   );
   const order = useMemo(() => visible.map((torrent) => torrent.hash), [visible]);
   const orderRef = useLatest(order);
@@ -445,11 +445,11 @@ export function App() {
           searchRef={searchRef}
         />
 
-        {(searchMetadata.pending > 0 || searchMetadata.failed > 0) && (
+        {(searchResult.pending > 0 || searchResult.failed > 0) && (
           <div className="search-status" role="status">
-            {searchMetadata.pending > 0 && <span>Searching files and trackers…</span>}
-            {searchMetadata.failed > 0 && (
-              <span className="warn-text">Some files or trackers could not be searched: {searchMetadata.error}. Retrying…</span>
+            {searchResult.pending > 0 && <span>Searching torrents, files and trackers…</span>}
+            {searchResult.failed > 0 && (
+              <span className="warn-text">Search incomplete: {searchResult.error}. Retrying…</span>
             )}
           </div>
         )}
@@ -469,10 +469,10 @@ export function App() {
               ? { title: 'Loading torrents…' }
               : torrents.length === 0
                 ? { title: 'Nothing here yet', hint: 'Add a .torrent file or magnet link to get started.' }
-                : searchMetadata.pending > 0
+                : searchResult.pending > 0
                   ? { title: 'Searching…', hint: 'Checking torrent files and trackers.' }
-                  : searchMetadata.failed > 0
-                    ? { title: 'Search incomplete', hint: 'Some files or trackers could not be searched. Retrying…' }
+                  : searchResult.failed > 0
+                    ? { title: 'Search incomplete', hint: 'Some torrents, files or trackers could not be searched. Retrying…' }
                     : { title: 'No matches', hint: 'No torrents match the current filter or search.' }
           }
         />

@@ -37,6 +37,8 @@ server/                   the Go module: main.go serves, and answers the entrypo
                           (the per-torrent and per-group mutation queues, shared reads),
                           datapaths.go (the delete-data path checks, and the bytes on
                           disk a reported path stands for)
+                          search.go (shared file/tracker search index; only matching
+                          hashes and progress leave the server)
   internal/store/         the one JSON state file; throttle group validation
   internal/game/          badge definitions, XP and level curve
   internal/torrentfile/   bencode parse: reject non-torrents, derive the info hash
@@ -1056,6 +1058,15 @@ What a visitor sees decides whether the code gets read, so it is held to the cod
   (`+N hidden`) and never acted on — Delete after narrowing the list used to remove torrents that
   had scrolled out of sight. Shift ranges replace the selection from the anchor (so Shift+↑ can
   shrink one), Ctrl/⌘+Shift adds the range.
+- Search goes through `GET /api/search?q=`. The server matches words across torrent fields,
+  file paths and redacted tracker text, and returns hashes plus pending/failed counts. Details
+  are read in small batches only while requests arrive, shared across tabs and queries; paths,
+  arriving magnet metadata and tracker-count changes invalidate them, and trackers refresh once
+  a minute. Main listings prune the index; a detail response cannot restore an old entry.
+  `search.ts` debounces and polls in the browser, aborting when the query changes or the page
+  hides; `filter.ts` only intersects those IDs with sidebar filters. The production browser must
+  never fetch every torrent's files or trackers to search. The demo mirrors matching in
+  `demo/search.ts`. Search redaction (`internal/redact`) must stay in step with `redact.ts`.
 - Forms go through `Field` (`form.tsx`), which ties the label to the first control by id and wires
   its hint or error in as `aria-describedby`, and values that must parse go through
   `ParsedInput`: the text is kept as typed, `aria-invalid` flags what does not parse, and the

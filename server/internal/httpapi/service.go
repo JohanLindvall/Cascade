@@ -22,6 +22,7 @@ type Service interface {
 	State(ctx context.Context) (contracts.StateResponse, error)
 	Status(ctx context.Context) (contracts.GlobalStatus, error)
 	Torrents(ctx context.Context, view string) ([]contracts.Torrent, error)
+	Search(ctx context.Context, query string) (contracts.SearchResult, error)
 	Game() contracts.GameState
 	Files(ctx context.Context, hash string) ([]contracts.TorrentFile, error)
 	Peers(ctx context.Context, hash string) ([]contracts.Peer, error)

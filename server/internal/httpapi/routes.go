@@ -51,6 +51,17 @@ func (s *Server) routes() *router {
 	/* ------------------------------- reads ------------------------------- */
 
 	read("GET /api/state", func(c *call) (any, error) { return s.svc.State(c.ctx) })
+	read("GET /api/search", func(c *call) (any, error) {
+		values := c.r.URL.Query()["q"]
+		if len(values) > 1 {
+			return nil, httperr.New(http.StatusBadRequest, `"q" must be supplied once`)
+		}
+		text, _ := query(c.r, "q")
+		if len(text) > 4096 {
+			return nil, httperr.New(http.StatusBadRequest, `"q" must be at most 4096 bytes`)
+		}
+		return s.svc.Search(c.ctx, text)
+	})
 	mux.handle("GET /api/stream", http.HandlerFunc(s.serveStream))
 	read("GET /api/status", func(c *call) (any, error) { return s.svc.Status(c.ctx) })
 	read("GET /api/torrents", func(c *call) (any, error) {

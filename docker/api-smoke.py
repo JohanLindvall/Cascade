@@ -639,6 +639,53 @@ def check_fetching_metadata(cascade):
         remove_torrent(cascade, magnet_hash)
 
 
+def check_search(cascade):
+    """A large file list and secondary trackers are searched without leaving
+    the server; only the matching hashes and progress cross the HTTP boundary."""
+    info = {
+        'name': 'Search.Bunny-1080p-Été_日本語', 'piece length': 16384,
+        'pieces': hashlib.sha1(b'x' * 2048).digest(),
+        'files': [{'length': 1, 'path': ['Extras', f'Director-Interview-{i:04}.srt']} for i in range(2048)],
+    }
+    info_hash = hashlib.sha1(bencode(info)).hexdigest().upper()
+    torrent = bencode({
+        'info': info,
+        'announce': 'https://primary.example.org/announce?passkey=smokesecretvalue',
+        'announce-list': [
+            ['https://primary.example.org/announce?passkey=smokesecretvalue'],
+            ['https://smokeusername:smokepassword@backup.example.org/announce'],
+        ],
+    })
+    assert upload_torrents(cascade, torrent, start='false', label='Cinema')['added'] == 1
+
+    def search(query):
+        deadline = time.monotonic() + 40
+        while True:
+            result = cascade.api('/api/search?' + urllib.parse.urlencode({'q': query}))
+            assert set(result) <= {'hashes', 'pending', 'failed', 'error'}, result
+            assert result['failed'] == 0, result
+            if result['pending'] == 0:
+                return result['hashes']
+            assert time.monotonic() < deadline, result
+            time.sleep(0.2)
+
+    try:
+        for query in ('1080 BUNNY', 'bunn.1080', 'bunny interview', 'cinema srt',
+                      'backup director', 'primary interview', '日本 ÉTÉ', info_hash[:12]):
+            assert info_hash in search(query), query
+        for query in ('bunny absent', 'smokesecretvalue', 'smokeusername', 'smokepassword'):
+            assert info_hash not in search(query), query
+        cascade.api(f'/api/torrents/{info_hash}', {'label': 'Festival'}, 'PATCH')
+        assert info_hash in search('festival interview')
+        assert info_hash not in search('cinema interview')
+        assert info_hash in search(' .-_ ')
+        status, _, body = cascade.fetch('/api/search?q=bunny+interview')
+        assert status == 200 and len(body) < 512, (status, len(body))
+    finally:
+        cascade.fetch(f'/api/torrents/{info_hash}', method='DELETE')
+    assert info_hash not in search('bunny interview')
+
+
 def check_stream(cascade):
     """The state stream: a compressed snapshot first, then a delta once a
     change lands — here a preference, which the status carries."""
@@ -699,6 +746,7 @@ def main(base, container=None):
     check_directory_change(cascade)
     check_what_rtorrent_cannot_take(cascade)
     check_fetching_metadata(cascade)
+    check_search(cascade)
     check_stream(cascade)
     print(f'API smoke test passed on rtorrent {version}')
 

@@ -161,6 +161,7 @@ func (s *Service) removeTorrent(ctx context.Context, hash string, deleteData boo
 	_, err := s.client.Call(ctx, "d.erase", hash)
 	if err == nil {
 		s.store.Forget(hash)
+		s.search.forget(hash)
 	}
 	<-s.listingGate
 	if err != nil {

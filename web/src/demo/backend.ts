@@ -18,6 +18,7 @@ import type { JsonObject, StreamEvent } from '../stream.ts';
 import { Hub, type Subscription, type Timers } from './hub.ts';
 import { Rpc, RpcFault } from './rpc.ts';
 import { Session, VIEWS, viewsOf, type AddOptions } from './session.ts';
+import { search } from './search.ts';
 import { SETTINGS, applySetting, coerce, supportsMap, type SettingSpec } from './settings.ts';
 import { parseMagnet, parseTorrent } from './torrentfile.ts';
 import { Fault, HttpError, bool, directory, int, record, rtorrentString, rtorrentText, text } from './validate.ts';
@@ -423,6 +424,12 @@ export class DemoServer {
     const session = this.session;
 
     this.on('GET state', () => this.state());
+    this.on('GET search', (call) => {
+      if (call.request.query.getAll('q').length > 1) throw new HttpError(400, '"q" must be supplied once');
+      const query = call.query('q') ?? '';
+      if (new TextEncoder().encode(query).length > 4096) throw new HttpError(400, '"q" must be at most 4096 bytes');
+      return search(session, query);
+    });
     this.on('GET stream', () => {
       // A plain fetch of the stream gets its first event; the page's EventSource gets the rest.
       let first: StreamEvent | undefined;

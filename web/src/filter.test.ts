@@ -74,7 +74,7 @@ test('"active" means traffic, not state', () => {
 test('the counts agree with what each filter shows', () => {
   const counts = countByStatus(list);
   for (const value of STATUS_FILTERS) {
-    const shown = filterTorrents(list, { kind: 'status', value }, '', {}).length;
+    const shown = filterTorrents(list, { kind: 'status', value }, {}).length;
     assert.equal(counts[value], shown, value);
   }
   assert.equal(counts.all, 5);
@@ -85,75 +85,23 @@ test('the counts agree with what each filter shows', () => {
 
 test('label and tracker filters match exactly', () => {
   assert.deepEqual(
-    filterTorrents(list, { kind: 'label', value: 'tv' }, '', hosts).map((t) => t.name),
+    filterTorrents(list, { kind: 'label', value: 'tv' }, hosts).map((t) => t.name),
     ['Alpha Release', 'beta'],
   );
   assert.deepEqual(
-    filterTorrents(list, { kind: 'tracker', value: 'b.example' }, '', hosts).map((t) => t.name),
+    filterTorrents(list, { kind: 'tracker', value: 'b.example' }, hosts).map((t) => t.name),
     ['Gamma'],
   );
   // A torrent whose tracker is not known yet matches no tracker filter.
-  assert.equal(filterTorrents(list, { kind: 'tracker', value: 'a.example' }, '', {}).length, 0);
+  assert.equal(filterTorrents(list, { kind: 'tracker', value: 'a.example' }, {}).length, 0);
 });
 
-test('search is case-insensitive over name and hash, and stacks on the filter', () => {
-  assert.deepEqual(
-    filterTorrents(list, { kind: 'status', value: 'all' }, '  ALPHA ', {}).map((t) => t.name),
-    ['Alpha Release'],
-  );
-  assert.equal(filterTorrents(list, { kind: 'status', value: 'all' }, list[3].hash.slice(-6), {}).length, 1);
-  assert.equal(filterTorrents(list, { kind: 'label', value: 'tv' }, 'gamma', {}).length, 0);
-  assert.equal(filterTorrents(list, { kind: 'status', value: 'all' }, '', {}).length, 5);
-});
-
-const all = { kind: 'status', value: 'all' } as const;
-
-test('search matches every word in any order, including fragments and punctuation-separated names', () => {
-  const bunny = torrent({ name: 'Big.Buck_Bunny-1080p.mkv' });
-  const other = torrent({ name: 'Big Buck Bunny 720p' });
-  const torrents = [bunny, other];
-  for (const search of ['bunny 1080', '1080 BUNNY', '  buck\t1080\n', 'bunn.1080', 'bunny-1080']) {
-    assert.deepEqual(filterTorrents(torrents, all, search, {}), [bunny], search);
-  }
-  for (const search of ['bunny absent', 'big 2160']) {
-    assert.deepEqual(filterTorrents(torrents, all, search, {}), [], search);
-  }
-  for (const search of ['', ' \t\n ', ' .-_ ']) {
-    assert.deepEqual(filterTorrents(torrents, all, search, {}), torrents, search);
-  }
-});
-
-test('search preserves non-English letters and digits', () => {
-  const named = torrent({ name: 'Été_日本語_١٢' });
-  for (const search of ['日本 ÉTÉ', '١٢ été', '日本語']) {
-    assert.deepEqual(filterTorrents([named], all, search, {}), [named], search);
-  }
-  assert.deepEqual(filterTorrents([named], all, 'Русский', {}), []);
-});
-
-test('words can match across a torrent’s name, files, trackers and other metadata', () => {
-  const named = torrent({
-    name: 'Open Movie', hash: 'ABCDEF1234567890'.padEnd(40, '0'), label: 'Cinema',
-    directory: '/downloads/Archive', basePath: '/downloads/Archive/Collection',
-    status: 'paused', throttle: 'Overnight', message: 'Tracker timed out',
-  });
-  const torrents = [named, torrent({ name: 'Unrelated Interview', label: 'other' })];
-  const hosts = { [named.hash]: 'primary.example.org' };
-  const metadata = { [named.hash]: 'extras/director-interview.srt\nhttps://backup.example.org/announce\nfestival' };
-  for (const search of [
-    'movie interview', 'cinema srt', 'backup movie', 'festival director',
-    'primary abcdef', 'archive paused', 'collection overnight', 'timed movie',
-  ]) {
-    assert.deepEqual(filterTorrents(torrents, all, search, hosts, metadata), [named], search);
-  }
-  assert.deepEqual(filterTorrents(torrents, all, 'movie other', hosts, metadata), []);
-  assert.deepEqual(filterTorrents(torrents, { kind: 'label', value: 'other' }, 'interview backup', hosts, metadata), []);
-  assert.deepEqual(filterTorrents(torrents, { kind: 'status', value: 'seeding' }, 'interview backup', hosts, metadata), []);
-  assert.deepEqual(filterTorrents(torrents, { kind: 'tracker', value: 'primary.example.org' }, 'interview backup', hosts, metadata), [named]);
-});
-
-test('search does not match credentials hidden in tracker messages', () => {
-  const named = torrent({ message: 'Failed https://tracker.example/announce?passkey=secretvalue' });
-  assert.deepEqual(filterTorrents([named], all, 'tracker example', {}), [named]);
-  assert.deepEqual(filterTorrents([named], all, 'secretvalue', {}), []);
+test('server matches intersect each sidebar filter and never expand the selection', () => {
+  const matches = new Set([list[0].hash, list[2].hash, 'not-in-the-list']);
+  assert.deepEqual(filterTorrents(list, { kind: 'status', value: 'all' }, hosts, matches), [list[0], list[2]]);
+  assert.deepEqual(filterTorrents(list, { kind: 'label', value: 'tv' }, hosts, matches), [list[0]]);
+  assert.deepEqual(filterTorrents(list, { kind: 'tracker', value: 'b.example' }, hosts, matches), [list[2]]);
+  assert.deepEqual(filterTorrents(list, { kind: 'status', value: 'seeding' }, hosts, matches), [list[2]]);
+  assert.deepEqual(filterTorrents(list, { kind: 'status', value: 'all' }, hosts, new Set()), []);
+  assert.deepEqual(filterTorrents(list, { kind: 'status', value: 'all' }, hosts, null), list);
 });

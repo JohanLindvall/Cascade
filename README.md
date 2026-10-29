@@ -498,9 +498,10 @@ Settings given as environment variables are applied over XML-RPC at startup rath
 Search matches every word in any order, ignoring case and punctuation: `bunny 1080`
 finds `Big.Buck.Bunny.1080p`. Words can match across the torrent's name, hash, file
 paths (including names on disk), trackers, label, download directory, status,
-throttle group and message. Files and trackers load while searching; the list says
-when those results are still loading or incomplete. Search combines with the
-sidebar's filters.
+throttle group and message. The server searches and caches file and tracker names,
+sharing that cache across tabs and queries; the browser receives only matching
+torrent IDs. The list says when results are still loading or incomplete, and retries
+failed reads. Search combines with the sidebar's filters.
 
 ### Keyboard shortcuts
 
@@ -705,6 +706,7 @@ All endpoints live under `/api` and honour the same Basic auth as the UI.
 | `GET` | `/api/state` | Torrents, global status, throttle groups and the game, all at once |
 | `GET` | `/api/stream` | The same state as server-sent events: a snapshot, then deltas ([below](#the-state-stream)) |
 | `GET` | `/api/torrents?view=main` | Torrent list for an rtorrent view |
+| `GET` | `/api/search?q=` | Matching torrent hashes, `pending`/`failed` counts and an optional `error`; repeat while indexing is pending |
 | `GET` | `/api/status` | Global rates, limits, backend summary and policy on their own |
 | `GET` | `/api/capabilities` | Backend version and supported feature map |
 | `GET` | `/api/game` | Level, XP and badge progress, each badge with its unit |

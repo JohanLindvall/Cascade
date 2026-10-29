@@ -7,6 +7,14 @@
 // the browser expects [] — so every constructor of these starts them empty.
 package contracts
 
+// SearchResult answers GET /api/search?q= without exposing the indexed details.
+type SearchResult struct {
+	Hashes  []string `json:"hashes"`
+	Pending int      `json:"pending"`
+	Failed  int      `json:"failed"`
+	Error   string   `json:"error,omitempty"`
+}
+
 // UploadResult answers POST /api/torrents/upload.
 type UploadResult struct {
 	Added  int      `json:"added"`

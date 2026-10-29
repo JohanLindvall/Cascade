@@ -1,5 +1,13 @@
 // SPDX-License-Identifier: MIT
 
+/** GET /api/search?q=: matching IDs and progress, never the indexed details. */
+export interface SearchResult {
+  hashes: string[];
+  pending: number;
+  failed: number;
+  error?: string;
+}
+
 /**
  * The HTTP data shapes the server speaks. The Go server declares the same
  * shapes in server/internal/contracts/contracts.go; keep the two in step.
