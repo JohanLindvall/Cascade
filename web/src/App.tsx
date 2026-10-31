@@ -445,12 +445,9 @@ export function App() {
           searchRef={searchRef}
         />
 
-        {(searchResult.pending > 0 || searchResult.failed > 0) && (
+        {searchResult.failed > 0 && (
           <div className="search-status" role="status">
-            {searchResult.pending > 0 && <span>Searching torrents, files and trackers…</span>}
-            {searchResult.failed > 0 && (
-              <span className="warn-text">Search incomplete: {searchResult.error}. Retrying…</span>
-            )}
+            <span className="warn-text">Search incomplete: {searchResult.error}. Retrying…</span>
           </div>
         )}
 
