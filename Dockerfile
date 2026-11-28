@@ -16,7 +16,7 @@
 # docker/bump-rtorrent.sh moves it to a newer upstream release.
 #
 # USER_AGENT and PEER_NAME override what the client calls itself; a release
-# newer than 0.16.20 presents itself as 0.16.20 by default, because private
+# newer than 0.16.28 presents itself as 0.16.28 by default, because private
 # trackers refuse versions they have not whitelisted yet. See
 # docker/patches/apply-rtorrent.sh and apply-libtorrent.sh.
 #
@@ -129,21 +129,21 @@ RUN set -eux; \
     fi; \
     # Private trackers whitelist client versions and refuse anything newer
     # than their list, which surfaces only as a failed announce. A release
-    # newer than 0.16.20 therefore presents itself as 0.16.20 unless told
+    # newer than 0.16.28 therefore presents itself as 0.16.28 unless told
     # otherwise — a rule rather than a list, so a new default release does not
     # start failing announces the day it lands — and older ones present
     # themselves as what they are. The peer id prefix moves with the
-    # User-Agent: libtorrent 0.16.20 is -lt1014-. Override with --build-arg
+    # User-Agent: libtorrent 0.16.28 is -lt101C-. Override with --build-arg
     # USER_AGENT=... and PEER_NAME=... (or make build USER_AGENT=...
     # PEER_NAME=...); to present the real version, pass it and its prefix
     # (from 0.15 on, -lt and then the minor and patch release as two hex
     # digits each: 0.16.24 is -lt1018-).
     if [ -z "${USER_AGENT}" ] && [ -z "${PEER_NAME}" ] && \
-       echo "${RTORRENT_VERSION} 0.16.20" | awk '{ \
+       echo "${RTORRENT_VERSION} 0.16.28" | awk '{ \
          split($1, have, "."); split($2, known, "."); \
          for (i = 1; i <= 3; i++) if (have[i] != known[i]) exit !(have[i] + 0 > known[i] + 0); \
          exit 1 }'; then \
-      USER_AGENT="rtorrent/0.16.20"; PEER_NAME="-lt1014-"; \
+      USER_AGENT="rtorrent/0.16.28"; PEER_NAME="-lt101C-"; \
     fi; \
     export USER_AGENT PEER_NAME; \
     echo "building rtorrent ${RTORRENT_VERSION} against libtorrent ${LIBTORRENT_VERSION}"; \

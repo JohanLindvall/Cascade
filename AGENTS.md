@@ -480,7 +480,7 @@ These are load-bearing. Breaking them produces faults or, worse, a crashed rtorr
    `apply-rtorrent.sh`) and the peer id prefix (`PEER_NAME`, patched into libtorrent's
    `configure.ac` by `apply-libtorrent.sh`). Both are build args, not environment variables —
    neither project exposes a command for them. The Dockerfile has every release newer than
-   0.16.20 present itself as 0.16.20 (`rtorrent/0.16.20` + `-lt1014-`) — a version comparison,
+   0.16.28 present itself as 0.16.28 (`rtorrent/0.16.28` + `-lt101C-`) — a version comparison,
    not a list, so a bumped default keeps the whitelisted identity without an edit — because
    private trackers whitelist client versions and refuse anything newer, which reaches the UI
    only as a failed announce (and, on 0.16.22, only as `v6 : Could not resolve hostname`, since
