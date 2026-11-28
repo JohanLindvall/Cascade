@@ -39,7 +39,7 @@ fixes and sharing your setup are welcome too.
 
 - **One container, batteries included** — rtorrent, its config, and the UI. Nothing else to run,
   published for amd64 and arm64, and buildable from source in one command.
-- **rtorrent 0.16.28, compiled from source** — the version in the image is exactly the upstream
+- **rtorrent 0.16.29, compiled from source** — the version in the image is exactly the upstream
   tag you asked for, not whatever a distro packaged. Any other tag builds with one build arg.
 - **Live, and light on rtorrent** — open pages watch one server-sent event stream: a snapshot,
   then only what changed, compressed. rtorrent is read once per interval however many pages are
@@ -48,7 +48,7 @@ fixes and sharing your setup are welcome too.
 - **Works across backend versions** — the server probes `system.listMethods` on connect and picks
   command names from what the running rtorrent actually implements, hiding unsupported controls
   in the UI instead of failing.
-- **Private-tracker aware** — a release newer than 0.16.20 announces itself as 0.16.20, User-Agent
+- **Private-tracker aware** — a release newer than 0.16.28 announces itself as 0.16.28, User-Agent
   and peer id together, because private trackers refuse client versions they have not whitelisted
   yet; two build arguments [choose another identity](#the-version-presented-to-trackers).
 - **Everything rtorrent exposes** — upload `.torrent` files, magnet links and URLs, global and
@@ -217,7 +217,7 @@ make build && make run     # build, run against ./data, open a browser
 ## Choosing the rtorrent version
 
 The published images carry the default rtorrent; for any other version, build it yourself.
-rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.28**:
+rtorrent and libtorrent are always compiled from upstream tags. The default is **0.16.29**:
 
 ```bash
 docker build -t cascade .                                       # the default
@@ -242,14 +242,14 @@ the base image.
 A client identifies itself twice: the HTTP `User-Agent` rtorrent sends to a tracker, and the peer
 id prefix libtorrent gives every peer and tracker. Private trackers whitelist client versions and
 refuse anything newer than their list, which rtorrent surfaces only as a failed announce — so
-**any release newer than 0.16.20 presents itself as 0.16.20 by default**
-(`USER_AGENT=rtorrent/0.16.20`, `PEER_NAME=-lt1014-`). It is a rule rather than a list, so a new
+**any release newer than 0.16.28 presents itself as 0.16.28 by default**
+(`USER_AGENT=rtorrent/0.16.28`, `PEER_NAME=-lt101C-`). It is a rule rather than a list, so a new
 default release does not start failing announces the day it lands; older releases present
 themselves as what they are. Both are build arguments, because rtorrent and libtorrent bake them in
 at compile time and expose no command to change them while running:
 
 ```bash
-make build RTORRENT_VERSION=0.16.24 USER_AGENT=rtorrent/0.16.24 PEER_NAME=-lt1018-  # 0.16.24, as itself
+make build RTORRENT_VERSION=0.16.29 USER_AGENT=rtorrent/0.16.29 PEER_NAME=-lt101D-  # 0.16.29, as itself
 make build USER_AGENT=rtorrent/0.9.8 PEER_NAME=-lt0D80-
 docker build --build-arg USER_AGENT=rtorrent/0.9.8 --build-arg PEER_NAME=-lt0D80- -t cascade .
 make version                                                # what the image presents

@@ -30,8 +30,8 @@ LIBTORRENT_VERSION ?=
 
 # What the client calls itself: USER_AGENT is the HTTP header trackers read,
 # PEER_NAME the peer id prefix peers and trackers see. Left empty the
-# Dockerfile decides: a release newer than 0.16.20 presents itself as 0.16.20
-# (USER_AGENT rtorrent/0.16.20, PEER_NAME -lt1014-), because private trackers
+# Dockerfile decides: a release newer than 0.16.28 presents itself as 0.16.28
+# (USER_AGENT rtorrent/0.16.28, PEER_NAME -lt101C-), because private trackers
 # refuse versions they have not whitelisted yet and say so only as a failed
 # announce; older releases present themselves as what they are. Set them
 # together — a tracker that checks both sees a mismatch:
@@ -62,7 +62,7 @@ help: ## Show this help
 	@printf "\nVariables: IMAGE=%s TAG=%s PORT=%s RTORRENT_VERSION=%s ALPINE_VERSION=%s OPEN=%s\n" \
 	  "$(IMAGE)" "$(TAG)" "$(PORT)" "$(RTORRENT_VERSION)" "$(ALPINE_VERSION)" "$(OPEN)"
 	@printf "           USER_AGENT=%s PEER_NAME=%s\n\n" \
-	  "$(if $(USER_AGENT),$(USER_AGENT),(past 0.16.20 presents as 0.16.20))" "$(if $(PEER_NAME),$(PEER_NAME),(likewise))"
+	  "$(if $(USER_AGENT),$(USER_AGENT),(past 0.16.28 presents as 0.16.28))" "$(if $(PEER_NAME),$(PEER_NAME),(likewise))"
 
 ##@ Build
 

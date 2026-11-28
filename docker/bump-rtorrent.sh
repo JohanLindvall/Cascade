@@ -10,7 +10,7 @@
 # (the highlights and "Choosing the rtorrent version"). This rewrites those
 # three and nothing else: every other version in the docs is history and
 # stays put. What the new release presents itself as needs no edit either;
-# the Dockerfile's rule covers every release past 0.16.20.
+# the Dockerfile's rule covers every release past 0.16.28.
 #
 # A release counts once libtorrent carries the same tag: from 0.15 on the two
 # ship together, and the build needs both.

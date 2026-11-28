@@ -126,6 +126,8 @@ jobs:
             type=gha,scope=smoke
             type=gha,scope=${{ steps.rtorrent.outputs.version }}-linux-amd64
           cache-to: type=gha,mode=max,scope=smoke
+      - name: Show the compiled and announced client versions
+        run: make version IMAGE=cascade TAG=ci
       # Includes the libtorrent patch in docker/patches: a torrent whose file
       # name is longer than Linux allows must start, under a shortened name.
       - name: Boot and exercise the API
